@@ -1,0 +1,20 @@
+{
+  "name": "my-ecom",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter @my-ecom/api --filter @my-ecom/web dev",
+    "dev:api": "pnpm --filter @my-ecom/api dev",
+    "dev:web": "pnpm --filter @my-ecom/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "audit:ui": "node scripts/audit-ui-controls.cjs",
+    "prisma:generate": "pnpm --filter @my-ecom/api prisma:generate",
+    "prisma:seed": "pnpm --filter @my-ecom/api prisma:seed",
+    "prisma:seed-users": "pnpm --filter @my-ecom/api prisma:seed-users",
+    "prisma:bootstrap": "pnpm --filter @my-ecom/api prisma:bootstrap"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
