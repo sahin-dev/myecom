@@ -5,10 +5,10 @@ import { AuthController } from "./auth/auth.controller";
 import {
   AdminGuard,
   JwtAuthGuard,
-  OptionalJwtAuthGuard,
-  OwnerGuard
+  OptionalJwtAuthGuard
 } from "./auth/auth.guards";
 import { AuthService } from "./auth/auth.service";
+import { AccessControlService } from "./auth/access-control.service";
 import { EcommerceController } from "./ecommerce/ecommerce.controller";
 import { EcommerceService } from "./ecommerce/ecommerce.service";
 import { ExperienceController } from "./experience/experience.controller";
@@ -34,13 +34,13 @@ import { UploadsController } from "./uploads/uploads.controller";
   controllers: [AuthController, EcommerceController, ExperienceController, UploadsController],
   providers: [
     AuthService,
+    AccessControlService,
     EcommerceService,
     ExperienceService,
     PrismaService,
     JwtAuthGuard,
     OptionalJwtAuthGuard,
-    AdminGuard,
-    OwnerGuard
+    AdminGuard
   ]
 })
 export class AppModule {}

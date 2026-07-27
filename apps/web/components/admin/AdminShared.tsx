@@ -14,7 +14,7 @@ export const orderStatuses = [
   "CANCELLED"
 ];
 
-export const paymentStatuses = ["PENDING", "PAID", "FAILED", "REFUNDED"];
+export const paymentStatuses = ["PENDING", "PAID", "FAILED", "PARTIALLY_REFUNDED", "REFUNDED"];
 
 export const formatStatus = (value?: string | null) =>
   (value ?? "PENDING")
@@ -86,13 +86,15 @@ export function AdminUploadField({
   name = "imageUrl",
   value,
   onChange,
-  onMessage
+  onMessage,
+  recommendedDimensions = "1200 x 1200 px"
 }: {
   label: string;
   name?: string;
   value: string;
   onChange: (value: string) => void;
   onMessage: (message: string) => void;
+  recommendedDimensions?: string;
 }) {
   const [uploading, setUploading] = useState(false);
 
@@ -116,16 +118,35 @@ export function AdminUploadField({
       <div className="admin-upload-preview">
         {value ? <img src={value} alt={`${label} preview`} /> : <ImagePlus size={26} />}
       </div>
-      <label>
-        <UploadCloud size={17} />
-        <span>{uploading ? "Uploading..." : label}</span>
-        <input
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          disabled={uploading}
-          onChange={(event) => void upload(event.target.files?.[0])}
-        />
-      </label>
+      <div className="admin-upload-main">
+        <div className="admin-upload-title">
+          <strong>{label}</strong>
+          <span>
+            {value
+              ? `The current ${label.toLowerCase()} is shown on the left.`
+              : `No ${label.toLowerCase()} has been uploaded yet.`}
+          </span>
+        </div>
+        <label>
+          <UploadCloud size={17} />
+          <span>
+            {uploading
+              ? "Uploading..."
+              : value
+                ? `Replace ${label.toLowerCase()}`
+                : `Upload ${label.toLowerCase()}`}
+          </span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            disabled={uploading}
+            onChange={(event) => void upload(event.target.files?.[0])}
+          />
+        </label>
+      </div>
+      <small className="admin-upload-hint">
+        Recommended size: {recommendedDimensions}. Accepted formats: JPG, PNG, or WebP, up to 5 MB.
+      </small>
       {value ? (
         <button type="button" onClick={() => onChange("")}>
           Remove
@@ -140,13 +161,15 @@ export function AdminMultiUploadField({
   values,
   onChange,
   onMessage,
-  maxFiles = 10
+  maxFiles = 10,
+  recommendedDimensions = "1200 x 1200 px"
 }: {
   label: string;
   values: string[];
   onChange: (values: string[]) => void;
   onMessage: (message: string) => void;
   maxFiles?: number;
+  recommendedDimensions?: string;
 }) {
   const [uploading, setUploading] = useState(false);
 
@@ -199,7 +222,7 @@ export function AdminMultiUploadField({
               >
                 <X size={14} />
               </button>
-              {index === 0 ? <small>Primary</small> : null}
+              <small>{index === 0 ? "Primary image" : `Image ${index + 1}`}</small>
             </span>
           ))}
         </div>
@@ -220,7 +243,10 @@ export function AdminMultiUploadField({
           }}
         />
       </label>
-      <p className="form-note">The first image is used as the primary product image. Drag-free ordering follows the selection order.</p>
+      <p className="form-note">
+        Recommended size: {recommendedDimensions}. Use the same aspect ratio for every image.
+        The first image is the primary product image and ordering follows the selection order.
+      </p>
     </div>
   );
 }

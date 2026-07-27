@@ -1,7 +1,9 @@
 import { Transform, Type } from "class-transformer";
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEmail,
   IsEnum,
   IsInt,
@@ -11,6 +13,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Max,
   Min,
   ValidateNested
 } from "class-validator";
@@ -62,6 +65,10 @@ export class CreateCategoryDto {
   icon?: string;
 
   @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
   @IsInt()
   priority?: number;
 }
@@ -74,6 +81,10 @@ export class UpdateCategoryDto {
   @IsOptional()
   @IsString()
   icon?: string;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 
   @IsOptional()
   @IsInt()
@@ -104,6 +115,26 @@ export class CreateBannerDto {
   @IsString()
   @IsNotEmpty()
   imageUrl!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  focalX?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  focalY?: number;
+
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endsAt?: string;
 
   @IsOptional()
   @IsInt()
@@ -140,6 +171,14 @@ export class CreateProductDto {
   inventory?: number;
 
   @IsOptional()
+  @IsBoolean()
+  baseOptionEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  baseOptionLabel?: string;
+
+  @IsOptional()
   @IsString()
   imageUrl?: string;
 
@@ -147,6 +186,10 @@ export class CreateProductDto {
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
+
+  @IsOptional()
+  @IsEnum(ProductStatus)
+  status?: ProductStatus;
 
   @IsOptional()
   @IsBoolean()
@@ -163,6 +206,21 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   isCombo?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(2)
+  @IsString({ each: true })
+  comboProductIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  showOnHome?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  comboPriority?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -315,8 +373,21 @@ export class AdminUpdateProductDto {
   compareAt?: number;
 
   @IsOptional()
+  @IsBoolean()
+  baseOptionEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  baseOptionLabel?: string;
+
+  @IsOptional()
   @IsString()
   imageUrl?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  imageUrls?: string[];
 
   @IsOptional()
   @IsEnum(ProductStatus)
@@ -337,6 +408,21 @@ export class AdminUpdateProductDto {
   @IsOptional()
   @IsBoolean()
   isCombo?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(2)
+  @IsString({ each: true })
+  comboProductIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  showOnHome?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  comboPriority?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -386,6 +472,26 @@ export class AdminUpdateBannerDto {
   imageUrl?: string;
 
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  focalX?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  focalY?: number;
+
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endsAt?: string;
+
+  @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 
@@ -406,6 +512,10 @@ export class UpdateSiteSettingsDto {
 
   @IsOptional()
   @IsString()
+  faviconUrl?: string;
+
+  @IsOptional()
+  @IsString()
   @IsNotEmpty()
   announcement?: string;
 
@@ -418,6 +528,22 @@ export class UpdateSiteSettingsDto {
   @IsString()
   @IsNotEmpty()
   announcementLinkHref?: string;
+
+  @IsOptional()
+  @IsString()
+  facebookUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  instagramUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  youtubeUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  whatsappUrl?: string;
 }
 
 export class CreateHomeSectionDto {

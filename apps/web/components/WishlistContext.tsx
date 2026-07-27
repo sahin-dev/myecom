@@ -21,6 +21,7 @@ import { useAuth } from "./AuthContext";
 
 type WishlistContextValue = {
   slugs: string[];
+  savedCount: number;
   isSaved: (slug: string) => boolean;
   toggle: (product: Product | string) => void;
 };
@@ -75,6 +76,7 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       slugs,
+      savedCount: slugs.length,
       isSaved: (slug: string) => slugs.includes(slug),
       toggle: (input: Product | string) => {
         const slug = typeof input === "string" ? input : input.slug;

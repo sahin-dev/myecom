@@ -8,12 +8,14 @@ import { User } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { LoginDto, RegisterDto, UpdateProfileDto } from "./auth.dto";
 import { hashPassword, verifyPassword } from "./password";
+import { AccessControlService } from "./access-control.service";
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwt: JwtService
+    private readonly jwt: JwtService,
+    private readonly access: AccessControlService
   ) {}
 
   async register(dto: RegisterDto) {
@@ -94,10 +96,11 @@ export class AuthService {
       email: user.email,
       role: user.role
     });
-    return { accessToken, user: this.publicUser(user) };
+    return { accessToken, user: await this.publicUser(user) };
   }
 
-  private publicUser(user: User) {
+  private async publicUser(user: User) {
+    const access = await this.access.userAccess(user.id, user.role);
     return {
       id: user.id,
       name: user.name,
@@ -105,7 +108,8 @@ export class AuthService {
       role: user.role,
       phone: user.phone,
       avatarUrl: user.avatarUrl,
-      createdAt: user.createdAt
+      createdAt: user.createdAt,
+      ...access
     };
   }
 }

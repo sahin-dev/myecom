@@ -38,6 +38,8 @@ export function ProductArt({
         <img
           src={image}
           alt=""
+          loading="lazy"
+          decoding="async"
           onError={() => setImageIndex((current) => current + 1)}
         />
       ) : (

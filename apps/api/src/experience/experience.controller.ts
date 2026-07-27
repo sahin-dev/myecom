@@ -14,8 +14,7 @@ import {
 import {
   AdminGuard,
   JwtAuthGuard,
-  OptionalJwtAuthGuard,
-  OwnerGuard
+  OptionalJwtAuthGuard
 } from "../auth/auth.guards";
 import type {
   AuthenticatedRequest,
@@ -24,6 +23,7 @@ import type {
 import { RequirePermission } from "../auth/permissions";
 import {
   AddProductImageDto,
+  CreateAccessRoleDto,
   CreateStaffDto,
   CreateAddressDto,
   CreatePromotionDto,
@@ -37,6 +37,7 @@ import {
   SaveCartDto,
   TrackEventDto,
   UpdateAddressDto,
+  UpdateAccessRoleDto,
   UpdateCustomerDto,
   UpdateProductImageDto,
   UpdatePreferencesDto,
@@ -50,10 +51,14 @@ import {
   ValidatePromotionDto
 } from "./experience.dto";
 import { ExperienceService } from "./experience.service";
+import { AccessControlService } from "../auth/access-control.service";
 
 @Controller()
 export class ExperienceController {
-  constructor(private readonly experience: ExperienceService) {}
+  constructor(
+    private readonly experience: ExperienceService,
+    private readonly access: AccessControlService
+  ) {}
 
   @Get("catalog/search")
   searchCatalog(
@@ -89,6 +94,15 @@ export class ExperienceController {
   @Get("reviews/products/:productId")
   productReviews(@Param("productId") productId: string) {
     return this.experience.productReviews(productId);
+  }
+
+  @Get("reviews/products/:productId/mine")
+  @UseGuards(JwtAuthGuard)
+  myProductReview(
+    @Param("productId") productId: string,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.experience.myProductReview(request.user.id, productId);
   }
 
   @Post("reviews/products/:productId")
@@ -266,8 +280,7 @@ export class ExperienceController {
     return this.experience.moderateReview(
       request.user.id,
       id,
-      dto.status,
-      dto.adminReply
+      dto
     );
   }
 
@@ -368,7 +381,7 @@ export class ExperienceController {
 
   @Post("admin/products/:id/variants")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.update")
   createVariant(
     @Param("id") id: string,
     @Body() dto: CreateVariantDto,
@@ -379,7 +392,7 @@ export class ExperienceController {
 
   @Patch("admin/products/:productId/variants/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.update")
   updateVariant(
     @Param("productId") productId: string,
     @Param("id") id: string,
@@ -391,7 +404,7 @@ export class ExperienceController {
 
   @Delete("admin/products/:productId/variants/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.update")
   deleteVariant(
     @Param("productId") productId: string,
     @Param("id") id: string,
@@ -402,7 +415,7 @@ export class ExperienceController {
 
   @Post("admin/products/:id/images")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.update")
   addProductImage(
     @Param("id") id: string,
     @Body() dto: AddProductImageDto,
@@ -413,7 +426,7 @@ export class ExperienceController {
 
   @Patch("admin/products/:productId/images/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.update")
   updateProductImage(
     @Param("productId") productId: string,
     @Param("id") id: string,
@@ -425,7 +438,7 @@ export class ExperienceController {
 
   @Delete("admin/products/:productId/images/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.update")
   deleteProductImage(
     @Param("productId") productId: string,
     @Param("id") id: string,
@@ -436,14 +449,14 @@ export class ExperienceController {
 
   @Get("admin/refunds")
   @UseGuards(AdminGuard)
-  @RequirePermission("orders.read")
+  @RequirePermission("refunds.read")
   refunds() {
     return this.experience.refunds();
   }
 
   @Patch("admin/refunds/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("orders.write")
+  @RequirePermission("refunds.write")
   updateRefund(
     @Param("id") id: string,
     @Body() dto: UpdateRefundDto,
@@ -466,20 +479,78 @@ export class ExperienceController {
     return this.experience.auditLogs();
   }
 
+  @Get("admin/access/permissions")
+  @UseGuards(AdminGuard)
+  @RequirePermission("roles.read", "roles.create", "roles.update")
+  permissionCatalogue() {
+    return this.access.catalogue();
+  }
+
+  @Get("admin/access/roles")
+  @UseGuards(AdminGuard)
+  @RequirePermission("roles.read")
+  accessRoles() {
+    return this.access.roles();
+  }
+
+  @Post("admin/access/roles")
+  @UseGuards(AdminGuard)
+  @RequirePermission("roles.create")
+  createAccessRole(
+    @Body() dto: CreateAccessRoleDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.access.createRole(request.user.id, dto);
+  }
+
+  @Post("admin/access/roles/:id/duplicate")
+  @UseGuards(AdminGuard)
+  @RequirePermission("roles.create")
+  duplicateAccessRole(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.access.duplicateRole(request.user.id, id);
+  }
+
+  @Patch("admin/access/roles/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("roles.update")
+  updateAccessRole(
+    @Param("id") id: string,
+    @Body() dto: UpdateAccessRoleDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.access.updateRole(request.user.id, id, dto);
+  }
+
+  @Delete("admin/access/roles/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("roles.delete")
+  deleteAccessRole(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.access.deleteRole(request.user.id, id);
+  }
+
   @Get("admin/staff")
-  @UseGuards(OwnerGuard)
+  @UseGuards(AdminGuard)
+  @RequirePermission("staff.read")
   staff() {
     return this.experience.staff();
   }
 
   @Post("admin/staff")
-  @UseGuards(OwnerGuard)
+  @UseGuards(AdminGuard)
+  @RequirePermission("staff.create")
   createStaff(@Body() dto: CreateStaffDto, @Req() request: AuthenticatedRequest) {
     return this.experience.createStaff(request.user.id, dto);
   }
 
   @Patch("admin/staff/:id")
-  @UseGuards(OwnerGuard)
+  @UseGuards(AdminGuard)
+  @RequirePermission("staff.update")
   updateStaff(
     @Param("id") id: string,
     @Body() dto: UpdateStaffDto,
@@ -489,7 +560,8 @@ export class ExperienceController {
   }
 
   @Delete("admin/staff/:id")
-  @UseGuards(OwnerGuard)
+  @UseGuards(AdminGuard)
+  @RequirePermission("staff.deactivate")
   deactivateStaff(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
     return this.experience.deactivateStaff(request.user.id, id);
   }

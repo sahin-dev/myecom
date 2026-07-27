@@ -8,7 +8,8 @@ import {
   Boxes,
   CircleDollarSign,
   Clock3,
-  PackageCheck,
+  Eye,
+  Radio,
   RefreshCw,
   ShoppingBag,
   Sparkles,
@@ -82,6 +83,73 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
           </>
         }
       />
+
+      <section className="admin-priority-section" aria-label="Action required">
+        <AdminSectionHeader
+          title="Action required"
+          description="Operational queues that can affect customers or revenue"
+        />
+        <div className="admin-operations-row priority">
+          <OperationMetric
+            icon={<ShoppingBag size={18} />}
+            label="Awaiting confirmation"
+            value={dashboard.traffic.newOrderQueue}
+            action="Review new orders"
+            onClick={() => onNavigate("orders")}
+          />
+          <OperationMetric
+            icon={<Clock3 size={18} />}
+            label="Over 48 hours"
+            value={dashboard.operations.ageingOrders}
+            action="Resolve delays"
+            onClick={() => onNavigate("orders")}
+          />
+          <OperationMetric
+            icon={<Banknote size={18} />}
+            label="Awaiting payment"
+            value={dashboard.operations.awaitingPayment}
+            action="Review payments"
+            onClick={() => onNavigate("orders")}
+          />
+          <OperationMetric
+            icon={<Boxes size={18} />}
+            label="Low stock"
+            value={dashboard.lowStock.length}
+            action="Plan replenishment"
+            onClick={() => onNavigate("inventory")}
+          />
+        </div>
+      </section>
+
+      <section className="admin-pulse-section" aria-label="Store activity today">
+        <header>
+          <div><span className="admin-live-dot" /> Store pulse</div>
+          <small>Active visitors are sessions seen in the last {dashboard.traffic.activeWindowMinutes} minutes.</small>
+        </header>
+        <div className="admin-pulse-grid">
+          <PulseMetric
+            icon={<UsersRound size={18} />}
+            label="Visitors today"
+            value={dashboard.traffic.visitorsToday}
+            detail={`${dashboard.traffic.periodVisitors} in this reporting period`}
+            onClick={() => onNavigate("growth")}
+          />
+          <PulseMetric
+            icon={<Radio size={18} />}
+            label="Active now"
+            value={dashboard.traffic.activeVisitors}
+            detail="Recent active sessions"
+            onClick={() => onNavigate("growth")}
+          />
+          <PulseMetric
+            icon={<Eye size={18} />}
+            label="Lifetime visitors"
+            value={dashboard.traffic.lifetimeVisitors}
+            detail="Tracked browser sessions"
+            onClick={() => onNavigate("growth")}
+          />
+        </div>
+      </section>
 
       <section className="admin-kpi-grid" aria-label="Key performance indicators">
         <KpiCard
@@ -184,37 +252,6 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
         </div>
       </section>
 
-      <section className="admin-operations-row">
-        <OperationMetric
-          icon={<PackageCheck size={18} />}
-          label="Unfulfilled"
-          value={dashboard.operations.unfulfilled}
-          action="Open orders"
-          onClick={() => onNavigate("orders")}
-        />
-        <OperationMetric
-          icon={<Clock3 size={18} />}
-          label="Over 48 hours"
-          value={dashboard.operations.ageingOrders}
-          action="Resolve delays"
-          onClick={() => onNavigate("orders")}
-        />
-        <OperationMetric
-          icon={<Banknote size={18} />}
-          label="Awaiting payment"
-          value={dashboard.operations.awaitingPayment}
-          action="Review payments"
-          onClick={() => onNavigate("orders")}
-        />
-        <OperationMetric
-          icon={<Boxes size={18} />}
-          label="Low stock"
-          value={dashboard.lowStock.length}
-          action="Plan replenishment"
-          onClick={() => onNavigate("inventory")}
-        />
-      </section>
-
       <section className="admin-two-column">
         <div>
           <AdminSectionHeader
@@ -265,6 +302,28 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
         </div>
       </section>
     </div>
+  );
+}
+
+function PulseMetric({
+  icon,
+  label,
+  value,
+  detail,
+  onClick
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button className="admin-pulse-metric" type="button" onClick={onClick}>
+      <span>{icon}</span>
+      <div><small>{label}</small><strong>{new Intl.NumberFormat("en-BD").format(value)}</strong></div>
+      <em>{detail}<ArrowRight size={13} /></em>
+    </button>
   );
 }
 

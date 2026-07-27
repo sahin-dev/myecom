@@ -67,6 +67,11 @@ export class EcommerceController {
     return this.ecommerce.product(slug);
   }
 
+  @Get("combo-deals")
+  comboDeals() {
+    return this.ecommerce.comboDeals();
+  }
+
   @Get("checkout/methods")
   checkoutMethods() {
     return this.ecommerce.checkoutMethods();
@@ -74,42 +79,42 @@ export class EcommerceController {
 
   @Post("admin/brands")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("brands.manage")
   createBrand(@Body() dto: CreateBrandDto) {
     return this.ecommerce.createBrand(dto);
   }
 
   @Patch("admin/brands/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("brands.manage")
   updateBrand(@Param("id") id: string, @Body() dto: UpdateBrandDto) {
     return this.ecommerce.updateBrand(id, dto);
   }
 
   @Delete("admin/brands/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("brands.manage")
   deleteBrand(@Param("id") id: string) {
     return this.ecommerce.deleteBrand(id);
   }
 
   @Post("admin/categories")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("categories.manage")
   createCategory(@Body() dto: CreateCategoryDto) {
     return this.ecommerce.createCategory(dto);
   }
 
   @Patch("admin/categories/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("categories.manage")
   updateCategory(@Param("id") id: string, @Body() dto: UpdateCategoryDto) {
     return this.ecommerce.updateCategory(id, dto);
   }
 
   @Delete("admin/categories/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("categories.manage")
   deleteCategory(@Param("id") id: string) {
     return this.ecommerce.deleteCategory(id);
   }
@@ -123,14 +128,35 @@ export class EcommerceController {
 
   @Post("admin/products")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.create")
   createProduct(@Body() dto: CreateProductDto) {
     return this.ecommerce.createProduct(dto);
   }
 
+  @Post("admin/combo-deals")
+  @UseGuards(AdminGuard)
+  @RequirePermission("combos.manage")
+  createComboDeal(@Body() dto: CreateProductDto) {
+    return this.ecommerce.createComboDeal(dto);
+  }
+
+  @Patch("admin/combo-deals/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("combos.manage")
+  updateComboDeal(@Param("id") id: string, @Body() dto: AdminUpdateProductDto) {
+    return this.ecommerce.updateComboDeal(id, dto);
+  }
+
+  @Delete("admin/combo-deals/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("combos.manage")
+  archiveComboDeal(@Param("id") id: string) {
+    return this.ecommerce.archiveComboDeal(id);
+  }
+
   @Delete("admin/products/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.delete")
   archiveProduct(@Param("id") id: string) {
     return this.ecommerce.archiveProduct(id);
   }
@@ -155,6 +181,16 @@ export class EcommerceController {
     return this.ecommerce.adminOrders({ search, status, paymentStatus, page, limit });
   }
 
+  @Post("admin/orders")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.create")
+  adminCreateOrder(
+    @Body() dto: CheckoutDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.adminCreateOrder(dto, request.user.id);
+  }
+
   @Get("admin/orders/:idOrNumber")
   @UseGuards(AdminGuard)
   @RequirePermission("orders.read")
@@ -164,12 +200,19 @@ export class EcommerceController {
 
   @Patch("admin/orders/:idOrNumber")
   @UseGuards(AdminGuard)
-  @RequirePermission("orders.write")
+  @RequirePermission("orders.update")
   adminUpdateOrder(
     @Param("idOrNumber") idOrNumber: string,
     @Body() dto: AdminUpdateOrderDto
   ) {
     return this.ecommerce.adminUpdateOrder(idOrNumber, dto);
+  }
+
+  @Delete("admin/orders/:idOrNumber")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.delete")
+  adminCancelOrder(@Param("idOrNumber") idOrNumber: string) {
+    return this.ecommerce.adminCancelOrder(idOrNumber);
   }
 
   @Get("admin/catalog")
@@ -188,7 +231,7 @@ export class EcommerceController {
 
   @Patch("admin/products/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.write")
+  @RequirePermission("products.update")
   adminUpdateProduct(@Param("id") id: string, @Body() dto: AdminUpdateProductDto) {
     return this.ecommerce.adminUpdateProduct(id, dto);
   }
@@ -251,21 +294,21 @@ export class EcommerceController {
 
   @Post("admin/checkout-methods")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("checkout.write")
   createCheckoutMethod(@Body() dto: CreateCheckoutMethodDto) {
     return this.ecommerce.createCheckoutMethod(dto);
   }
 
   @Patch("admin/checkout-methods/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("checkout.write")
   updateCheckoutMethod(@Param("id") id: string, @Body() dto: UpdateCheckoutMethodDto) {
     return this.ecommerce.updateCheckoutMethod(id, dto);
   }
 
   @Delete("admin/checkout-methods/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("checkout.write")
   deleteCheckoutMethod(@Param("id") id: string) {
     return this.ecommerce.deleteCheckoutMethod(id);
   }
@@ -302,7 +345,7 @@ export class EcommerceController {
 
   @Patch("orders/:idOrNumber/status")
   @UseGuards(AdminGuard)
-  @RequirePermission("orders.write")
+  @RequirePermission("orders.update")
   updateOrderStatus(@Param("idOrNumber") idOrNumber: string, @Body() dto: UpdateOrderStatusDto) {
     return this.ecommerce.updateOrderStatus(idOrNumber, dto);
   }

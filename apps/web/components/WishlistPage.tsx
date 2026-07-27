@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   Catalog,
   Product,
+  ProductVariant,
   fallbackCatalog,
   fetchAccountWishlist,
   fetchCatalog,
@@ -55,27 +56,12 @@ export function WishlistPage() {
         {products.length ? (
           <div className="product-grid">
             {products.map((product) => (
-              <article className="product-card" key={product.id}>
-                <div className="card-topline">
-                  <span>{product.category?.name ?? "Pantry"}</span>
-                  <button type="button" onClick={() => toggle(product)} aria-label="Remove from wishlist">
-                    <Heart size={17} fill="currentColor" />
-                  </button>
-                </div>
-                <a href={`/products/${product.slug}`}><ProductArt product={product} /></a>
-                <div className="product-meta">
-                  <h3><a href={`/products/${product.slug}`}>{product.name}</a></h3>
-                  <div className="price-row"><strong>{formatMoney(product.price)}</strong></div>
-                </div>
-                {product.variants?.length ? (
-                  <QuickVariantAdd product={product} />
-                ) : (
-                  <button className="add-button full" type="button" onClick={() => addItem(product)}>
-                    <ShoppingBag size={17} />
-                    Add to bag
-                  </button>
-                )}
-              </article>
+              <WishlistProductCard
+                key={product.id}
+                product={product}
+                onRemove={() => toggle(product)}
+                onAdd={() => addItem(product)}
+              />
             ))}
           </div>
         ) : (
@@ -89,5 +75,46 @@ export function WishlistPage() {
       </section>
       <PageFooter categories={catalog.categories} siteSettings={catalog.siteSettings} />
     </main>
+  );
+}
+
+function WishlistProductCard({
+  product,
+  onRemove,
+  onAdd
+}: {
+  product: Product;
+  onRemove: () => void;
+  onAdd: () => void;
+}) {
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
+  const price = selectedVariant?.price ?? product.price;
+  const compareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
+
+  return (
+    <article className="product-card">
+      <div className="card-topline">
+        <span>{product.category?.name ?? "Pantry"}</span>
+        <button type="button" onClick={onRemove} aria-label="Remove from wishlist">
+          <Heart size={17} fill="currentColor" />
+        </button>
+      </div>
+      <a href={`/products/${product.slug}`}><ProductArt product={product} /></a>
+      <div className="product-meta">
+        <h3><a href={`/products/${product.slug}`}>{product.name}</a></h3>
+        <div className="price-row">
+          <strong>{formatMoney(price)}</strong>
+          {compareAt && compareAt > price ? <small>{formatMoney(compareAt)}</small> : null}
+        </div>
+      </div>
+      {product.variants?.length ? (
+        <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
+      ) : (
+        <button className="add-button full" type="button" onClick={onAdd}>
+          <ShoppingBag size={17} />
+          Add to bag
+        </button>
+      )}
+    </article>
   );
 }

@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 import {
@@ -18,6 +19,7 @@ import {
   fetchAccountCart,
   fetchProduct,
   formatMoney,
+  isBaseProductEnabled,
   saveAccountCart,
   trackAnalyticsEvent
 } from "../lib/catalog";
@@ -26,6 +28,7 @@ import { ProductArt } from "./ProductArt";
 
 type CartContextValue = {
   cart: CartLine[];
+  cartReady: boolean;
   cartCount: number;
   subtotal: number;
   isOpen: boolean;
@@ -40,14 +43,42 @@ type CartContextValue = {
 
 const CartContext = createContext<CartContextValue | null>(null);
 const storageKey = "my-ecom-cart";
+const cartOwnerKey = "my-ecom-cart-owner";
+const guestCartOwner = "guest";
+
+function lineId(line: CartLine) {
+  return line.variant?.id ?? line.product.id;
+}
+
+function mergeGuestCart(accountCart: CartLine[], guestCart: CartLine[]) {
+  const merged = accountCart.map((line) => ({ ...line }));
+  for (const guestLine of guestCart) {
+    const existing = merged.find((line) => lineId(line) === lineId(guestLine));
+    if (!existing) {
+      merged.push(guestLine);
+      continue;
+    }
+    const available =
+      guestLine.variant?.inventory ??
+      existing.variant?.inventory ??
+      guestLine.product.inventory ??
+      existing.product.inventory;
+    existing.product = guestLine.product;
+    existing.variant = guestLine.variant ?? existing.variant;
+    existing.quantity = Math.min(existing.quantity + guestLine.quantity, available);
+  }
+  return merged;
+}
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [accountCartReady, setAccountCartReady] = useState(false);
+  const [cartOwner, setCartOwner] = useState(guestCartOwner);
   const [cartNotice, setCartNotice] = useState("");
-  const { user } = useAuth();
+  const previousUserId = useRef<string | null>(null);
+  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
     let active = true;
@@ -55,6 +86,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     async function hydrateCart() {
       try {
         const stored = window.localStorage.getItem(storageKey);
+        setCartOwner(window.localStorage.getItem(cartOwnerKey) ?? guestCartOwner);
         if (!stored) return;
         const parsed = JSON.parse(stored) as unknown;
         if (!Array.isArray(parsed)) throw new Error("Stored cart is invalid.");
@@ -64,6 +96,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
             if (!line?.product?.slug || !Number.isFinite(line.quantity)) return null;
             const product = await fetchProduct(line.product.slug).catch(() => line.product);
             const activeVariants = (product.variants ?? []).filter((variant) => variant.isActive);
+            if (!line.variant && isBaseProductEnabled(product)) {
+              return {
+                product,
+                quantity: Math.max(1, Math.min(line.quantity, product.inventory))
+              } satisfies CartLine;
+            }
             if (!activeVariants.length) {
               return {
                 product,
@@ -106,41 +144,68 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (hydrated) window.localStorage.setItem(storageKey, JSON.stringify(cart));
-  }, [cart, hydrated]);
+    if (!hydrated) return;
+    window.localStorage.setItem(storageKey, JSON.stringify(cart));
+    window.localStorage.setItem(cartOwnerKey, cartOwner);
+  }, [cart, cartOwner, hydrated]);
 
   useEffect(() => {
-    if (!hydrated || !user) {
+    if (!hydrated || authLoading) return;
+    if (!user) {
       setAccountCartReady(false);
+      if (cartOwner !== guestCartOwner) {
+        setCart([]);
+        setCartOwner(guestCartOwner);
+      }
       return;
     }
+    const shouldMergeGuestCart = cartOwner === guestCartOwner;
     fetchAccountCart()
       .then(async (serverCart) => {
-        if (serverCart.items.length) {
-          setCart(serverCart.items.map((item) => ({
-            product: item.product,
-            variant: item.variant,
-            quantity: item.quantity
-          })));
-        } else if (cart.length) {
+        const accountLines = serverCart.items.map((item) => ({
+          product: item.product,
+          variant: item.variant,
+          quantity: item.quantity
+        }));
+        const nextCart = shouldMergeGuestCart
+          ? mergeGuestCart(accountLines, cart)
+          : accountLines;
+        setCart(nextCart);
+        setCartOwner(user.id);
+        if (shouldMergeGuestCart && cart.length) {
           await saveAccountCart(
-            cart.map((line) => ({
+            nextCart.map((line) => ({
               productId: line.product.id,
               variantId: line.variant?.id,
               quantity: line.quantity
             }))
           );
+          setCartNotice(
+            `${cart.length} guest ${cart.length === 1 ? "item was" : "items were"} added to your account bag.`
+          );
         }
+        setAccountCartReady(true);
       })
       .catch((error: unknown) => {
+        setAccountCartReady(false);
         setCartNotice(
           error instanceof Error
             ? error.message
             : "Your bag could not be synchronized. Please try again."
         );
-      })
-      .finally(() => setAccountCartReady(true));
-  }, [hydrated, user?.id]);
+      });
+  }, [authLoading, hydrated, user?.id]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    const currentUserId = user?.id ?? null;
+    if (previousUserId.current && !currentUserId) {
+      setCart([]);
+      setCartOwner(guestCartOwner);
+      setAccountCartReady(false);
+    }
+    previousUserId.current = currentUserId;
+  }, [authLoading, user?.id]);
 
   useEffect(() => {
     if (!user || !accountCartReady) return;
@@ -164,7 +229,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   function addItem(product: Product, quantity = 1, variant?: ProductVariant | null) {
     const activeVariants = (product.variants ?? []).filter((item) => item.isActive);
-    if (activeVariants.length && !variant) {
+    if (activeVariants.length && !variant && !isBaseProductEnabled(product)) {
       setCartNotice(`${product.name} requires an option selection.`);
       setIsOpen(false);
       window.location.assign(`/products/${product.slug}`);
@@ -172,6 +237,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
     const available = variant?.inventory ?? product.inventory;
     if (available < 1) return;
+    if (!user) setCartOwner(guestCartOwner);
     setCartNotice("");
     const lineId = variant?.id ?? product.id;
     setCart((current) => {
@@ -191,7 +257,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
       productId: product.id,
       metadata: { variantId: variant?.id, quantity }
     });
-    setIsOpen(true);
   }
 
   function updateQuantity(lineId: string, quantity: number) {
@@ -222,6 +287,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       cart,
+      cartReady: hydrated,
       cartCount: cart.reduce((total, line) => total + line.quantity, 0),
       subtotal: cart.reduce(
         (total, line) => total + (line.variant?.price ?? line.product.price) * line.quantity,
@@ -236,12 +302,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
       removeItem,
       clearCart: () => setCart([])
     }),
-    [cart, cartNotice, isOpen]
+    [cart, cartNotice, hydrated, isOpen]
   );
 
   return (
     <CartContext.Provider value={value}>
       {children}
+      <FloatingCartButton />
       <CartDrawer />
     </CartContext.Provider>
   );
@@ -251,6 +318,39 @@ export function useCart() {
   const context = useContext(CartContext);
   if (!context) throw new Error("useCart must be used inside CartProvider.");
   return context;
+}
+
+function FloatingCartButton() {
+  const { cartCount, cartReady, subtotal, setIsOpen } = useCart();
+  const hasItems = cartCount > 0;
+
+  return (
+    <button
+      className={`floating-cart ${hasItems ? "has-items" : "is-empty"}`}
+      type="button"
+      onClick={() => setIsOpen(true)}
+      aria-label={
+        hasItems
+          ? `Open shopping bag with ${cartCount} ${cartCount === 1 ? "item" : "items"}`
+          : "Open empty shopping bag"
+      }
+    >
+      <span className="floating-cart-art" aria-hidden="true" key={cartCount}>
+        <ShoppingBag size={25} strokeWidth={1.7} />
+        {hasItems ? <b>{cartCount > 99 ? "99+" : cartCount}</b> : <span />}
+      </span>
+      <span className="floating-cart-copy">
+        <small>
+          {!cartReady
+            ? "Loading bag"
+            : hasItems
+              ? `${cartCount} ${cartCount === 1 ? "item" : "items"}`
+              : "Bag is empty"}
+        </small>
+        <strong>{hasItems ? formatMoney(subtotal) : "Start shopping"}</strong>
+      </span>
+    </button>
+  );
 }
 
 function CartDrawer() {
@@ -265,9 +365,7 @@ function CartDrawer() {
     updateQuantity,
     removeItem
   } = useCart();
-  const checkoutHref = cart.length
-    ? `/products/${cart[0].product.slug}?checkout=cart#checkout`
-    : "#";
+  const checkoutHref = cart.length ? "/checkout" : "#";
 
   return (
     <>
@@ -334,29 +432,35 @@ function CartDrawer() {
             ))
           ) : (
             <div className="empty-cart">
-              <ShoppingBag size={32} strokeWidth={1.5} />
-              <strong>Your bag is empty</strong>
-              <p>Browse the pantry and add something useful.</p>
+              <div className="empty-cart-art" aria-hidden="true">
+                <ShoppingBag size={46} strokeWidth={1.35} />
+                <span />
+              </div>
+              <small>Your pantry bag</small>
+              <strong>Ready when you are</strong>
+              <p>Choose something useful for home and it will wait for you here.</p>
               <a className="primary-action" href="/shop" onClick={() => setIsOpen(false)}>
-                Start shopping
+                Explore products
               </a>
             </div>
           )}
         </div>
-        <div className="drawer-footer">
-          <div className="drawer-total">
-            <span>Subtotal</span>
-            <strong>{formatMoney(subtotal)}</strong>
+        {cart.length ? (
+          <div className="drawer-footer">
+            <div className="drawer-total">
+              <span>Subtotal</span>
+              <strong>{formatMoney(subtotal)}</strong>
+            </div>
+            <a
+              className="primary-action full"
+              href={checkoutHref}
+              onClick={() => setIsOpen(false)}
+            >
+              Continue to checkout
+            </a>
+            <small>Delivery is calculated at checkout.</small>
           </div>
-          <a
-            className={`primary-action full ${cart.length ? "" : "disabled-link"}`}
-            href={checkoutHref}
-            onClick={() => setIsOpen(false)}
-          >
-            Continue to checkout
-          </a>
-          <small>Delivery is calculated at checkout.</small>
-        </div>
+        ) : null}
       </aside>
       {isOpen ? (
         <button

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Percent, RefreshCw, Search, Star, Trash2, X } from "lucide-react";
+import { Check, Home, Percent, RefreshCw, Search, Star, Trash2, X } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   GrowthAnalytics,
@@ -33,7 +33,10 @@ export function AdminGrowth() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [reviewReplies, setReviewReplies] = useState<Record<string, string>>({});
+  const [reviewPriorities, setReviewPriorities] = useState<Record<string, number>>({});
+  const [reviewFilter, setReviewFilter] = useState<"ALL" | Review["status"] | "HOMEPAGE">("ALL");
   const [editingPromotion, setEditingPromotion] = useState<Promotion | null>(null);
+  const [promotionType, setPromotionType] = useState<Promotion["type"]>("PERCENTAGE");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,14 +70,14 @@ export function AdminGrowth() {
         name: String(data.get("name")),
         code: String(data.get("code")).toUpperCase(),
         type: String(data.get("type")) as Promotion["type"],
-        value: Number(data.get("value")),
+        value: String(data.get("type")) === "FREE_SHIPPING" ? 0 : Number(data.get("value")),
         minimumOrder: Number(data.get("minimumOrder") || 0),
         maximumDiscount: Number(data.get("maximumDiscount") || 0) || undefined,
         usageLimit: Number(data.get("usageLimit") || 0) || undefined,
         perCustomerLimit: Number(data.get("perCustomerLimit") || 1),
         startsAt: new Date(String(data.get("startsAt"))).toISOString(),
         endsAt: new Date(String(data.get("endsAt"))).toISOString(),
-        isActive: true
+        isActive: editingPromotion?.isActive ?? true
       };
       const promotion = editingPromotion
         ? await updateAdminPromotion(editingPromotion.id, input)
@@ -84,6 +87,7 @@ export function AdminGrowth() {
         : [promotion, ...current]);
       setMessage(`${promotion.code} is ready.`);
       setEditingPromotion(null);
+      setPromotionType("PERCENTAGE");
       form.reset();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Promotion could not be created.");
@@ -101,16 +105,22 @@ export function AdminGrowth() {
     }
   }
 
-  async function moderate(review: Review, status: Review["status"]) {
+  async function moderate(
+    review: Review,
+    status: Review["status"] = review.status,
+    showOnHome: boolean = review.showOnHome
+  ) {
     try {
       const updated = await moderateAdminReview(review.id, {
         status,
-        adminReply: reviewReplies[review.id]?.trim() || review.adminReply || undefined
+        adminReply: reviewReplies[review.id]?.trim() || review.adminReply || undefined,
+        showOnHome,
+        homePriority: reviewPriorities[review.id] ?? review.homePriority
       });
       setReviews((current) =>
         current.map((item) => item.id === updated.id ? updated : item)
       );
-      setMessage(`Review marked ${status.toLowerCase()}.`);
+      setMessage(showOnHome ? "Review is now showcased on the homepage." : `Review saved as ${status.toLowerCase()}.`);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Review could not be updated.");
     }
@@ -119,12 +129,23 @@ export function AdminGrowth() {
   async function removePromotion(item: Promotion) {
     if (!window.confirm(`Delete ${item.code}?`)) return;
     try {
-      await deleteAdminPromotion(item.id);
-      setPromotions((current) => current.filter((promotion) => promotion.id !== item.id));
+      const result = await deleteAdminPromotion(item.id);
+      setPromotions((current) =>
+        result.archived
+          ? current.map((promotion) =>
+              promotion.id === item.id ? { ...promotion, isActive: false } : promotion
+            )
+          : current.filter((promotion) => promotion.id !== item.id)
+      );
       setMessage(`${item.code} was removed or archived.`);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Promotion could not be removed.");
     }
+  }
+
+  function editPromotion(item: Promotion) {
+    setEditingPromotion(item);
+    setPromotionType(item.type);
   }
 
   if (loading && !analytics) return <AdminLoading label="Connecting customer and revenue signals..." />;
@@ -135,8 +156,8 @@ export function AdminGrowth() {
     <div className="admin-page">
       <AdminPageTitle
         eyebrow="Demand and retention"
-        title="Growth"
-        description="See where demand originates, where shoppers drop off, and which actions can improve conversion."
+        title="Marketing and growth"
+        description="Measure demand, manage offers, moderate reviews, and find conversion opportunities."
         actions={
           <>
             <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
@@ -152,7 +173,14 @@ export function AdminGrowth() {
       />
       {message ? <p className="admin-message">{message}</p> : null}
 
-      <section className="admin-funnel">
+      <nav className="admin-subnav" aria-label="Marketing sections">
+        <a href="#growth-analytics">Analytics</a>
+        <a href="#growth-products">Product opportunity</a>
+        <a href="#growth-promotions">Promotions</a>
+        <a href="#growth-reviews">Reviews</a>
+      </nav>
+
+      <section className="admin-funnel" id="growth-analytics">
         {analytics.funnel.map((stage) => (
           <div key={stage.stage}>
             <small>{stage.stage.replace(/_/g, " ")}</small>
@@ -190,7 +218,7 @@ export function AdminGrowth() {
         </div>
       </section>
 
-      <section className="admin-data-panel">
+      <section className="admin-data-panel" id="growth-products">
         <AdminSectionHeader title="Product opportunity" description="View-to-cart exposes interest; units and revenue confirm demand" />
         <div className="admin-table-wrap">
           <table className="admin-table">
@@ -206,59 +234,179 @@ export function AdminGrowth() {
       </section>
 
       <section className="admin-two-column">
-        <div className="admin-data-panel">
+        <div className="admin-data-panel" id="growth-promotions">
           <AdminSectionHeader title="Promotions" description="Guarded by dates, usage limits, and minimum spend" />
           <div className="admin-compact-list">
             {promotions.map((promotion) => (
-              <article key={promotion.id}>
-                <div><strong>{promotion.code}</strong><span>{promotion.name}</span></div>
+              <article className="admin-promotion-row" key={promotion.id}>
                 <div>
-                  <small>{promotion.type === "PERCENTAGE" ? `${promotion.value}%` : formatMoney(promotion.value)}</small>
+                  <strong>{promotion.code}</strong>
+                  <span>{promotion.name}</span>
+                  <small>
+                    {new Date(promotion.startsAt).toLocaleDateString("en-BD")} - {new Date(promotion.endsAt).toLocaleDateString("en-BD")}
+                  </small>
+                </div>
+                <div className="admin-promotion-metrics">
+                  <span><strong>{promotion._count?.redemptions ?? 0}</strong> uses</span>
+                  <span>
+                    <strong>{formatMoney((promotion.redemptions ?? []).reduce((sum, item) => sum + item.discount, 0))}</strong>
+                    discount
+                  </span>
+                  <span>
+                    <strong>{formatMoney((promotion.orders ?? []).filter((order) => order.status !== "CANCELLED").reduce((sum, order) => sum + order.total, 0))}</strong>
+                    revenue
+                  </span>
+                </div>
+                <div>
+                  <small>
+                    {promotion.type === "PERCENTAGE"
+                      ? `${promotion.value}%`
+                      : promotion.type === "FREE_SHIPPING"
+                        ? "Free shipping"
+                        : formatMoney(promotion.value)}
+                  </small>
+                  <StatusBadge value={promotion.isActive ? "ACTIVE" : "PAUSED"} kind="product" />
                   <button type="button" onClick={() => void togglePromotion(promotion)}>
                     {promotion.isActive ? "Pause" : "Activate"}
                   </button>
-                  <button type="button" onClick={() => setEditingPromotion(promotion)}>Edit</button>
+                  <button type="button" onClick={() => editPromotion(promotion)}>Edit</button>
                   <button type="button" onClick={() => void removePromotion(promotion)} title="Delete promotion"><Trash2 size={15} /></button>
                 </div>
               </article>
             ))}
           </div>
           <form className="admin-inline-form promotion-admin-form" onSubmit={createPromotion} key={editingPromotion?.id ?? "new-promotion"}>
-            <div className="form-grid"><input name="name" placeholder="Offer name" defaultValue={editingPromotion?.name ?? ""} required /><input name="code" placeholder="Code" defaultValue={editingPromotion?.code ?? ""} required /></div>
             <div className="form-grid">
-              <select name="type" defaultValue={editingPromotion?.type ?? "PERCENTAGE"}><option value="PERCENTAGE">Percentage</option><option value="FIXED">Fixed amount</option><option value="FREE_SHIPPING">Free shipping</option></select>
-              <input name="value" type="number" min="0" step="0.01" placeholder="Value" defaultValue={editingPromotion?.value ?? ""} required />
+              <label>Offer name<input name="name" placeholder="For example, Summer pantry offer" defaultValue={editingPromotion?.name ?? ""} required /></label>
+              <label>Coupon code<input name="code" placeholder="For example, PANTRY10" defaultValue={editingPromotion?.code ?? ""} required /></label>
             </div>
-            <div className="form-grid"><input name="minimumOrder" type="number" min="0" placeholder="Minimum order" defaultValue={editingPromotion?.minimumOrder ?? ""} /><input name="maximumDiscount" type="number" min="0" placeholder="Maximum discount" defaultValue={editingPromotion?.maximumDiscount ?? ""} /></div>
-            <div className="form-grid"><input name="usageLimit" type="number" min="1" placeholder="Total uses" defaultValue={editingPromotion?.usageLimit ?? ""} /><input name="perCustomerLimit" type="number" min="1" defaultValue={editingPromotion?.perCustomerLimit ?? 1} /></div>
-            <div className="form-grid"><input name="startsAt" type="datetime-local" defaultValue={editingPromotion ? new Date(editingPromotion.startsAt).toISOString().slice(0, 16) : ""} required /><input name="endsAt" type="datetime-local" defaultValue={editingPromotion ? new Date(editingPromotion.endsAt).toISOString().slice(0, 16) : ""} required /></div>
+            <div className="form-grid">
+              <label>Discount type
+                <select
+                  name="type"
+                  value={promotionType}
+                  onChange={(event) => setPromotionType(event.target.value as Promotion["type"])}
+                >
+                  <option value="PERCENTAGE">Percentage</option>
+                  <option value="FIXED">Fixed amount</option>
+                  <option value="FREE_SHIPPING">Free shipping</option>
+                </select>
+              </label>
+              <label>Discount value
+                <input
+                  key={`${editingPromotion?.id ?? "new"}-${promotionType}`}
+                  name="value"
+                  type="number"
+                  min={promotionType === "PERCENTAGE" ? 1 : 0}
+                  max={promotionType === "PERCENTAGE" ? 100 : undefined}
+                  step="0.01"
+                  placeholder={promotionType === "PERCENTAGE" ? "Percentage from 1 to 100" : "Discount amount"}
+                  defaultValue={promotionType === "FREE_SHIPPING" ? 0 : editingPromotion?.value ?? ""}
+                  disabled={promotionType === "FREE_SHIPPING"}
+                  required
+                />
+              </label>
+            </div>
+            <div className="form-grid">
+              <label>Minimum order<input name="minimumOrder" type="number" min="0" placeholder="No minimum when empty" defaultValue={editingPromotion?.minimumOrder ?? ""} /></label>
+              <label>Maximum discount<input name="maximumDiscount" type="number" min="0" placeholder="No cap when empty" defaultValue={editingPromotion?.maximumDiscount ?? ""} /></label>
+            </div>
+            <div className="form-grid">
+              <label>Total usage limit<input name="usageLimit" type="number" min="1" placeholder="Unlimited when empty" defaultValue={editingPromotion?.usageLimit ?? ""} /></label>
+              <label>Uses per customer<input name="perCustomerLimit" type="number" min="1" defaultValue={editingPromotion?.perCustomerLimit ?? 1} /></label>
+            </div>
+            <div className="form-grid">
+              <label>Starts publishing<input name="startsAt" type="datetime-local" defaultValue={editingPromotion ? new Date(editingPromotion.startsAt).toISOString().slice(0, 16) : ""} required /></label>
+              <label>Stops publishing<input name="endsAt" type="datetime-local" defaultValue={editingPromotion ? new Date(editingPromotion.endsAt).toISOString().slice(0, 16) : ""} required /></label>
+            </div>
             <button className="primary-action full" type="submit"><Percent size={17} /> {editingPromotion ? "Save promotion" : "Create promotion"}</button>
-            {editingPromotion ? <button className="secondary-action full" type="button" onClick={() => setEditingPromotion(null)}>Cancel editing</button> : null}
+            {editingPromotion ? <button className="secondary-action full" type="button" onClick={() => { setEditingPromotion(null); setPromotionType("PERCENTAGE"); }}>Cancel editing</button> : null}
           </form>
         </div>
 
-        <div className="admin-data-panel">
-          <AdminSectionHeader title="Review moderation" description="Approve useful feedback and reject abuse before publication" />
+        <div className="admin-data-panel" id="growth-reviews">
+          <AdminSectionHeader title="Product reviews" description="Moderate customer feedback and select approved reviews for the homepage" />
+          <div className="admin-review-toolbar">
+            <div className="admin-segmented">
+              {(["ALL", "PENDING", "APPROVED", "REJECTED", "HOMEPAGE"] as const).map((filter) => (
+                <button
+                  className={reviewFilter === filter ? "active" : ""}
+                  key={filter}
+                  type="button"
+                  onClick={() => setReviewFilter(filter)}
+                >
+                  {filter === "HOMEPAGE" ? "Homepage" : filter.toLowerCase()}
+                </button>
+              ))}
+            </div>
+            <a className="secondary-action" href="/admin?tab=content&content=testimonials">
+              <Star size={16} /> Add curated review
+            </a>
+          </div>
           <div className="admin-review-queue">
-            {reviews.length ? reviews.slice(0, 12).map((review) => (
+            {reviews.filter((review) =>
+              reviewFilter === "ALL"
+                ? true
+                : reviewFilter === "HOMEPAGE"
+                  ? review.showOnHome
+                  : review.status === reviewFilter
+            ).length ? reviews.filter((review) =>
+              reviewFilter === "ALL"
+                ? true
+                : reviewFilter === "HOMEPAGE"
+                  ? review.showOnHome
+                  : review.status === reviewFilter
+            ).map((review) => (
               <article key={review.id}>
                 <div>
-                  <strong>{review.product?.name ?? "Product review"}</strong>
+                  <div>
+                    <strong>{review.product?.name ?? "Product review"}</strong>
+                    <small>{review.user?.name ?? "Customer"}{review.isVerified ? " - Verified purchase" : ""}</small>
+                  </div>
                   <StatusBadge value={review.status} kind="product" />
                 </div>
                 <span>{Array.from({ length: review.rating }).map((_, index) => <Star key={index} size={13} fill="currentColor" />)}</span>
+                {review.title ? <strong>{review.title}</strong> : null}
                 <p>{review.comment}</p>
                 <textarea
                   value={reviewReplies[review.id] ?? review.adminReply ?? ""}
                   onChange={(event) => setReviewReplies((current) => ({ ...current, [review.id]: event.target.value }))}
                   placeholder="Public store reply (optional)"
                 />
-                {review.status === "PENDING" ? (
-                  <div>
+                <div className="admin-review-settings">
+                  <label>
+                    Homepage order
+                    <input
+                      type="number"
+                      value={reviewPriorities[review.id] ?? review.homePriority}
+                      onChange={(event) => setReviewPriorities((current) => ({
+                        ...current,
+                        [review.id]: Number(event.target.value)
+                      }))}
+                    />
+                  </label>
+                  <span className={review.showOnHome ? "featured" : ""}>
+                    <Home size={14} /> {review.showOnHome ? "On homepage" : "Not showcased"}
+                  </span>
+                </div>
+                <div className="admin-review-actions">
+                  {review.status !== "APPROVED" ? (
                     <button type="button" onClick={() => void moderate(review, "APPROVED")} title="Approve"><Check size={16} /> Approve</button>
+                  ) : null}
+                  {review.status !== "REJECTED" ? (
                     <button type="button" onClick={() => void moderate(review, "REJECTED")} title="Reject"><X size={16} /> Reject</button>
-                  </div>
-                ) : <button type="button" onClick={() => void moderate(review, review.status)}>Save reply</button>}
+                  ) : null}
+                  <button type="button" onClick={() => void moderate(review)}><Check size={16} /> Save</button>
+                  {review.status === "APPROVED" ? (
+                    <button
+                      type="button"
+                      className={review.showOnHome ? "active" : ""}
+                      onClick={() => void moderate(review, "APPROVED", !review.showOnHome)}
+                    >
+                      <Home size={16} /> {review.showOnHome ? "Remove from home" : "Show on home"}
+                    </button>
+                  ) : null}
+                </div>
               </article>
             )) : <p>No reviews need attention.</p>}
           </div>

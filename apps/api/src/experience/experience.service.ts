@@ -13,6 +13,9 @@ import {
   Promotion,
   PromotionType,
   PurchaseOrderStatus,
+  RefundStatus,
+  ReturnDisposition,
+  ReturnResolutionType,
   ReturnStatus,
   UserRole
 } from "@prisma/client";
@@ -29,6 +32,7 @@ import {
   CreateSupplierDto,
   CreateVariantDto,
   InventoryAdjustmentDto,
+  ModerateReviewDto,
   SaveCartDto,
   TrackEventDto,
   UpdateAddressDto,
@@ -71,6 +75,20 @@ export class ExperienceService {
             OR: [
               { name: { contains: query.search.trim(), mode: "insensitive" } },
               { description: { contains: query.search.trim(), mode: "insensitive" } },
+              {
+                brand: {
+                  is: {
+                    name: { contains: query.search.trim(), mode: "insensitive" }
+                  }
+                }
+              },
+              {
+                category: {
+                  is: {
+                    name: { contains: query.search.trim(), mode: "insensitive" }
+                  }
+                }
+              },
               { tags: { has: query.search.trim().toLowerCase() } }
             ]
           }
@@ -242,7 +260,7 @@ export class ExperienceService {
       if (variant && variant.productId !== item.productId) {
         throw new BadRequestException("A selected product option is invalid.");
       }
-      if (product.variants.length && !item.variantId) {
+      if (product.variants.length && product.baseOptionEnabled === false && !item.variantId) {
         throw new BadRequestException(`${product.name} requires an option selection.`);
       }
       if ((variant?.inventory ?? product.inventory) < item.quantity) {
@@ -323,6 +341,15 @@ export class ExperienceService {
     });
   }
 
+  myProductReview(userId: string, productId: string) {
+    return this.prisma.review.findUnique({
+      where: { userId_productId: { userId, productId } },
+      include: {
+        product: { select: { name: true, slug: true } }
+      }
+    });
+  }
+
   async submitReview(userId: string, email: string, productId: string, dto: CreateReviewDto) {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException("Product not found.");
@@ -342,7 +369,8 @@ export class ExperienceService {
         comment: dto.comment,
         orderId: verifiedOrder?.id,
         isVerified: Boolean(verifiedOrder),
-        status: "PENDING"
+        status: "PENDING",
+        showOnHome: false
       },
       create: {
         userId,
@@ -431,7 +459,11 @@ export class ExperienceService {
   async returns(userId: string) {
     return this.prisma.returnRequest.findMany({
       where: { userId },
-      include: { order: { select: { orderNumber: true, total: true } }, items: true },
+      include: {
+        order: { select: { orderNumber: true, total: true } },
+        items: { include: { orderItem: true } },
+        refund: true
+      },
       orderBy: { createdAt: "desc" }
     });
   }
@@ -441,6 +473,11 @@ export class ExperienceService {
       where: { id: dto.orderId, email, status: "DELIVERED" },
       include: {
         items: true,
+        trackingEvents: {
+          where: { status: OrderStatus.DELIVERED },
+          orderBy: { createdAt: "desc" },
+          take: 1
+        },
         returnRequests: {
           where: { status: { notIn: [ReturnStatus.REJECTED, ReturnStatus.CANCELLED] } },
           include: { items: true }
@@ -448,6 +485,10 @@ export class ExperienceService {
       }
     });
     if (!order) throw new BadRequestException("Only delivered orders can be returned.");
+    const deliveredAt = order.trackingEvents[0]?.createdAt ?? order.updatedAt;
+    if (Date.now() - deliveredAt.getTime() > 48 * 60 * 60 * 1000) {
+      throw new BadRequestException("The 48-hour return request window has closed.");
+    }
     const requestedIds = new Set<string>();
     for (const requested of dto.items) {
       if (requestedIds.has(requested.orderItemId)) {
@@ -472,7 +513,11 @@ export class ExperienceService {
         details: dto.details,
         items: { create: dto.items }
       },
-      include: { items: true, order: true }
+      include: {
+        items: { include: { orderItem: true } },
+        order: { select: { orderNumber: true, total: true } },
+        refund: true
+      }
     });
   }
 
@@ -484,7 +529,12 @@ export class ExperienceService {
     }
     return this.prisma.returnRequest.update({
       where: { id },
-      data: { status: ReturnStatus.CANCELLED }
+      data: { status: ReturnStatus.CANCELLED },
+      include: {
+        items: { include: { orderItem: true } },
+        order: { select: { orderNumber: true, total: true } },
+        refund: true
+      }
     });
   }
 
@@ -544,15 +594,32 @@ export class ExperienceService {
 
   adminPromotions() {
     return this.prisma.promotion.findMany({
-      include: { _count: { select: { redemptions: true, orders: true } } },
+      include: {
+        _count: { select: { redemptions: true, orders: true } },
+        redemptions: { select: { discount: true, email: true, createdAt: true } },
+        orders: { select: { total: true, status: true } }
+      },
       orderBy: { createdAt: "desc" }
     });
+  }
+
+  private validatePromotionValue(type: PromotionType, value: number) {
+    if (type === PromotionType.PERCENTAGE && (value <= 0 || value > 100)) {
+      throw new BadRequestException("Percentage promotions must be between 1 and 100.");
+    }
+    if (type === PromotionType.FIXED && value <= 0) {
+      throw new BadRequestException("Fixed promotions require an amount greater than zero.");
+    }
+    if (type === PromotionType.FREE_SHIPPING && value !== 0) {
+      throw new BadRequestException("Free shipping promotions must use a value of zero.");
+    }
   }
 
   async createPromotion(actorId: string, dto: CreatePromotionDto) {
     if (new Date(dto.endsAt) <= new Date(dto.startsAt)) {
       throw new BadRequestException("Promotion end date must be after its start date.");
     }
+    this.validatePromotionValue(dto.type, dto.value);
     const promotion = await this.prisma.promotion.create({
       data: {
         ...dto,
@@ -562,6 +629,11 @@ export class ExperienceService {
         minimumOrder: dto.minimumOrder ?? 0,
         perCustomerLimit: dto.perCustomerLimit ?? 1,
         isActive: dto.isActive ?? true
+      },
+      include: {
+        _count: { select: { redemptions: true, orders: true } },
+        redemptions: { select: { discount: true, email: true, createdAt: true } },
+        orders: { select: { total: true, status: true } }
       }
     });
     await this.audit(actorId, "promotion.created", "Promotion", promotion.id, { code: promotion.code });
@@ -576,6 +648,7 @@ export class ExperienceService {
     if (endsAt <= startsAt) {
       throw new BadRequestException("Promotion end date must be after its start date.");
     }
+    this.validatePromotionValue(dto.type ?? current.type, dto.value ?? current.value);
     const promotion = await this.prisma.promotion.update({
       where: { id },
       data: {
@@ -583,6 +656,11 @@ export class ExperienceService {
         code: dto.code?.trim().toUpperCase(),
         startsAt: dto.startsAt ? startsAt : undefined,
         endsAt: dto.endsAt ? endsAt : undefined
+      },
+      include: {
+        _count: { select: { redemptions: true, orders: true } },
+        redemptions: { select: { discount: true, email: true, createdAt: true } },
+        orders: { select: { total: true, status: true } }
       }
     });
     await this.audit(actorId, "promotion.updated", "Promotion", id, { ...dto });
@@ -590,8 +668,11 @@ export class ExperienceService {
   }
 
   async deletePromotion(actorId: string, id: string) {
-    const usage = await this.prisma.couponRedemption.count({ where: { promotionId: id } });
-    if (usage) {
+    const [usage, linkedOrders] = await Promise.all([
+      this.prisma.couponRedemption.count({ where: { promotionId: id } }),
+      this.prisma.order.count({ where: { promotionId: id } })
+    ]);
+    if (usage || linkedOrders) {
       const promotion = await this.prisma.promotion.update({
         where: { id },
         data: { isActive: false }
@@ -610,10 +691,10 @@ export class ExperienceService {
         ? { status: status as "PENDING" | "APPROVED" | "REJECTED" }
         : {},
       include: {
-        user: { select: { name: true, email: true } },
-        product: { select: { name: true, slug: true } }
+        user: { select: { name: true, email: true, avatarUrl: true } },
+        product: { select: { name: true, slug: true, imageUrl: true } }
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ showOnHome: "desc" }, { homePriority: "asc" }, { createdAt: "desc" }],
       take: 200
     });
   }
@@ -621,11 +702,35 @@ export class ExperienceService {
   async moderateReview(
     actorId: string,
     id: string,
-    status: "PENDING" | "APPROVED" | "REJECTED",
-    adminReply?: string
+    dto: ModerateReviewDto
   ) {
-    const review = await this.prisma.review.update({ where: { id }, data: { status, adminReply } });
-    await this.audit(actorId, "review.moderated", "Review", id, { status });
+    const current = await this.prisma.review.findUnique({ where: { id } });
+    if (!current) throw new NotFoundException("Review not found.");
+    const status = dto.status ?? current.status;
+    const showOnHome = status === "APPROVED"
+      ? dto.showOnHome ?? current.showOnHome
+      : false;
+    if (dto.showOnHome && status !== "APPROVED") {
+      throw new BadRequestException("Approve the review before showcasing it on the homepage.");
+    }
+    const review = await this.prisma.review.update({
+      where: { id },
+      data: {
+        status,
+        adminReply: dto.adminReply,
+        showOnHome,
+        homePriority: dto.homePriority
+      },
+      include: {
+        user: { select: { name: true, email: true, avatarUrl: true } },
+        product: { select: { name: true, slug: true, imageUrl: true } }
+      }
+    });
+    await this.audit(actorId, "review.moderated", "Review", id, {
+      status,
+      showOnHome,
+      homePriority: review.homePriority
+    });
     return review;
   }
 
@@ -636,8 +741,9 @@ export class ExperienceService {
         : {},
       include: {
         user: { select: { name: true, email: true } },
-        order: { include: { items: true } },
-        items: { include: { orderItem: true } }
+        order: { include: { items: true, payments: true, refunds: true } },
+        items: { include: { orderItem: true } },
+        refund: true
       },
       orderBy: { createdAt: "desc" }
     });
@@ -646,13 +752,19 @@ export class ExperienceService {
   async updateReturn(actorId: string, id: string, dto: UpdateReturnDto) {
     const current = await this.prisma.returnRequest.findUnique({
       where: { id },
-      include: { items: { include: { orderItem: true } } }
+      include: {
+        items: { include: { orderItem: true } },
+        order: { include: { payments: true, refunds: true } },
+        refund: true
+      }
     });
     if (!current) throw new NotFoundException("Return request not found.");
     const transitions: Record<ReturnStatus, ReturnStatus[]> = {
       REQUESTED: [ReturnStatus.APPROVED, ReturnStatus.REJECTED, ReturnStatus.CANCELLED],
       APPROVED: [ReturnStatus.RECEIVED, ReturnStatus.CANCELLED],
-      RECEIVED: [ReturnStatus.RESOLVED],
+      RECEIVED: [ReturnStatus.REFUND_PENDING, ReturnStatus.RESOLVED],
+      REFUND_PENDING: [],
+      REFUNDED: [],
       RESOLVED: [],
       REJECTED: [],
       CANCELLED: []
@@ -665,37 +777,130 @@ export class ExperienceService {
         `Return cannot move from ${current.status} to ${dto.status}.`
       );
     }
+    if (dto.status === ReturnStatus.REJECTED && !dto.resolution?.trim()) {
+      throw new BadRequestException("Add a clear reason before rejecting this return.");
+    }
+    if (dto.status === ReturnStatus.RECEIVED) {
+      const dispositions = new Map(
+        (dto.items ?? []).map((item) => [item.returnItemId, item.disposition])
+      );
+      if (current.items.some((item) => !dispositions.has(item.id))) {
+        throw new BadRequestException("Choose a disposition for every received item.");
+      }
+    }
+    if (
+      dto.status === ReturnStatus.REFUND_PENDING &&
+      dto.resolutionType !== ReturnResolutionType.REFUND
+    ) {
+      throw new BadRequestException("Refund resolution is required before creating a refund.");
+    }
+    if (
+      dto.status === ReturnStatus.RESOLVED &&
+      (!dto.resolutionType || dto.resolutionType === ReturnResolutionType.REFUND)
+    ) {
+      throw new BadRequestException("Choose replacement, store credit, or no action to resolve without a refund.");
+    }
     const updated = await this.prisma.$transaction(async (transaction) => {
       if (dto.status === ReturnStatus.RECEIVED && current.status !== ReturnStatus.RECEIVED) {
+        const dispositions = new Map(
+          (dto.items ?? []).map((item) => [item.returnItemId, item.disposition])
+        );
         for (const item of current.items) {
-          if (item.orderItem.variantId) {
-            await transaction.productVariant.update({
-              where: { id: item.orderItem.variantId },
-              data: { inventory: { increment: item.quantity } }
-            });
-          } else {
-            await transaction.product.update({
-              where: { id: item.orderItem.productId },
-              data: { inventory: { increment: item.quantity } }
-            });
+          const disposition = dispositions.get(item.id)!;
+          await transaction.returnItem.update({
+            where: { id: item.id },
+            data: { disposition }
+          });
+          if (disposition === ReturnDisposition.RESTOCK) {
+            if (item.orderItem.variantId) {
+              await transaction.productVariant.update({
+                where: { id: item.orderItem.variantId },
+                data: { inventory: { increment: item.quantity } }
+              });
+            } else {
+              await transaction.product.update({
+                where: { id: item.orderItem.productId },
+                data: { inventory: { increment: item.quantity } }
+              });
+            }
           }
           await transaction.inventoryMovement.create({
             data: {
               productId: item.orderItem.productId,
               variantId: item.orderItem.variantId,
-              type: InventoryMovementType.RETURN,
-              quantity: item.quantity,
-              reason: `Return ${current.returnNumber} received`,
+              type:
+                disposition === ReturnDisposition.RESTOCK
+                  ? InventoryMovementType.RETURN
+                  : InventoryMovementType.DAMAGE,
+              quantity: disposition === ReturnDisposition.RESTOCK ? item.quantity : 0,
+              reason: `${item.quantity} received as ${disposition.toLowerCase()} for ${current.returnNumber}`,
               reference: current.returnNumber,
               createdById: actorId
             }
           });
         }
       }
+      if (
+        dto.status === ReturnStatus.REFUND_PENDING &&
+        current.status === ReturnStatus.RECEIVED &&
+        !current.refund
+      ) {
+        const grossReturned = current.items.reduce(
+          (sum, item) => sum + item.orderItem.unitPrice * item.quantity,
+          0
+        );
+        const allocatedDiscount =
+          current.order.subtotal > 0
+            ? current.order.discount * (grossReturned / current.order.subtotal)
+            : 0;
+        const completedRefunds = current.order.refunds
+          .filter((refund) => refund.status === RefundStatus.COMPLETED)
+          .reduce((sum, refund) => sum + refund.amount, 0);
+        const amount = money(
+          Math.max(0, Math.min(grossReturned - allocatedDiscount, current.order.total - completedRefunds))
+        );
+        if (amount <= 0) {
+          throw new BadRequestException("This return has no refundable balance.");
+        }
+        const payment = current.order.payments.find(
+          (item) =>
+            item.status === PaymentStatus.PAID ||
+            item.status === PaymentStatus.PARTIALLY_REFUNDED
+        );
+        await transaction.refund.create({
+          data: {
+            orderId: current.orderId,
+            paymentId: payment?.id,
+            returnRequestId: current.id,
+            amount,
+            reason: `Approved return ${current.returnNumber}`,
+            status: RefundStatus.PENDING
+          }
+        });
+      }
+      if (dto.status !== current.status) {
+        await transaction.notification.create({
+          data: {
+            orderId: current.orderId,
+            email: current.order.email,
+            title: "Return update",
+            message: `${current.returnNumber} is now ${dto.status.toLowerCase().replace(/_/g, " ")}.`
+          }
+        });
+      }
       return transaction.returnRequest.update({
         where: { id },
-        data: { status: dto.status, resolution: dto.resolution },
-        include: { items: true, order: true }
+        data: {
+          status: dto.status,
+          resolution: dto.resolution,
+          resolutionType: dto.resolutionType
+        },
+        include: {
+          user: { select: { name: true, email: true } },
+          order: { include: { items: true, payments: true, refunds: true } },
+          items: { include: { orderItem: true } },
+          refund: true
+        }
       });
     });
     await this.audit(actorId, "return.updated", "ReturnRequest", id, { status: dto.status });
@@ -995,21 +1200,87 @@ export class ExperienceService {
   refunds() {
     return this.prisma.refund.findMany({
       include: {
-        order: { select: { orderNumber: true, customerName: true, email: true } },
-        payment: { select: { provider: true, method: true, transactionId: true } }
+        order: { select: { orderNumber: true, customerName: true, email: true, total: true } },
+        payment: { select: { provider: true, method: true, transactionId: true } },
+        returnRequest: { select: { id: true, returnNumber: true, status: true } }
       },
       orderBy: { createdAt: "desc" }
     });
   }
 
   async updateRefund(actorId: string, id: string, dto: UpdateRefundDto) {
-    const refund = await this.prisma.refund.update({ where: { id }, data: dto });
-    if (dto.status === "COMPLETED") {
-      await this.prisma.order.update({
-        where: { id: refund.orderId },
-        data: { paymentStatus: PaymentStatus.REFUNDED }
-      });
+    const current = await this.prisma.refund.findUnique({
+      where: { id },
+      include: {
+        order: { include: { refunds: true } },
+        payment: true,
+        returnRequest: true
+      }
+    });
+    if (!current) throw new NotFoundException("Refund not found.");
+    const transitions: Record<RefundStatus, RefundStatus[]> = {
+      PENDING: [RefundStatus.PROCESSING, RefundStatus.FAILED],
+      PROCESSING: [RefundStatus.COMPLETED, RefundStatus.FAILED],
+      FAILED: [RefundStatus.PENDING],
+      COMPLETED: []
+    };
+    if (
+      dto.status !== current.status &&
+      !transitions[current.status].includes(dto.status)
+    ) {
+      throw new BadRequestException(
+        `Refund cannot move from ${current.status} to ${dto.status}.`
+      );
     }
+    const refund = await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.refund.update({
+        where: { id },
+        data: dto
+      });
+      if (dto.status === RefundStatus.COMPLETED && current.status !== RefundStatus.COMPLETED) {
+        const previouslyCompleted = current.order.refunds
+          .filter((item) => item.id !== current.id && item.status === RefundStatus.COMPLETED)
+          .reduce((sum, item) => sum + item.amount, 0);
+        const paymentStatus =
+          previouslyCompleted + current.amount >= current.order.total
+            ? PaymentStatus.REFUNDED
+            : PaymentStatus.PARTIALLY_REFUNDED;
+        await transaction.order.update({
+          where: { id: current.orderId },
+          data: { paymentStatus }
+        });
+        if (current.paymentId) {
+          await transaction.payment.update({
+            where: { id: current.paymentId },
+            data: { status: paymentStatus }
+          });
+        }
+        if (current.returnRequestId) {
+          await transaction.returnRequest.update({
+            where: { id: current.returnRequestId },
+            data: { status: ReturnStatus.REFUNDED }
+          });
+        }
+      }
+      if (dto.status !== current.status) {
+        await transaction.notification.create({
+          data: {
+            orderId: current.orderId,
+            email: current.order.email,
+            title: "Refund update",
+            message: `Your refund for ${current.order.orderNumber} is now ${dto.status.toLowerCase()}.`
+          }
+        });
+      }
+      return transaction.refund.findUniqueOrThrow({
+        where: { id },
+        include: {
+          order: { select: { orderNumber: true, customerName: true, email: true, total: true } },
+          payment: { select: { provider: true, method: true, transactionId: true } },
+          returnRequest: { select: { id: true, returnNumber: true, status: true } }
+        }
+      });
+    });
     await this.audit(actorId, "refund.updated", "Refund", id, { status: dto.status });
     return refund;
   }
@@ -1200,7 +1471,10 @@ export class ExperienceService {
         role: true,
         isActive: true,
         createdAt: true,
-        permissions: true
+        permissions: true,
+        accessRole: {
+          select: { id: true, key: true, name: true, description: true }
+        }
       },
       orderBy: { createdAt: "asc" }
     });
@@ -1211,19 +1485,37 @@ export class ExperienceService {
       where: { email: dto.email.trim().toLowerCase() }
     });
     if (exists) throw new ConflictException("An account already exists for this email.");
+    if (!dto.accessRoleId) {
+      throw new BadRequestException("An access role is required for every staff account.");
+    }
+    const accessRole = dto.accessRoleId
+      ? await this.prisma.accessRole.findFirst({
+          where: { id: dto.accessRoleId, isActive: true }
+        })
+      : null;
+    if (dto.accessRoleId && !accessRole) {
+      throw new BadRequestException("Select an active access role.");
+    }
+    if (accessRole?.key === "owner") {
+      throw new ConflictException("Owner access cannot be assigned through staff creation.");
+    }
     const user = await this.prisma.user.create({
       data: {
         name: dto.name.trim(),
         email: dto.email.trim().toLowerCase(),
         passwordHash: await hashPassword(dto.password),
-        role: dto.role,
+        role: UserRole.ADMIN,
+        accessRoleId: accessRole?.id,
         permissions: dto.permissions?.length
           ? { create: dto.permissions.map((permission) => ({ permission })) }
           : undefined
       },
-      include: { permissions: true }
+      include: { permissions: true, accessRole: true }
     });
-    await this.audit(actorId, "staff.created", "User", user.id, { role: user.role });
+    await this.audit(actorId, "staff.created", "User", user.id, {
+      role: user.role,
+      accessRoleId: user.accessRoleId
+    });
     return user;
   }
 
@@ -1231,7 +1523,30 @@ export class ExperienceService {
     if (id === actorId && dto.role === UserRole.CUSTOMER) {
       throw new ConflictException("You cannot remove your own administrator access.");
     }
-    const user = await this.prisma.user.update({ where: { id }, data: { role: dto.role } });
+    const current = await this.prisma.user.findUnique({ where: { id } });
+    if (!current) throw new NotFoundException("Staff member not found.");
+    if (current.role === UserRole.OWNER) {
+      throw new ConflictException("The owner account is protected.");
+    }
+    const accessRole = dto.accessRoleId
+      ? await this.prisma.accessRole.findFirst({
+          where: { id: dto.accessRoleId, isActive: true }
+        })
+      : null;
+    if (dto.accessRoleId && !accessRole) {
+      throw new BadRequestException("Select an active access role.");
+    }
+    if (accessRole?.key === "owner" || dto.role === UserRole.OWNER) {
+      throw new ConflictException("Owner access cannot be assigned through staff management.");
+    }
+    const user = await this.prisma.user.update({
+      where: { id },
+      data: {
+        role: dto.role,
+        accessRoleId: dto.accessRoleId
+      },
+      include: { permissions: true, accessRole: true }
+    });
     if (dto.permissions) {
       await this.prisma.staffPermission.deleteMany({ where: { userId: id } });
       if (dto.permissions.length) {
@@ -1240,13 +1555,21 @@ export class ExperienceService {
         });
       }
     }
-    await this.audit(actorId, "staff.updated", "User", id, { role: dto.role });
+    await this.audit(actorId, "staff.updated", "User", id, {
+      role: user.role,
+      accessRoleId: user.accessRoleId
+    });
     return user;
   }
 
   async deactivateStaff(actorId: string, id: string) {
     if (id === actorId) {
       throw new ConflictException("You cannot deactivate your own account.");
+    }
+    const current = await this.prisma.user.findUnique({ where: { id } });
+    if (!current) throw new NotFoundException("Staff member not found.");
+    if (current.role === UserRole.OWNER) {
+      throw new ConflictException("The owner account cannot be deactivated.");
     }
     const user = await this.prisma.user.update({
       where: { id },

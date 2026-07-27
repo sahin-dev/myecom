@@ -58,6 +58,10 @@ async function repairLegacyDocuments() {
         createdAt: { $ifNull: ["$createdAt", "$$NOW"] },
         updatedAt: { $ifNull: ["$updatedAt", "$$NOW"] },
         publishedAt: { $ifNull: ["$publishedAt", "$$NOW"] },
+        focalX: { $ifNull: ["$focalX", 50] },
+        focalY: { $ifNull: ["$focalY", 50] },
+        startsAt: { $ifNull: ["$startsAt", null] },
+        endsAt: { $ifNull: ["$endsAt", null] },
         isActive: { $ifNull: ["$isActive", true] }
       }
     }
@@ -123,8 +127,8 @@ const sections: Array<Prisma.HomeSectionCreateInput> = [
     eyebrow: "Better together",
     title: "Build a simpler weekly shop",
     subtitle: "Useful combinations for family kitchens, packed into one practical order.",
-    ctaLabel: "Explore combo",
-    ctaHref: "/shop",
+    ctaLabel: "Explore combo deals",
+    ctaHref: "/combo-deals",
     collection: "comboDeals",
     priority: 30,
     productLimit: 1
@@ -217,6 +221,53 @@ const checkoutMethods: Array<Prisma.CheckoutMethodCreateInput> = [
 
 async function main() {
   await repairLegacyDocuments();
+  await prisma.product.updateMany({
+    where: {
+      name: { in: ["Gawa Ghee 1kg", "Deshi Mustard Oil 5 liter"] },
+      isCombo: true
+    },
+    data: { isCombo: false, showOnHome: false, comboPriority: 0 }
+  });
+  const seededComboProducts = await prisma.product.findMany({
+    where: {
+      slug: {
+        in: [
+          "ghee-honey-combo",
+          "spice-starter-combo",
+          "gawa-ghee-1kg",
+          "sundar-honey-1kg",
+          "turmeric-powder-500g",
+          "kala-bhuna-masala-500g"
+        ]
+      }
+    },
+    select: { id: true, slug: true, comboProductIds: true }
+  });
+  const seededProductBySlug = new Map(
+    seededComboProducts.map((product) => [product.slug, product])
+  );
+  const comboComposition = [
+    {
+      combo: "ghee-honey-combo",
+      products: ["gawa-ghee-1kg", "sundar-honey-1kg"]
+    },
+    {
+      combo: "spice-starter-combo",
+      products: ["turmeric-powder-500g", "kala-bhuna-masala-500g"]
+    }
+  ];
+  for (const entry of comboComposition) {
+    const combo = seededProductBySlug.get(entry.combo);
+    const productIds = entry.products
+      .map((slug) => seededProductBySlug.get(slug)?.id)
+      .filter((id): id is string => Boolean(id));
+    if (combo && combo.comboProductIds.length === 0 && productIds.length === 2) {
+      await prisma.product.update({
+        where: { id: combo.id },
+        data: { comboProductIds: productIds }
+      });
+    }
+  }
   await prisma.siteSettings.upsert({
     where: { key: "default" },
     create: {
@@ -235,6 +286,14 @@ async function main() {
       update: {}
     });
   }
+  await prisma.homeSection.updateMany({
+    where: { key: "combo" },
+    data: { ctaLabel: "Explore combo deals", ctaHref: "/combo-deals" }
+  });
+  await prisma.banner.updateMany({
+    where: { ctaHref: "#combo-deals" },
+    data: { ctaHref: "/combo-deals" }
+  });
   for (const method of checkoutMethods) {
     await prisma.checkoutMethod.upsert({
       where: { code: method.code },
@@ -268,6 +327,21 @@ async function main() {
         }
       ]
     });
+  }
+  const selectedHomeCombo = await prisma.product.findFirst({
+    where: { isCombo: true, showOnHome: true, status: "ACTIVE" }
+  });
+  if (!selectedHomeCombo) {
+    const firstCombo = await prisma.product.findFirst({
+      where: { isCombo: true, status: "ACTIVE" },
+      orderBy: { updatedAt: "desc" }
+    });
+    if (firstCombo) {
+      await prisma.product.update({
+        where: { id: firstCombo.id },
+        data: { showOnHome: true, comboPriority: 0 }
+      });
+    }
   }
   console.log("Commerce configuration is ready.");
 }

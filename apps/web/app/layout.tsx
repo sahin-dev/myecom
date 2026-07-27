@@ -4,12 +4,28 @@ import { CartProvider } from "../components/CartContext";
 import { WishlistProvider } from "../components/WishlistContext";
 import { AnalyticsBootstrap } from "../components/AnalyticsBootstrap";
 import { SiteSettingsProvider } from "../components/SiteSettingsContext";
+import {
+  fallbackCatalog,
+  fetchCatalog,
+  resolveMediaUrl
+} from "../lib/catalog";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "My Ecom",
-  description: "A calm, modern ecommerce experience with order tracking."
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const settings = await fetchCatalog()
+    .then((catalog) => catalog.siteSettings)
+    .catch(() => fallbackCatalog.siteSettings);
+  const favicon = resolveMediaUrl(settings.faviconUrl ?? settings.logoUrl);
+
+  return {
+    title: {
+      default: settings.title,
+      template: `%s | ${settings.title}`
+    },
+    description: "A calm, modern ecommerce experience with order tracking.",
+    icons: favicon ? { icon: favicon, shortcut: favicon, apple: favicon } : undefined
+  };
+}
 
 export const viewport: Viewport = {
   themeColor: "#e7d2b5"

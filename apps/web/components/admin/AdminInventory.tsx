@@ -44,6 +44,7 @@ export function AdminInventory() {
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [selected, setSelected] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editorSection, setEditorSection] = useState<"general" | "stock" | "options" | "media">("general");
   const [productImages, setProductImages] = useState<string[]>([]);
   const [galleryImage, setGalleryImage] = useState("");
   const [search, setSearch] = useState("");
@@ -52,8 +53,17 @@ export function AdminInventory() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const canManageCatalog = ["ADMIN", "OWNER", "CATALOG"].includes(user?.role ?? "");
-  const canAdjustInventory = ["ADMIN", "OWNER", "OPERATIONS"].includes(user?.role ?? "");
+  const hasPermission = (permission: string) =>
+    user?.permissions.includes("*") || user?.permissions.includes(permission);
+  const canManageCatalog =
+    hasPermission("products.create") || hasPermission("products.update");
+  const canAdjustInventory = hasPermission("inventory.write");
+
+  function openProduct(product: Product) {
+    setSelected(product);
+    setCreating(false);
+    setEditorSection(canManageCatalog ? "general" : canAdjustInventory ? "stock" : "general");
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -121,7 +131,6 @@ export function AdminInventory() {
         isNew: form.get("isNew") === "on",
         isTrending: form.get("isTrending") === "on",
         isBestSelling: form.get("isBestSelling") === "on",
-        isCombo: form.get("isCombo") === "on",
         isCertified: form.get("isCertified") === "on"
       });
       setCatalog((current) =>
@@ -133,6 +142,30 @@ export function AdminInventory() {
       setMessage(`${updated.name} was updated.`);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Product update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveBaseOption(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setSaving(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      const updated = await updateAdminProduct(selected.id, {
+        baseOptionEnabled: form.get("baseOptionEnabled") === "on",
+        baseOptionLabel: String(form.get("baseOptionLabel") || "")
+      });
+      setCatalog((current) =>
+        current
+          ? { ...current, products: current.products.map((item) => item.id === updated.id ? updated : item) }
+          : current
+      );
+      setSelected(updated);
+      setMessage("Original product option updated.");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Original product option could not be updated.");
     } finally {
       setSaving(false);
     }
@@ -152,12 +185,13 @@ export function AdminInventory() {
         costPrice: Number(form.get("costPrice") || 0) || undefined,
         compareAt: Number(form.get("compareAt") || 0) || undefined,
         inventory: Number(form.get("inventory") || 0),
+        baseOptionEnabled: form.get("baseOptionEnabled") === "on",
+        baseOptionLabel: String(form.get("baseOptionLabel") || "") || undefined,
         imageUrl: productImages[0],
         imageUrls: productImages,
         isNew: form.get("isNew") === "on",
         isTrending: form.get("isTrending") === "on",
         isBestSelling: form.get("isBestSelling") === "on",
-        isCombo: form.get("isCombo") === "on",
         isCertified: form.get("isCertified") === "on",
         badge: String(form.get("badge") || ""),
         brandId: brandId || undefined,
@@ -347,8 +381,8 @@ export function AdminInventory() {
     <div className="admin-page">
       <AdminPageTitle
         eyebrow="Catalog operations"
-        title="Inventory"
-        description="Protect availability, maintain pricing, and improve margin visibility."
+        title="Products and inventory"
+        description="Create products, maintain pricing and media, and protect stock availability."
         actions={
           <>
             {canManageCatalog ? (
@@ -394,7 +428,18 @@ export function AdminInventory() {
               <thead><tr><th>Product</th><th>Status</th><th>Price</th><th>Cost</th><th>Stock</th><th /></tr></thead>
               <tbody>
                 {products.map((product) => (
-                  <tr key={product.id} className={selected?.id === product.id ? "selected" : ""} onClick={() => { setSelected(product); setCreating(false); }}>
+                  <tr
+                    key={product.id}
+                    className={selected?.id === product.id ? "selected" : ""}
+                    onClick={() => openProduct(product)}
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openProduct(product);
+                      }
+                    }}
+                  >
                     <td>
                       <div className="admin-product-cell">
                         <span>{product.imageUrl ? <img src={product.imageUrl} alt="" /> : <Boxes size={19} />}</span>
@@ -405,7 +450,7 @@ export function AdminInventory() {
                     <td>{formatMoney(product.price)}</td>
                     <td>{product.costPrice == null ? <span className="admin-cell-alert">Missing</span> : formatMoney(product.costPrice)}</td>
                     <td className={product.inventory <= 20 ? "admin-cell-alert" : ""}>{product.inventory}</td>
-                    <td><button type="button" title={`Edit ${product.name}`} onClick={(event) => { event.stopPropagation(); setSelected(product); setCreating(false); }}><Pencil size={16} /></button></td>
+                    <td><button type="button" title={`Edit ${product.name}`} onClick={(event) => { event.stopPropagation(); openProduct(product); }}><Pencil size={16} /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -419,10 +464,16 @@ export function AdminInventory() {
               <div><span>Edit product</span><h2>{selected.name}</h2></div>
               <button type="button" onClick={() => setSelected(null)} aria-label="Close product editor"><X size={18} /></button>
             </div>
+            <nav className="admin-editor-nav" aria-label="Product editor sections">
+              {canManageCatalog ? <button type="button" className={editorSection === "general" ? "active" : ""} onClick={() => setEditorSection("general")}>General</button> : null}
+              {canAdjustInventory ? <button type="button" className={editorSection === "stock" ? "active" : ""} onClick={() => setEditorSection("stock")}>Stock</button> : null}
+              {canManageCatalog ? <button type="button" className={editorSection === "options" ? "active" : ""} onClick={() => setEditorSection("options")}>Options</button> : null}
+              {canManageCatalog ? <button type="button" className={editorSection === "media" ? "active" : ""} onClick={() => setEditorSection("media")}>Media</button> : null}
+            </nav>
             {selected.inventory <= 20 ? (
               <p className="admin-stock-warning"><AlertTriangle size={16} /> This product is at or below the low-stock threshold.</p>
             ) : null}
-            {canManageCatalog ? <form className="admin-editor-form" onSubmit={saveProduct} key={`${selected.id}-${selected.costPrice}`}>
+            {canManageCatalog && editorSection === "general" ? <form className="admin-editor-form admin-product-core-form" id="product-editor-general" onSubmit={saveProduct} key={`${selected.id}-${selected.costPrice}`}>
               <label>Product name<input name="name" defaultValue={selected.name} required /></label>
               <label>Description<textarea name="description" defaultValue={selected.description} required /></label>
               <div className="form-grid">
@@ -449,14 +500,15 @@ export function AdminInventory() {
                 <label><input type="checkbox" name="isNew" defaultChecked={selected.isNew} /> Newly launched</label>
                 <label><input type="checkbox" name="isTrending" defaultChecked={selected.isTrending} /> Trending</label>
                 <label><input type="checkbox" name="isBestSelling" defaultChecked={selected.isBestSelling} /> Best selling</label>
-                <label><input type="checkbox" name="isCombo" defaultChecked={selected.isCombo} /> Combo deal</label>
                 <label><input type="checkbox" name="isCertified" defaultChecked={selected.isCertified} /> Certified</label>
               </div>
-              <button className="primary-action full" type="submit" disabled={saving}>{saving ? "Saving..." : "Save product"}</button>
-              <button className="secondary-action full" type="button" onClick={() => void archiveProduct()}><Trash2 size={16} /> Archive product</button>
+              <div className="admin-editor-sticky-actions">
+                <button className="secondary-action" type="button" onClick={() => void archiveProduct()}><Trash2 size={16} /> Archive</button>
+                <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : "Save product"}</button>
+              </div>
             </form> : null}
 
-            {canAdjustInventory ? <><div className="admin-editor-divider">
+            {canAdjustInventory && editorSection === "stock" ? <><div className="admin-editor-divider" id="product-editor-stock">
               <span>Inventory adjustment</span>
             </div>
             <form className="admin-editor-form" onSubmit={submitAdjustment}>
@@ -477,16 +529,51 @@ export function AdminInventory() {
               <button className="secondary-action full" type="submit">Post adjustment</button>
             </form></> : null}
 
-            {canManageCatalog ? <><div className="admin-editor-divider">
+            {canManageCatalog && editorSection === "options" ? <><div className="admin-editor-divider" id="product-editor-options">
               <span>Product options</span>
             </div>
+            <form
+              className="admin-editor-form admin-base-option-form"
+              onSubmit={saveBaseOption}
+              key={`${selected.id}-${selected.baseOptionEnabled}-${selected.baseOptionLabel}`}
+            >
+              <label className="check-row">
+                <input
+                  name="baseOptionEnabled"
+                  type="checkbox"
+                  defaultChecked={selected.baseOptionEnabled !== false}
+                />
+                Sell the original product alongside its options
+              </label>
+              <label>
+                Original option label
+                <input
+                  name="baseOptionLabel"
+                  defaultValue={selected.baseOptionLabel ?? ""}
+                  placeholder={selected.name}
+                />
+                <small>Shown in the option chooser. Leave blank to use the product name.</small>
+              </label>
+              <p className="muted-copy">
+                Turn this off only when customers must choose one of the options below.
+              </p>
+              <button className="secondary-action full" type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Save original option"}
+              </button>
+            </form>
             {(selected.variants ?? []).length ? (
               <div className="admin-option-list">
                 {selected.variants?.map((variant) => (
                   <form key={variant.id} onSubmit={(event) => void editVariant(event, variant.id)}>
-                    <div className="form-grid"><input name="name" defaultValue={variant.name} aria-label="Option name" required /><input name="sku" defaultValue={variant.sku} aria-label="SKU" required /></div>
-                    <div className="form-grid"><input name="price" type="number" min="0" step="0.01" defaultValue={variant.price} aria-label="Price" required /><input name="costPrice" type="number" min="0" step="0.01" defaultValue={variant.costPrice ?? ""} aria-label="Unit cost" /></div>
-                    <input name="compareAt" type="number" min="0" step="0.01" defaultValue={variant.compareAt ?? ""} aria-label="Compare price" />
+                    <div className="form-grid">
+                      <label>Option name<input name="name" defaultValue={variant.name} required /></label>
+                      <label>SKU<input name="sku" defaultValue={variant.sku} required /></label>
+                    </div>
+                    <div className="form-grid">
+                      <label>Selling price<input name="price" type="number" min="0" step="0.01" defaultValue={variant.price} required /></label>
+                      <label>Unit cost<input name="costPrice" type="number" min="0" step="0.01" defaultValue={variant.costPrice ?? ""} /></label>
+                    </div>
+                    <label>Compare price<input name="compareAt" type="number" min="0" step="0.01" defaultValue={variant.compareAt ?? ""} /></label>
                     <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={variant.isActive} /> Active · {variant.inventory} in stock</label>
                     <button type="submit">Save option</button>
                     <button type="button" onClick={() => void removeVariant(variant.id)} title={`Remove ${variant.name}`}><Trash2 size={15} /></button>
@@ -505,9 +592,10 @@ export function AdminInventory() {
               </div>
               <label>Opening stock<input name="inventory" type="number" min="0" defaultValue="0" /></label>
               <button className="secondary-action full" type="submit">Add option</button>
-            </form>
+            </form></> : null}
 
-            <div className="admin-editor-divider">
+            {canManageCatalog && editorSection === "media" ? <>
+            <div className="admin-editor-divider" id="product-editor-gallery">
               <span>Product gallery</span>
             </div>
             {(selected.images ?? []).length ? (
@@ -517,8 +605,8 @@ export function AdminInventory() {
                     <img src={image.url} alt={image.alt ?? ""} />
                     <button type="button" onClick={() => void removeGalleryImage(image.id)} aria-label={`Remove ${image.alt ?? "gallery image"}`}><Trash2 size={14} /></button>
                     <form onSubmit={(event) => void editGalleryImage(event, image.id)}>
-                      <input name="alt" defaultValue={image.alt ?? ""} placeholder="Alternative text" aria-label="Alternative text" />
-                      <input name="position" type="number" min="0" defaultValue={image.position} aria-label="Image position" />
+                      <label>Image description<input name="alt" defaultValue={image.alt ?? ""} placeholder="Describe what this image shows" /></label>
+                      <label>Display order<input name="position" type="number" min="0" defaultValue={image.position} /></label>
                       <button type="submit">Save</button>
                     </form>
                   </span>
@@ -526,7 +614,7 @@ export function AdminInventory() {
               </div>
             ) : null}
             <form className="admin-editor-form" onSubmit={addGalleryImage}>
-              <AdminUploadField label="Gallery image" value={galleryImage} onChange={setGalleryImage} onMessage={setMessage} />
+              <AdminUploadField label="Gallery image" value={galleryImage} onChange={setGalleryImage} onMessage={setMessage} recommendedDimensions="1200 x 1200 px" />
               <label>Alternative text<input name="alt" placeholder={selected.name} /></label>
               <button className="secondary-action full" type="submit">Add to gallery</button>
             </form></> : null}
@@ -550,19 +638,30 @@ export function AdminInventory() {
                 <label>Compare price<input name="compareAt" type="number" step="0.01" min="1" /></label>
                 <label>Opening stock<input name="inventory" type="number" min="0" defaultValue="0" /></label>
               </div>
+              <label className="check-row">
+                <input name="baseOptionEnabled" type="checkbox" defaultChecked />
+                Keep this original product available if options are added later
+              </label>
+              <label>
+                Original option label
+                <input name="baseOptionLabel" placeholder="Defaults to the product name" />
+                <small>For example: Standard pack, 1 kg tin, or Original.</small>
+              </label>
               <label>Brand<select name="brandId" defaultValue=""><option value="">No brand</option>{catalog.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label>
               <label>Category<select name="categoryId" defaultValue=""><option value="">No category</option>{catalog.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-              <AdminMultiUploadField label="Product images" values={productImages} onChange={setProductImages} onMessage={setMessage} />
+              <AdminMultiUploadField label="Product images" values={productImages} onChange={setProductImages} onMessage={setMessage} recommendedDimensions="1200 x 1200 px" />
               <label>Badge<input name="badge" /></label>
               <label>Tags<input name="tags" placeholder="honey, organic, gift" /></label>
               <div className="check-row two">
                 <label><input name="isNew" type="checkbox" defaultChecked /> Newly launched</label>
                 <label><input name="isTrending" type="checkbox" /> Trending</label>
                 <label><input name="isBestSelling" type="checkbox" /> Best selling</label>
-                <label><input name="isCombo" type="checkbox" /> Combo deal</label>
                 <label><input name="isCertified" type="checkbox" /> Certified</label>
               </div>
-              <button className="primary-action full" type="submit"><PackagePlus size={17} /> Create product</button>
+              <div className="admin-editor-sticky-actions">
+                <button className="secondary-action" type="button" onClick={() => { setCreating(false); setProductImages([]); }}>Cancel</button>
+                <button className="primary-action" type="submit"><PackagePlus size={17} /> Create product</button>
+              </div>
             </form>
           </aside>
         ) : null}

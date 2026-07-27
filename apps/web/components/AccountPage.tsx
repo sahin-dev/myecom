@@ -21,6 +21,7 @@ import {
   NotificationPreferences,
   Order,
   Product,
+  ProductVariant,
   ReturnRequest,
   createAddress,
   createReturnRequest,
@@ -62,9 +63,22 @@ function addressText(address: Address) {
     .join(", ");
 }
 
+const standardReturnStages = ["REQUESTED", "APPROVED", "RECEIVED", "RESOLVED"];
+const refundReturnStages = ["REQUESTED", "APPROVED", "RECEIVED", "REFUND_PENDING", "REFUNDED"];
+
+const returnStatusCopy: Record<string, string> = {
+  REQUESTED: "Waiting for our team to review your request.",
+  APPROVED: "Approved. Follow the return instructions from our team.",
+  RECEIVED: "Your items were received and are being checked.",
+  REFUND_PENDING: "Your refund was created and is waiting to be processed.",
+  REFUNDED: "Your refund has been completed.",
+  RESOLVED: "This return has been completed.",
+  REJECTED: "This request could not be approved. Review the note below.",
+  CANCELLED: "You cancelled this return request."
+};
+
 export function AccountPage() {
   const { user, loading, logout, updateProfile } = useAuth();
-  const { addItem } = useCart();
   const [orders, setOrders] = useState<Order[]>([]);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
@@ -72,6 +86,7 @@ export function AccountPage() {
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [notifications, setNotifications] = useState<CustomerNotification[]>([]);
   const [returnOrderId, setReturnOrderId] = useState("");
+  const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
   const [editingAddress, setEditingAddress] = useState<Address | null>(null);
   const [message, setMessage] = useState("");
   const [returnMessage, setReturnMessage] = useState("");
@@ -89,9 +104,33 @@ export function AccountPage() {
     ]).catch(() => setMessage("Some account information is temporarily unavailable."));
   }, [user]);
 
+  const activeReturnedQuantities = useMemo(() => {
+    const totals = new Map<string, number>();
+    returns
+      .filter((item) => item.status !== "REJECTED" && item.status !== "CANCELLED")
+      .flatMap((item) => item.items)
+      .forEach((item) => totals.set(
+        item.orderItemId,
+        (totals.get(item.orderItemId) ?? 0) + item.quantity
+      ));
+    return totals;
+  }, [returns]);
   const eligibleOrders = useMemo(
-    () => orders.filter((order) => order.status === "DELIVERED"),
-    [orders]
+    () => orders.filter(
+      (order) => {
+        const deliveredAt =
+          order.trackingEvents.find((event) => event.status === "DELIVERED")?.createdAt ??
+          order.updatedAt;
+        return (
+          order.status === "DELIVERED" &&
+          Date.now() - new Date(deliveredAt).getTime() <= 48 * 60 * 60 * 1000 &&
+          order.items.some(
+            (item) => item.quantity > (activeReturnedQuantities.get(item.id) ?? 0)
+          )
+        );
+      }
+    ),
+    [activeReturnedQuantities, orders]
   );
   const returnOrder = useMemo(
     () => eligibleOrders.find((order) => order.id === returnOrderId),
@@ -220,7 +259,7 @@ export function AccountPage() {
     const items = order.items
       .map((item) => ({
         orderItemId: item.id,
-        quantity: Number(data.get(`returnQuantity-${item.id}`) || 0)
+        quantity: returnQuantities[item.id] ?? 0
       }))
       .filter((item) => item.quantity > 0);
     if (!items.length) {
@@ -239,6 +278,7 @@ export function AccountPage() {
       setReturnMessage(`Return ${created.returnNumber} was submitted.`);
       form.reset();
       setReturnOrderId("");
+      setReturnQuantities({});
     } catch (caught) {
       setReturnMessage(caught instanceof Error ? caught.message : "Could not submit return.");
     }
@@ -339,8 +379,8 @@ export function AccountPage() {
               <KeyRound size={18} />
               <h3>Change password</h3>
             </div>
-            <input name="currentPassword" type="password" placeholder="Current password" autoComplete="current-password" required />
-            <input name="newPassword" type="password" minLength={8} placeholder="New password" autoComplete="new-password" required />
+            <label><span>Current password</span><input name="currentPassword" type="password" autoComplete="current-password" required /></label>
+            <label><span>New password</span><input name="newPassword" type="password" minLength={8} placeholder="At least 8 characters" autoComplete="new-password" required /></label>
             <button className="secondary-action" type="submit">Update password</button>
             <button className="text-link danger" type="button" onClick={() => void deactivateAccount()}>Deactivate account</button>
           </form>
@@ -412,18 +452,18 @@ export function AccountPage() {
           </div>
           <form className="address-form" onSubmit={saveAddress} key={editingAddress?.id ?? "new-address"}>
             <div className="form-grid">
-              <input name="label" placeholder="Label, e.g. Home" defaultValue={editingAddress?.label ?? ""} required />
-              <input name="recipient" placeholder="Recipient name" defaultValue={editingAddress?.recipient ?? user.name} required />
+              <label className="field-label">Address label<input name="label" placeholder="For example, Home" defaultValue={editingAddress?.label ?? ""} required /></label>
+              <label className="field-label">Recipient name<input name="recipient" placeholder="Person receiving the order" defaultValue={editingAddress?.recipient ?? user.name} required /></label>
             </div>
             <div className="form-grid">
-              <input name="phone" placeholder="Phone" defaultValue={editingAddress?.phone ?? user.phone ?? ""} required />
-              <input name="city" placeholder="City" defaultValue={editingAddress?.city ?? "Dhaka"} required />
+              <label className="field-label">Phone number<input name="phone" placeholder="Delivery contact number" defaultValue={editingAddress?.phone ?? user.phone ?? ""} required /></label>
+              <label className="field-label">City<input name="city" placeholder="Delivery city" defaultValue={editingAddress?.city ?? "Dhaka"} required /></label>
             </div>
-            <input name="line1" placeholder="Street and house" defaultValue={editingAddress?.line1 ?? ""} required />
-            <input name="line2" placeholder="Apartment, floor, or landmark" defaultValue={editingAddress?.line2 ?? ""} />
+            <label className="field-label">Street and house<input name="line1" placeholder="House, road, and street" defaultValue={editingAddress?.line1 ?? ""} required /></label>
+            <label className="field-label">Additional address details<input name="line2" placeholder="Apartment, floor, or landmark" defaultValue={editingAddress?.line2 ?? ""} /></label>
             <div className="form-grid">
-              <input name="area" placeholder="Area" defaultValue={editingAddress?.area ?? ""} />
-              <input name="postalCode" placeholder="Postal code" defaultValue={editingAddress?.postalCode ?? ""} />
+              <label className="field-label">Area<input name="area" placeholder="Neighborhood or area" defaultValue={editingAddress?.area ?? ""} /></label>
+              <label className="field-label">Postal code<input name="postalCode" placeholder="Postal code" defaultValue={editingAddress?.postalCode ?? ""} /></label>
             </div>
             <label className="check-row">
               <input name="isDefault" type="checkbox" defaultChecked={editingAddress?.isDefault ?? false} />
@@ -505,63 +545,129 @@ export function AccountPage() {
           </div>
           {eligibleOrders.length ? (
             <form className="account-form" onSubmit={requestReturn}>
-              <select
-                name="orderId"
-                value={returnOrderId}
-                onChange={(event) => setReturnOrderId(event.target.value)}
-                required
-              >
-                <option value="" disabled>Select a delivered order</option>
-                {eligibleOrders.map((order) => (
-                  <option value={order.id} key={order.id}>{order.orderNumber}</option>
-                ))}
-              </select>
-              {returnOrder ? (
-                <div className="return-item-picker">
-                  <p>Select the quantities you want to return</p>
-                  {returnOrder.items.map((item) => (
-                    <label key={item.id}>
-                      <span>
-                        <strong>{item.productName}</strong>
-                        <small>
-                          {item.variantName ? `${item.variantName} · ` : ""}
-                          Ordered: {item.quantity}
-                        </small>
-                      </span>
-                      <input
-                        name={`returnQuantity-${item.id}`}
-                        type="number"
-                        min="0"
-                        max={item.quantity}
-                        defaultValue="0"
-                        aria-label={`Return quantity for ${item.productName}`}
-                      />
-                    </label>
+              <label>
+                <span>Delivered order</span>
+                <select
+                  name="orderId"
+                  value={returnOrderId}
+                  onChange={(event) => {
+                    setReturnOrderId(event.target.value);
+                    setReturnQuantities({});
+                    setReturnMessage("");
+                  }}
+                  required
+                >
+                  <option value="" disabled>Select an order</option>
+                  {eligibleOrders.map((order) => (
+                    <option value={order.id} key={order.id}>
+                      {order.orderNumber} - {new Date(order.createdAt).toLocaleDateString("en-BD")}
+                    </option>
                   ))}
-                </div>
+                </select>
+              </label>
+              {returnOrder ? (
+                <ReturnItemPicker
+                  order={returnOrder}
+                  returnedQuantities={activeReturnedQuantities}
+                  quantities={returnQuantities}
+                  onChange={setReturnQuantities}
+                />
               ) : null}
-              <select name="reason" defaultValue="" required>
-                <option value="" disabled>Reason for return</option>
-                <option>Damaged item</option>
-                <option>Incorrect item</option>
-                <option>Quality concern</option>
-                <option>Changed my mind</option>
-              </select>
-              <textarea name="details" placeholder="Tell us what happened" />
-              <button className="secondary-action" type="submit">Request return</button>
+              {returnOrder ? (
+                <>
+                  <label>
+                    <span>Reason</span>
+                    <select name="reason" defaultValue="" required>
+                      <option value="" disabled>Select a reason</option>
+                      <option>Damaged item</option>
+                      <option>Incorrect item</option>
+                      <option>Quality concern</option>
+                      <option>Changed my mind</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Additional details</span>
+                    <textarea name="details" placeholder="Describe the issue to help us review it faster" />
+                  </label>
+                  <button
+                    className="secondary-action"
+                    type="submit"
+                    disabled={!Object.values(returnQuantities).some((quantity) => quantity > 0)}
+                  >
+                    Submit return request
+                  </button>
+                </>
+              ) : null}
             </form>
-          ) : <p className="muted-copy">Delivered orders eligible for return will appear here.</p>}
+          ) : <p className="muted-copy">Orders delivered within the 48-hour return window will appear here.</p>}
           {returnMessage ? <p className="detail-notice">{returnMessage}</p> : null}
           <div className="return-list">
-            {returns.map((item) => (
-              <div key={item.id}>
-                <strong>{item.returnNumber}</strong>
-                <span>{item.status.replace(/_/g, " ")}</span>
-                {item.status === "REQUESTED" || item.status === "APPROVED" ? (
-                  <button type="button" onClick={() => void cancelReturn(item.id)}>Cancel</button>
-                ) : null}
-              </div>
-            ))}
+            {returns.map((item) => {
+              const returnStages =
+                item.resolutionType === "REFUND" ||
+                item.status === "REFUND_PENDING" ||
+                item.status === "REFUNDED"
+                  ? refundReturnStages
+                  : standardReturnStages;
+              const currentStage = returnStages.indexOf(item.status);
+              return (
+                <article className="customer-return-card" key={item.id}>
+                  <header>
+                    <div>
+                      <strong>{item.returnNumber}</strong>
+                      <small>
+                        {item.order?.orderNumber ?? "Order"} / {new Date(item.createdAt).toLocaleDateString("en-BD")}
+                      </small>
+                    </div>
+                    <span className={`return-status return-status-${item.status.toLowerCase()}`}>
+                      {item.status.replace(/_/g, " ")}
+                    </span>
+                  </header>
+                  {currentStage >= 0 ? (
+                    <div className="return-progress" aria-label={`Return status: ${item.status}`}>
+                      {returnStages.map((stage, index) => (
+                        <span className={index <= currentStage ? "is-complete" : ""} key={stage}>
+                          {stage === "REQUESTED" ? "Submitted" : stage.charAt(0) + stage.slice(1).toLowerCase()}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p>{returnStatusCopy[item.status] ?? "Our team is reviewing this return."}</p>
+                  <ul>
+                    {item.items.map((returnItem) => (
+                      <li key={returnItem.id}>
+                        <span>
+                          {returnItem.orderItem?.productName ?? "Ordered product"}
+                          {returnItem.orderItem?.variantName ? ` / ${returnItem.orderItem.variantName}` : ""}
+                        </span>
+                        <strong>x{returnItem.quantity}</strong>
+                        {returnItem.disposition ? (
+                          <small>{returnItem.disposition.toLowerCase().replace(/_/g, " ")}</small>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {item.refund ? (
+                    <div className="return-refund-summary">
+                      <span>
+                        <strong>Refund</strong>
+                        <small>{item.refund.status.toLowerCase()}</small>
+                      </span>
+                      <strong>{formatMoney(item.refund.amount)}</strong>
+                    </div>
+                  ) : null}
+                  {item.resolution ? (
+                    <div className="return-resolution">
+                      <strong>Team note</strong>
+                      <p>{item.resolution}</p>
+                    </div>
+                  ) : null}
+                  {item.status === "REQUESTED" ? (
+                    <button type="button" onClick={() => void cancelReturn(item.id)}>Cancel request</button>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         </div>
       </section>
@@ -577,20 +683,7 @@ export function AccountPage() {
           </div>
           <div className="product-grid">
             {recommendations.slice(0, 4).map((product) => (
-              <article className="product-card" key={product.id}>
-                <a href={`/products/${product.slug}`}><ProductArt product={product} /></a>
-                <div className="product-meta">
-                  <h3><a href={`/products/${product.slug}`}>{product.name}</a></h3>
-                  <strong>{formatMoney(product.price)}</strong>
-                </div>
-                {product.variants?.length ? (
-                  <QuickVariantAdd product={product} className="secondary-action full" />
-                ) : (
-                  <button className="secondary-action full" onClick={() => addItem(product, 1)} type="button">
-                    Add to cart
-                  </button>
-                )}
-              </article>
+              <AccountRecommendationCard key={product.id} product={product} />
             ))}
           </div>
         </section>
@@ -598,5 +691,106 @@ export function AccountPage() {
 
       <PageFooter categories={fallbackCatalog.categories} />
     </main>
+  );
+}
+
+function ReturnItemPicker({
+  order,
+  returnedQuantities,
+  quantities,
+  onChange
+}: {
+  order: Order;
+  returnedQuantities: Map<string, number>;
+  quantities: Record<string, number>;
+  onChange: (update: (current: Record<string, number>) => Record<string, number>) => void;
+}) {
+  const returnableItems = order.items.filter(
+    (item) => item.quantity > (returnedQuantities.get(item.id) ?? 0)
+  );
+
+  return (
+    <div className="return-item-picker">
+      <div className="return-picker-heading">
+        <div>
+          <strong>Choose products</strong>
+          <small>Select only the items you want to send back.</small>
+        </div>
+        <span>{returnableItems.length} items</span>
+      </div>
+      {returnableItems.map((item) => {
+        const remaining = item.quantity - (returnedQuantities.get(item.id) ?? 0);
+        const selected = quantities[item.id] ?? 0;
+        return (
+          <div className={`return-product-row ${selected ? "is-selected" : ""}`} key={item.id}>
+            <label className="return-product-check">
+              <input
+                type="checkbox"
+                checked={selected > 0}
+                onChange={(event) => onChange((current) => ({
+                  ...current,
+                  [item.id]: event.target.checked ? 1 : 0
+                }))}
+              />
+              <span className="return-product-icon"><PackageCheck size={17} /></span>
+              <span>
+                <strong>{item.productName}</strong>
+                <small>
+                  {item.variantName ? `${item.variantName} / ` : ""}
+                  {remaining} of {item.quantity} available to return
+                </small>
+              </span>
+            </label>
+            <label className="return-quantity-control">
+              <span>Quantity</span>
+              <select
+                value={selected || 1}
+                disabled={!selected}
+                aria-label={`Return quantity for ${item.productName}`}
+                onChange={(event) => onChange((current) => ({
+                  ...current,
+                  [item.id]: Number(event.target.value)
+                }))}
+              >
+                {Array.from({ length: remaining }, (_, index) => index + 1).map((quantity) => (
+                  <option value={quantity} key={quantity}>{quantity}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AccountRecommendationCard({ product }: { product: Product }) {
+  const { addItem } = useCart();
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
+  const price = selectedVariant?.price ?? product.price;
+  const compareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
+
+  return (
+    <article className="product-card">
+      <a href={`/products/${product.slug}`}><ProductArt product={product} /></a>
+      <div className="product-meta">
+        <h3><a href={`/products/${product.slug}`}>{product.name}</a></h3>
+        <div className="price-row">
+          <strong>{formatMoney(price)}</strong>
+          {compareAt && compareAt > price ? <small>{formatMoney(compareAt)}</small> : null}
+        </div>
+      </div>
+      {product.variants?.length ? (
+        <QuickVariantAdd
+          product={product}
+          className="secondary-action full"
+          onSelect={setSelectedVariant}
+        />
+      ) : (
+        <button className="secondary-action full" onClick={() => addItem(product, 1)} type="button">
+          Add to cart
+        </button>
+      )}
+    </article>
   );
 }

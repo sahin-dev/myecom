@@ -37,6 +37,7 @@ enum PaymentStatus {
   PENDING
   PAID
   FAILED
+  PARTIALLY_REFUNDED
   REFUNDED
 }
 
@@ -56,9 +57,25 @@ enum ReturnStatus {
   REQUESTED
   APPROVED
   RECEIVED
+  REFUND_PENDING
+  REFUNDED
   RESOLVED
   REJECTED
   CANCELLED
+}
+
+enum ReturnDisposition {
+  RESTOCK
+  DAMAGED
+  DISPOSE
+  INSPECTION
+}
+
+enum ReturnResolutionType {
+  REFUND
+  REPLACEMENT
+  STORE_CREDIT
+  NO_ACTION
 }
 
 enum RefundStatus {
@@ -114,27 +131,42 @@ enum AnalyticsEventType {
 }
 
 model User {
-  id           String   @id @default(auto()) @map("_id") @db.ObjectId
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         UserRole @default(CUSTOMER)
-  phone        String?
-  avatarUrl    String?
-  isActive     Boolean  @default(true)
-  addresses    Address[]
-  carts        Cart[]
-  orders       Order[]
-  reviews      Review[]
-  returns      ReturnRequest[]
-  wishlist     WishlistItem[]
-  sessions     AnalyticsSession[]
-  events       AnalyticsEvent[]
-  permissions  StaffPermission[]
-  auditLogs    AuditLog[] @relation("AuditActor")
+  id                     String                  @id @default(auto()) @map("_id") @db.ObjectId
+  name                   String
+  email                  String                  @unique
+  passwordHash           String
+  role                   UserRole                @default(CUSTOMER)
+  phone                  String?
+  avatarUrl              String?
+  isActive               Boolean                 @default(true)
+  addresses              Address[]
+  carts                  Cart[]
+  orders                 Order[]
+  reviews                Review[]
+  returns                ReturnRequest[]
+  wishlist               WishlistItem[]
+  sessions               AnalyticsSession[]
+  events                 AnalyticsEvent[]
+  permissions            StaffPermission[]
+  accessRoleId           String?                 @db.ObjectId
+  accessRole             AccessRole?             @relation(fields: [accessRoleId], references: [id])
+  auditLogs              AuditLog[]              @relation("AuditActor")
   notificationPreference NotificationPreference?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+}
+
+model AccessRole {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  key         String   @unique
+  name        String
+  description String?
+  permissions String[]
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  users       User[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Brand {
@@ -153,6 +185,7 @@ model Category {
   name      String
   slug      String    @unique
   icon      String?
+  imageUrl  String?
   priority  Int       @default(0)
   isActive  Boolean   @default(true)
   products  Product[]
@@ -161,39 +194,44 @@ model Category {
 }
 
 model Product {
-  id          String        @id @default(auto()) @map("_id") @db.ObjectId
-  name        String
-  slug        String        @unique
-  description String
-  price       Float
-  costPrice   Float?
-  compareAt   Float?
-  inventory   Int           @default(0)
-  imageUrl    String?
-  isNew       Boolean       @default(false)
-  isTrending  Boolean       @default(false)
-  isBestSelling Boolean     @default(false)
-  isCombo     Boolean       @default(false)
-  isCertified Boolean       @default(false)
-  badge       String?
-  status      ProductStatus @default(ACTIVE)
-  brandId     String?       @db.ObjectId
-  brand       Brand?        @relation(fields: [brandId], references: [id])
-  categoryId  String?       @db.ObjectId
-  category    Category?     @relation(fields: [categoryId], references: [id])
-  supplierId  String?       @db.ObjectId
-  supplier    Supplier?     @relation(fields: [supplierId], references: [id])
-  tags        String[]
-  images       ProductImage[]
-  variants     ProductVariant[]
-  reviews      Review[]
-  wishlistItems WishlistItem[]
-  cartItems    CartItem[]
-  analyticsEvents AnalyticsEvent[]
+  id                 String              @id @default(auto()) @map("_id") @db.ObjectId
+  name               String
+  slug               String              @unique
+  description        String
+  price              Float
+  costPrice          Float?
+  compareAt          Float?
+  inventory          Int                 @default(0)
+  baseOptionEnabled  Boolean?            @default(true)
+  baseOptionLabel    String?
+  imageUrl           String?
+  isNew              Boolean             @default(false)
+  isTrending         Boolean             @default(false)
+  isBestSelling      Boolean             @default(false)
+  isCombo            Boolean             @default(false)
+  comboProductIds    String[]            @default([])
+  showOnHome         Boolean             @default(false)
+  comboPriority      Int                 @default(0)
+  isCertified        Boolean             @default(false)
+  badge              String?
+  status             ProductStatus       @default(ACTIVE)
+  brandId            String?             @db.ObjectId
+  brand              Brand?              @relation(fields: [brandId], references: [id])
+  categoryId         String?             @db.ObjectId
+  category           Category?           @relation(fields: [categoryId], references: [id])
+  supplierId         String?             @db.ObjectId
+  supplier           Supplier?           @relation(fields: [supplierId], references: [id])
+  tags               String[]
+  images             ProductImage[]
+  variants           ProductVariant[]
+  reviews            Review[]
+  wishlistItems      WishlistItem[]
+  cartItems          CartItem[]
+  analyticsEvents    AnalyticsEvent[]
   inventoryMovements InventoryMovement[]
   purchaseOrderItems PurchaseOrderItem[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 }
 
 model ProductImage {
@@ -208,38 +246,42 @@ model ProductImage {
 }
 
 model ProductVariant {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  productId   String   @db.ObjectId
-  product     Product  @relation(fields: [productId], references: [id])
-  name        String
-  sku         String   @unique
-  price       Float
-  costPrice   Float?
-  compareAt   Float?
-  inventory   Int      @default(0)
-  attributes  Json?
-  isActive    Boolean  @default(true)
-  cartItems   CartItem[]
-  orderItems  OrderItem[]
+  id                 String              @id @default(auto()) @map("_id") @db.ObjectId
+  productId          String              @db.ObjectId
+  product            Product             @relation(fields: [productId], references: [id])
+  name               String
+  sku                String              @unique
+  price              Float
+  costPrice          Float?
+  compareAt          Float?
+  inventory          Int                 @default(0)
+  attributes         Json?
+  isActive           Boolean             @default(true)
+  cartItems          CartItem[]
+  orderItems         OrderItem[]
   inventoryMovements InventoryMovement[]
   purchaseOrderItems PurchaseOrderItem[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 }
 
 model Banner {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
   eyebrow     String?
   title       String
   subtitle    String
   ctaLabel    String
   ctaHref     String
   imageUrl    String?
-  priority    Int      @default(0)
-  isActive    Boolean  @default(true)
-  publishedAt DateTime @default(now())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  focalX      Int       @default(50)
+  focalY      Int       @default(50)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  priority    Int       @default(0)
+  isActive    Boolean   @default(true)
+  publishedAt DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 model SiteSettings {
@@ -247,9 +289,14 @@ model SiteSettings {
   key                   String   @unique @default("default")
   title                 String   @default("My Ecom")
   logoUrl               String?
+  faviconUrl            String?
   announcement          String   @default("Free delivery over \u09F33,000")
   announcementLinkLabel String   @default("Track your order")
   announcementLinkHref  String   @default("/track-order")
+  facebookUrl           String?
+  instagramUrl          String?
+  youtubeUrl            String?
+  whatsappUrl           String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }
@@ -287,19 +334,19 @@ model Testimonial {
 }
 
 model CheckoutMethod {
-  id             String             @id @default(auto()) @map("_id") @db.ObjectId
-  type           CheckoutMethodType
-  code           String             @unique
-  name           String
-  description    String?
-  fee            Float              @default(0)
-  freeThreshold  Float?
+  id              String             @id @default(auto()) @map("_id") @db.ObjectId
+  type            CheckoutMethodType
+  code            String             @unique
+  name            String
+  description     String?
+  fee             Float              @default(0)
+  freeThreshold   Float?
   minDeliveryDays Int?
   maxDeliveryDays Int?
-  isActive       Boolean            @default(true)
-  priority       Int                @default(0)
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  isActive        Boolean            @default(true)
+  priority        Int                @default(0)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 }
 
 model Cart {
@@ -313,16 +360,16 @@ model Cart {
 }
 
 model CartItem {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  cartId    String   @db.ObjectId
-  cart      Cart     @relation(fields: [cartId], references: [id])
-  productId String   @db.ObjectId
-  product   Product  @relation(fields: [productId], references: [id])
-  variantId String?  @db.ObjectId
+  id        String          @id @default(auto()) @map("_id") @db.ObjectId
+  cartId    String          @db.ObjectId
+  cart      Cart            @relation(fields: [cartId], references: [id])
+  productId String          @db.ObjectId
+  product   Product         @relation(fields: [productId], references: [id])
+  variantId String?         @db.ObjectId
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
   quantity  Int
   unitPrice Float
-  createdAt DateTime @default(now())
+  createdAt DateTime        @default(now())
 }
 
 model WishlistItem {
@@ -354,42 +401,42 @@ model Address {
 }
 
 model Order {
-  id              String          @id @default(auto()) @map("_id") @db.ObjectId
-  orderNumber     String          @unique
-  idempotencyKey  String?
-  userId          String?         @db.ObjectId
-  user            User?           @relation(fields: [userId], references: [id])
-  customerName    String
-  email           String
-  phone           String
-  shippingAddress String
-  status          OrderStatus     @default(PLACED)
-  paymentStatus   PaymentStatus?
-  paymentMethod   String?
+  id                 String             @id @default(auto()) @map("_id") @db.ObjectId
+  orderNumber        String             @unique
+  idempotencyKey     String?
+  userId             String?            @db.ObjectId
+  user               User?              @relation(fields: [userId], references: [id])
+  customerName       String
+  email              String
+  phone              String
+  shippingAddress    String
+  status             OrderStatus        @default(PLACED)
+  paymentStatus      PaymentStatus?
+  paymentMethod      String?
   deliveryMethodCode String?
   deliveryMethodName String?
-  trackingCode    String?
-  courierName     String?
-  adminNote       String?
-  promotionId     String?         @db.ObjectId
-  promotion       Promotion?      @relation(fields: [promotionId], references: [id])
-  subtotal        Float
-  discount        Float           @default(0)
-  shippingFee     Float
-  total           Float
-  items           OrderItem[]
-  trackingEvents  TrackingEvent[]
-  notifications   Notification[]
-  payments        Payment[]
-  refunds         Refund[]
-  returnRequests  ReturnRequest[]
-  reviews         Review[]
-  attribution     Attribution?
-  analyticsEvents AnalyticsEvent[]
-  couponRedemptions CouponRedemption[]
-  checkoutRequest CheckoutRequest?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  trackingCode       String?
+  courierName        String?
+  adminNote          String?
+  promotionId        String?            @db.ObjectId
+  promotion          Promotion?         @relation(fields: [promotionId], references: [id])
+  subtotal           Float
+  discount           Float              @default(0)
+  shippingFee        Float
+  total              Float
+  items              OrderItem[]
+  trackingEvents     TrackingEvent[]
+  notifications      Notification[]
+  payments           Payment[]
+  refunds            Refund[]
+  returnRequests     ReturnRequest[]
+  reviews            Review[]
+  attribution        Attribution?
+  analyticsEvents    AnalyticsEvent[]
+  couponRedemptions  CouponRedemption[]
+  checkoutRequest    CheckoutRequest?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 }
 
 model CheckoutRequest {
@@ -400,19 +447,19 @@ model CheckoutRequest {
 }
 
 model OrderItem {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  orderId     String   @db.ObjectId
-  order       Order    @relation(fields: [orderId], references: [id])
-  productId   String   @db.ObjectId
+  id          String          @id @default(auto()) @map("_id") @db.ObjectId
+  orderId     String          @db.ObjectId
+  order       Order           @relation(fields: [orderId], references: [id])
+  productId   String          @db.ObjectId
   productName String
-  variantId   String?  @db.ObjectId
+  variantId   String?         @db.ObjectId
   variant     ProductVariant? @relation(fields: [variantId], references: [id])
   variantName String?
   quantity    Int
   unitPrice   Float
   unitCost    Float?
   returnItems ReturnItem[]
-  createdAt   DateTime @default(now())
+  createdAt   DateTime        @default(now())
 }
 
 model TrackingEvent {
@@ -437,42 +484,44 @@ model Notification {
 }
 
 model Review {
-  id          String       @id @default(auto()) @map("_id") @db.ObjectId
-  userId      String       @db.ObjectId
-  user        User         @relation(fields: [userId], references: [id])
-  productId   String       @db.ObjectId
-  product     Product      @relation(fields: [productId], references: [id])
-  orderId     String?      @db.ObjectId
-  order       Order?       @relation(fields: [orderId], references: [id])
-  rating      Int
-  title       String?
-  comment     String
-  status      ReviewStatus @default(PENDING)
-  isVerified  Boolean      @default(false)
-  adminReply  String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           String       @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String       @db.ObjectId
+  user         User         @relation(fields: [userId], references: [id])
+  productId    String       @db.ObjectId
+  product      Product      @relation(fields: [productId], references: [id])
+  orderId      String?      @db.ObjectId
+  order        Order?       @relation(fields: [orderId], references: [id])
+  rating       Int
+  title        String?
+  comment      String
+  status       ReviewStatus @default(PENDING)
+  isVerified   Boolean      @default(false)
+  showOnHome   Boolean      @default(false)
+  homePriority Int          @default(0)
+  adminReply   String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   @@unique([userId, productId])
 }
 
 model Promotion {
-  id               String          @id @default(auto()) @map("_id") @db.ObjectId
+  id               String             @id @default(auto()) @map("_id") @db.ObjectId
   name             String
-  code             String          @unique
+  code             String             @unique
   type             PromotionType
   value            Float
-  minimumOrder     Float           @default(0)
+  minimumOrder     Float              @default(0)
   maximumDiscount  Float?
   usageLimit       Int?
-  perCustomerLimit Int             @default(1)
+  perCustomerLimit Int                @default(1)
   startsAt         DateTime
   endsAt           DateTime
-  isActive         Boolean         @default(true)
+  isActive         Boolean            @default(true)
   orders           Order[]
   redemptions      CouponRedemption[]
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 }
 
 model CouponRedemption {
@@ -487,88 +536,93 @@ model CouponRedemption {
 }
 
 model Payment {
-  id            String        @id @default(auto()) @map("_id") @db.ObjectId
-  orderId       String        @db.ObjectId
-  order         Order         @relation(fields: [orderId], references: [id])
-  provider      String
-  method        String
-  amount        Float
-  currency      String        @default("BDT")
-  status        PaymentStatus @default(PENDING)
-  transactionId String?
+  id              String        @id @default(auto()) @map("_id") @db.ObjectId
+  orderId         String        @db.ObjectId
+  order           Order         @relation(fields: [orderId], references: [id])
+  provider        String
+  method          String
+  amount          Float
+  currency        String        @default("BDT")
+  status          PaymentStatus @default(PENDING)
+  transactionId   String?
   providerPayload Json?
-  refunds       Refund[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  refunds         Refund[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 }
 
 model Refund {
-  id        String       @id @default(auto()) @map("_id") @db.ObjectId
-  orderId   String       @db.ObjectId
-  order     Order        @relation(fields: [orderId], references: [id])
-  paymentId String?      @db.ObjectId
-  payment   Payment?     @relation(fields: [paymentId], references: [id])
-  amount    Float
-  reason    String
-  status    RefundStatus @default(PENDING)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id              String         @id @default(auto()) @map("_id") @db.ObjectId
+  orderId         String         @db.ObjectId
+  order           Order          @relation(fields: [orderId], references: [id])
+  paymentId       String?        @db.ObjectId
+  payment         Payment?       @relation(fields: [paymentId], references: [id])
+  returnRequestId String?        @unique @db.ObjectId
+  returnRequest   ReturnRequest? @relation(fields: [returnRequestId], references: [id])
+  amount          Float
+  reason          String
+  status          RefundStatus   @default(PENDING)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 }
 
 model ReturnRequest {
-  id           String       @id @default(auto()) @map("_id") @db.ObjectId
-  returnNumber String       @unique
-  orderId      String       @db.ObjectId
-  order        Order        @relation(fields: [orderId], references: [id])
-  userId       String?      @db.ObjectId
-  user         User?        @relation(fields: [userId], references: [id])
-  reason       String
-  details      String?
-  resolution   String?
-  status       ReturnStatus @default(REQUESTED)
-  items        ReturnItem[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id             String                @id @default(auto()) @map("_id") @db.ObjectId
+  returnNumber   String                @unique
+  orderId        String                @db.ObjectId
+  order          Order                 @relation(fields: [orderId], references: [id])
+  userId         String?               @db.ObjectId
+  user           User?                 @relation(fields: [userId], references: [id])
+  reason         String
+  details        String?
+  resolution     String?
+  resolutionType ReturnResolutionType?
+  status         ReturnStatus          @default(REQUESTED)
+  items          ReturnItem[]
+  refund         Refund?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
 }
 
 model ReturnItem {
-  id              String        @id @default(auto()) @map("_id") @db.ObjectId
-  returnRequestId String        @db.ObjectId
-  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id])
-  orderItemId     String        @db.ObjectId
-  orderItem       OrderItem     @relation(fields: [orderItemId], references: [id])
+  id              String             @id @default(auto()) @map("_id") @db.ObjectId
+  returnRequestId String             @db.ObjectId
+  returnRequest   ReturnRequest      @relation(fields: [returnRequestId], references: [id])
+  orderItemId     String             @db.ObjectId
+  orderItem       OrderItem          @relation(fields: [orderItemId], references: [id])
   quantity        Int
-  createdAt       DateTime      @default(now())
+  disposition     ReturnDisposition?
+  createdAt       DateTime           @default(now())
 
   @@unique([returnRequestId, orderItemId])
 }
 
 model Supplier {
-  id            String   @id @default(auto()) @map("_id") @db.ObjectId
-  name          String
-  contactName   String?
-  email         String?
-  phone         String?
-  leadTimeDays  Int      @default(7)
-  isActive      Boolean  @default(true)
-  products      Product[]
+  id             String          @id @default(auto()) @map("_id") @db.ObjectId
+  name           String
+  contactName    String?
+  email          String?
+  phone          String?
+  leadTimeDays   Int             @default(7)
+  isActive       Boolean         @default(true)
+  products       Product[]
   purchaseOrders PurchaseOrder[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
 
 model PurchaseOrder {
-  id           String              @id @default(auto()) @map("_id") @db.ObjectId
-  poNumber     String              @unique
-  supplierId   String              @db.ObjectId
-  supplier     Supplier            @relation(fields: [supplierId], references: [id])
-  status       PurchaseOrderStatus @default(DRAFT)
-  expectedAt   DateTime?
-  notes        String?
-  totalCost    Float               @default(0)
-  items        PurchaseOrderItem[]
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id         String              @id @default(auto()) @map("_id") @db.ObjectId
+  poNumber   String              @unique
+  supplierId String              @db.ObjectId
+  supplier   Supplier            @relation(fields: [supplierId], references: [id])
+  status     PurchaseOrderStatus @default(DRAFT)
+  expectedAt DateTime?
+  notes      String?
+  totalCost  Float               @default(0)
+  items      PurchaseOrderItem[]
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
 }
 
 model PurchaseOrderItem {
@@ -599,18 +653,18 @@ model InventoryMovement {
 }
 
 model AnalyticsSession {
-  id          String           @id @default(auto()) @map("_id") @db.ObjectId
-  sessionKey  String           @unique
-  userId      String?          @db.ObjectId
-  user        User?            @relation(fields: [userId], references: [id])
-  source      String?
-  medium      String?
-  campaign    String?
-  landingPage String?
-  events      AnalyticsEvent[]
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  sessionKey   String           @unique
+  userId       String?          @db.ObjectId
+  user         User?            @relation(fields: [userId], references: [id])
+  source       String?
+  medium       String?
+  campaign     String?
+  landingPage  String?
+  events       AnalyticsEvent[]
   attributions Attribution[]
-  createdAt   DateTime         @default(now())
-  lastSeenAt  DateTime         @updatedAt
+  createdAt    DateTime         @default(now())
+  lastSeenAt   DateTime         @updatedAt
 }
 
 model AnalyticsEvent {
@@ -663,13 +717,13 @@ model AuditLog {
 }
 
 model NotificationPreference {
-  id              String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId          String   @unique @db.ObjectId
-  user            User     @relation(fields: [userId], references: [id])
-  orderEmail      Boolean  @default(true)
-  marketingEmail  Boolean  @default(false)
-  backInStock     Boolean  @default(true)
-  priceDrop       Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String   @unique @db.ObjectId
+  user           User     @relation(fields: [userId], references: [id])
+  orderEmail     Boolean  @default(true)
+  marketingEmail Boolean  @default(false)
+  backInStock    Boolean  @default(true)
+  priceDrop      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }

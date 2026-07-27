@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   ArrowLeft,
   ArrowRight,
@@ -21,23 +22,27 @@ import {
   Truck,
   Wheat
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useState } from "react";
 import {
   Catalog,
   Category,
   Product,
+  ProductVariant,
   fallbackCatalog,
   fetchCatalog,
   formatMoney,
+  selectableProductInventory,
   resolveMediaUrl
 } from "../lib/catalog";
 import { useCart } from "./CartContext";
+import { HorizontalRail } from "./HorizontalRail";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
 import { QuickVariantAdd } from "./QuickVariantAdd";
 import { useWishlist } from "./WishlistContext";
 
 type Shelf = "new" | "trending";
+type SlideDirection = "next" | "previous";
 
 function uniqueProducts(products: Product[]) {
   return Array.from(new Map(products.map((product) => [product.id, product])).values());
@@ -54,8 +59,13 @@ function campaignHref(href: string) {
 export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalog?: Catalog }) {
   const [catalog, setCatalog] = useState(initialCatalog);
   const [activeBanner, setActiveBanner] = useState(0);
+  const [previousBanner, setPreviousBanner] = useState<number | null>(null);
+  const [bannerDirection, setBannerDirection] = useState<SlideDirection>("next");
   const [bannerPaused, setBannerPaused] = useState(false);
   const [shelf, setShelf] = useState<Shelf>("new");
+  const [activeCategory, setActiveCategory] = useState(
+    initialCatalog.categoryShowcase.find((entry) => entry.products.length)?.category.id ?? ""
+  );
   const { addItem } = useCart();
 
   useEffect(() => {
@@ -80,23 +90,52 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
   }, [activeBanner, campaigns.length]);
 
   useEffect(() => {
+    if (previousBanner === null) return;
+    const timer = window.setTimeout(() => setPreviousBanner(null), 950);
+    return () => window.clearTimeout(timer);
+  }, [activeBanner, previousBanner]);
+
+  useEffect(() => {
     if (bannerPaused || campaigns.length < 2) return;
     const timer = window.setInterval(() => {
-      setActiveBanner((current) => (current + 1) % campaigns.length);
+      setBannerDirection("next");
+      setActiveBanner((current) => {
+        setPreviousBanner(current);
+        return (current + 1) % campaigns.length;
+      });
     }, 6500);
     return () => window.clearInterval(timer);
   }, [bannerPaused, campaigns.length]);
 
   const popularProducts = useMemo(() => {
-    return uniqueProducts([...catalog.topSellingProducts, ...catalog.justForYou]).slice(0, 8);
+    return uniqueProducts([...catalog.topSellingProducts, ...catalog.justForYou]).slice(0, 16);
   }, [catalog.justForYou, catalog.topSellingProducts]);
+
+  const categoryEntries = useMemo(
+    () => catalog.categoryShowcase.filter((entry) => entry.category.isActive !== false),
+    [catalog.categoryShowcase]
+  );
+  const activeBrands = useMemo(
+    () => catalog.brands.filter((item) => item.isActive !== false),
+    [catalog.brands]
+  );
+  const selectedCategory = categoryEntries.find(
+    (entry) => entry.category.id === activeCategory && entry.products.length
+  ) ?? categoryEntries.find((entry) => entry.products.length);
+
+  useEffect(() => {
+    if (!selectedCategory) return;
+    if (selectedCategory.category.id !== activeCategory) {
+      setActiveCategory(selectedCategory.category.id);
+    }
+  }, [activeCategory, selectedCategory]);
 
   const discoveryProducts = useMemo(() => {
     const used = new Set(popularProducts.map((product) => product.id));
     const primary = shelf === "new" ? catalog.newlyLaunched : catalog.trendingProducts;
     return uniqueProducts([...primary, ...catalog.justForYou])
       .filter((product) => !used.has(product.id))
-      .slice(0, 4);
+      .slice(0, 16);
   }, [
     catalog.justForYou,
     catalog.newlyLaunched,
@@ -105,7 +144,6 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
     shelf
   ]);
 
-  const banner = campaigns[activeBanner] ?? campaigns[0];
   const combo = catalog.comboDeals[0];
   const activeSections = useMemo(
     () => (catalog.homeSections ?? fallbackCatalog.homeSections)
@@ -125,9 +163,20 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
   const customerStories = (catalog.testimonials ?? []).filter((item) => item.isActive);
 
   function moveBanner(direction: number) {
-    setActiveBanner((current) =>
-      (current + direction + campaigns.length) % campaigns.length
-    );
+    setBannerDirection(direction > 0 ? "next" : "previous");
+    setActiveBanner((current) => {
+      setPreviousBanner(current);
+      return (current + direction + campaigns.length) % campaigns.length;
+    });
+  }
+
+  function chooseBanner(index: number) {
+    if (index === activeBanner) return;
+    const forward = (index - activeBanner + campaigns.length) % campaigns.length;
+    const backward = (activeBanner - index + campaigns.length) % campaigns.length;
+    setBannerDirection(forward <= backward ? "next" : "previous");
+    setPreviousBanner(activeBanner);
+    setActiveBanner(index);
   }
 
   return (
@@ -138,24 +187,50 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
         className="modern-home-hero"
         aria-labelledby="hero-title"
       >
-        <img
-          className="modern-hero-image"
-          src={banner.imageUrl ?? "/images/grocery-hero.png"}
-          alt=""
-        />
+        <div className="modern-hero-media" aria-hidden="true">
+          {campaigns.map((campaign, index) => (
+            <img
+              key={campaign.id}
+              className={[
+                "modern-hero-image",
+                index === activeBanner ? `active slide-${bannerDirection}` : "",
+                index === previousBanner ? `exiting exit-${bannerDirection}` : ""
+              ].filter(Boolean).join(" ")}
+              src={campaign.imageUrl ?? "/images/grocery-hero.png"}
+              alt=""
+              style={{
+                objectPosition: `${campaign.focalX ?? 50}% ${campaign.focalY ?? 50}%`
+              } as CSSProperties}
+            />
+          ))}
+        </div>
         <div className="modern-hero-copy">
-          <p className="eyebrow">{banner.eyebrow ?? "Everyday pantry market"}</p>
-          <h1 id="hero-title">{banner.title}</h1>
-          <p>{banner.subtitle}</p>
-          <div className="modern-hero-actions">
-            <a className="primary-action" href={campaignHref(banner.ctaHref)}>
-              {banner.ctaLabel}
-              <ArrowRight size={18} />
-            </a>
-            <a className="text-link" href={categorySection ? "#categories" : "/shop"}>
-              Browse categories
-              <ChevronRight size={17} />
-            </a>
+          <div className="modern-hero-content-stage">
+            {campaigns.map((campaign, index) => (
+              <div
+                className={[
+                  "modern-hero-content",
+                  index === activeBanner ? `active content-${bannerDirection}` : "",
+                  index === previousBanner ? `exiting content-exit-${bannerDirection}` : ""
+                ].filter(Boolean).join(" ")}
+                key={campaign.id}
+                aria-hidden={index !== activeBanner}
+              >
+                <p className="eyebrow">{campaign.eyebrow ?? "Everyday pantry market"}</p>
+                <h1 id={index === activeBanner ? "hero-title" : undefined}>{campaign.title}</h1>
+                <p>{campaign.subtitle}</p>
+                <div className="modern-hero-actions">
+                  <Link className="primary-action" href={campaignHref(campaign.ctaHref)}>
+                    {campaign.ctaLabel}
+                    <ArrowRight size={18} />
+                  </Link>
+                  <Link className="text-link" href={categorySection ? "#categories" : "/shop"}>
+                    Browse categories
+                    <ChevronRight size={17} />
+                  </Link>
+                </div>
+              </div>
+            ))}
           </div>
           {campaigns.length > 1 ? (
             <div className="modern-hero-controls" aria-label="Campaign controls">
@@ -168,7 +243,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
                     key={campaign.id}
                     type="button"
                     className={index === activeBanner ? "active" : ""}
-                    onClick={() => setActiveBanner(index)}
+                    onClick={() => chooseBanner(index)}
                     aria-label={`Show campaign ${index + 1}: ${campaign.title}`}
                     aria-current={index === activeBanner ? "true" : undefined}
                   />
@@ -213,18 +288,46 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
           text={categorySection.subtitle ?? undefined}
           action={categorySection.ctaLabel && categorySection.ctaHref ? { label: categorySection.ctaLabel, href: categorySection.ctaHref } : undefined}
         />
-        <div className="modern-category-grid">
-          {catalog.categories.filter((item) => item.isActive !== false).map((category) => (
-            <a href={`/shop?category=${category.slug}`} key={category.id}>
-              <CategoryIcon category={category} />
+        <HorizontalRail variant="categories" label="product categories">
+          {categoryEntries.map((entry) => (
+            <button
+              className={`category-rail-item ${entry.category.id === selectedCategory?.category.id ? "active" : ""}`}
+              type="button"
+              role="tab"
+              key={entry.category.id}
+              disabled={!entry.products.length}
+              aria-selected={entry.category.id === selectedCategory?.category.id}
+              onClick={() => setActiveCategory(entry.category.id)}
+            >
+              <CategoryIcon category={entry.category} />
               <span>
-                <strong>{category.name}</strong>
-                <small>Explore products</small>
+                <strong>{entry.category.name}</strong>
+                <small>{entry.totalProducts} products</small>
               </span>
-              <ChevronRight size={17} />
-            </a>
+            </button>
           ))}
-        </div>
+        </HorizontalRail>
+        {categoryShowcaseSection && selectedCategory ? (
+          <section className="home-category-shelf" key={selectedCategory.category.id}>
+            <header>
+              <span><CategoryIcon category={selectedCategory.category} /></span>
+              <div>
+                <h3>{selectedCategory.category.name}</h3>
+                <p>{selectedCategory.totalProducts} {selectedCategory.totalProducts === 1 ? "product" : "products"} available</p>
+              </div>
+              <Link href={`/shop?category=${selectedCategory.category.slug}`}>
+                View category <ArrowRight size={15} />
+              </Link>
+            </header>
+            <HorizontalRail variant="products" label={`${selectedCategory.category.name} products`}>
+              {selectedCategory.products
+                .slice(0, Math.min(Math.max(categoryShowcaseSection.productLimit || 8, 8), 12))
+                .map((product) => (
+                  <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
+                ))}
+            </HorizontalRail>
+          </section>
+        ) : null}
       </section> : null}
 
       {popularSection ? <section className="modern-product-section" id="popular">
@@ -234,11 +337,11 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
           text={popularSection.subtitle ?? undefined}
           action={popularSection.ctaLabel && popularSection.ctaHref ? { label: popularSection.ctaLabel, href: popularSection.ctaHref } : undefined}
         />
-        <div className="modern-product-grid">
-          {popularProducts.slice(0, popularSection.productLimit || 4).map((product) => (
+        <HorizontalRail variant="products" label="best selling products">
+          {popularProducts.slice(0, Math.min(Math.max(popularSection.productLimit || 8, 8), 16)).map((product) => (
             <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
           ))}
-        </div>
+        </HorizontalRail>
       </section> : null}
 
       {combo && comboSection ? (
@@ -247,19 +350,19 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
             <p className="eyebrow">{comboSection.eyebrow ?? "Bundle and save"}</p>
             <h2>{comboSection.title}</h2>
             <p>{comboSection.subtitle}</p>
-            <a className="primary-action" href={`/products/${combo.slug}`}>
-              {comboSection.ctaLabel ?? `Explore ${combo.name}`}
+            <Link className="primary-action" href="/combo-deals">
+              {comboSection.ctaLabel ?? "Explore combo deals"}
               <ArrowRight size={18} />
-            </a>
+            </Link>
           </div>
-          <a className="modern-promo-product" href={`/products/${combo.slug}`}>
+          <Link className="modern-promo-product" href={`/products/${combo.slug}`}>
             <ProductArt product={combo} />
             <span>
               <small>{combo.badge ?? "Combo offer"}</small>
               <strong>{combo.name}</strong>
               <b>{formatMoney(combo.price)}</b>
             </span>
-          </a>
+          </Link>
         </section>
       ) : null}
 
@@ -279,78 +382,61 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
             </button>
           </div>
         </div>
-        <div className="modern-product-grid">
-          {discoveryProducts.slice(0, discoverSection.productLimit || 8).map((product) => (
+        <HorizontalRail key={shelf} variant="products" label={shelf === "new" ? "new products" : "trending products"}>
+          {discoveryProducts.slice(0, Math.min(Math.max(discoverSection.productLimit || 8, 8), 16)).map((product) => (
             <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
           ))}
-        </div>
+        </HorizontalRail>
       </section> : null}
 
-      {categoryShowcaseSection && catalog.categoryShowcase.length ? (
-        <section className="home-category-showcase" id="all-categories">
-          <SectionHeading
-            eyebrow={categoryShowcaseSection.eyebrow ?? "A look through every aisle"}
-            title={categoryShowcaseSection.title}
-            text={categoryShowcaseSection.subtitle ?? undefined}
-            action={categoryShowcaseSection.ctaLabel && categoryShowcaseSection.ctaHref
-              ? { label: categoryShowcaseSection.ctaLabel, href: categoryShowcaseSection.ctaHref }
-              : undefined}
-          />
-          <div className="home-category-shelves">
-            {catalog.categoryShowcase
-              .filter((entry) => entry.products.length)
-              .map((entry) => (
-                <section className="home-category-shelf" key={entry.category.id}>
-                  <header>
-                    <span><CategoryIcon category={entry.category} /></span>
-                    <div>
-                      <h3>{entry.category.name}</h3>
-                      <p>{entry.totalProducts} {entry.totalProducts === 1 ? "product" : "products"} available</p>
-                    </div>
-                    <a href={`/shop?category=${entry.category.slug}`}>
-                      View category <ArrowRight size={15} />
-                    </a>
-                  </header>
-                  <div className="modern-product-grid category-preview-grid">
-                    {entry.products
-                      .slice(0, categoryShowcaseSection.productLimit || 4)
-                      .map((product) => (
-                        <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
-                      ))}
-                  </div>
-                </section>
-              ))}
-          </div>
-        </section>
-      ) : null}
-
-      {brandSection && catalog.brands.filter((item) => item.isActive !== false).length ? (
+      {brandSection && activeBrands.length ? (
         <section className="modern-brand-section" id="brands">
           <div>
             <p className="eyebrow">{brandSection.eyebrow ?? "Trusted makers"}</p>
             <h2>{brandSection.title}</h2>
             <p>{brandSection.subtitle}</p>
+            <Link className="modern-brand-all" href="/shop">
+              Browse all {activeBrands.length} brands <ArrowRight size={15} />
+            </Link>
           </div>
-          <div className="modern-brand-grid">
-            {catalog.brands.filter((item) => item.isActive !== false).slice(0, 6).map((brand) => (
-              <a href={`/shop?brand=${brand.id}`} key={brand.id}>
+          <HorizontalRail variant="brands" label="available brands">
+            {activeBrands.map((brand) => (
+              <Link href={`/shop?brand=${brand.id}`} key={brand.id}>
                 {brand.logoUrl ? <img src={brand.logoUrl} alt={`${brand.name} logo`} /> : <BadgeCheck size={22} />}
                 <strong>{brand.name}</strong>
                 <ChevronRight size={16} />
-              </a>
+              </Link>
             ))}
-          </div>
+          </HorizontalRail>
         </section>
       ) : null}
 
-      {testimonialSection && customerStories.length ? (
+      {testimonialSection && (customerStories.length || catalog.featuredReviews.length) ? (
         <section className="modern-testimonial-section">
           <SectionHeading
             eyebrow={testimonialSection.eyebrow ?? "From our customers"}
             title={testimonialSection.title}
             text={testimonialSection.subtitle ?? undefined}
           />
-          <div className="modern-testimonial-grid">
+          <HorizontalRail variant="reviews" label="customer reviews">
+            {catalog.featuredReviews.map((review) => (
+              <article className="modern-review-card customer" key={review.id}>
+                <div className="modern-review-score" aria-label={`${review.rating} out of 5 stars`}>
+                  {Array.from({ length: 5 }, (_, index) => (
+                    <Star size={15} key={index} fill={index < review.rating ? "currentColor" : "none"} />
+                  ))}
+                </div>
+                <blockquote>{review.comment}</blockquote>
+                <footer>
+                  {review.user?.avatarUrl ? <img src={review.user.avatarUrl} alt="" /> : <BadgeCheck size={20} />}
+                  <span>
+                    <strong>{review.user?.name ?? "Customer"}</strong>
+                    <small>{review.isVerified ? "Verified purchase" : "Customer review"}</small>
+                  </span>
+                </footer>
+                {review.product ? <Link href={`/products/${review.product.slug}`}>{review.product.name}</Link> : null}
+              </article>
+            ))}
             {customerStories.map((story) => (
               <article key={story.id}>
                 <div className="modern-review-score" aria-label={`${story.rating} out of 5 stars`}>
@@ -365,7 +451,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
                 </footer>
               </article>
             ))}
-          </div>
+          </HorizontalRail>
         </section>
       ) : null}
 
@@ -392,6 +478,14 @@ function ServiceItem({
 }
 
 function CategoryIcon({ category }: { category: Category }) {
+  const image = resolveMediaUrl(category.imageUrl);
+  if (image) {
+    return (
+      <span className="modern-category-icon image">
+        <img src={image} alt="" />
+      </span>
+    );
+  }
   const slug = category.slug;
   const icon =
     slug.includes("honey") || slug.includes("oil") ? <Droplets /> :
@@ -422,7 +516,7 @@ function SectionHeading({
         <h2>{title}</h2>
         {text ? <p>{text}</p> : null}
       </div>
-      {action ? <a href={action.href}>{action.label}<ArrowRight size={16} /></a> : null}
+      {action ? <Link href={action.href}>{action.label}<ArrowRight size={16} /></Link> : null}
     </div>
   );
 }
@@ -435,7 +529,16 @@ function ProductCard({
   onAdd: () => void;
 }) {
   const { isSaved, toggle } = useWishlist();
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const saved = isSaved(product.slug);
+  const availableInventory = selectedVariant
+    ? selectedVariant.inventory
+    : selectableProductInventory(product);
+  const displayPrice = selectedVariant?.price ?? product.price;
+  const displayCompareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
+  const savings = displayCompareAt && displayCompareAt > displayPrice
+    ? Math.round(((displayCompareAt - displayPrice) / displayCompareAt) * 100)
+    : 0;
 
   return (
     <article className="modern-product-card">
@@ -445,19 +548,27 @@ function ProductCard({
           <Heart size={17} fill={saved ? "currentColor" : "none"} />
         </button>
       </div>
-      <a className="modern-product-art" href={`/products/${product.slug}`} aria-label={`View ${product.name}`}>
+      <Link className="modern-product-art" href={`/products/${product.slug}`} aria-label={`View ${product.name}`}>
         <ProductArt product={product} />
-      </a>
+      </Link>
       <div className="modern-product-meta">
         <small>{product.brand?.name ?? product.category?.name ?? "My Ecom"}</small>
-        <h3><a href={`/products/${product.slug}`}>{product.name}</a></h3>
+        <h3><Link href={`/products/${product.slug}`}>{product.name}</Link></h3>
         <div className="price-row">
-          <strong>{formatMoney(product.price)}</strong>
-          {product.compareAt ? <small>{formatMoney(product.compareAt)}</small> : null}
+          <strong>{formatMoney(displayPrice)}</strong>
+          {displayCompareAt ? <small>{formatMoney(displayCompareAt)}</small> : null}
+          {savings ? <em>Save {savings}%</em> : null}
+        </div>
+        <div className="product-card-facts">
+          {product.reviewCount ? <span><Star size={12} fill="currentColor" /> {product.rating?.toFixed(1)} ({product.reviewCount})</span> : null}
+          <span className={availableInventory <= 5 ? "low-stock" : ""}>
+            {availableInventory > 5 ? "In stock" : availableInventory > 0 ? `Only ${availableInventory} left` : "Out of stock"}
+          </span>
+          <span><Truck size={12} /> 1-2 day delivery</span>
         </div>
       </div>
       {product.variants?.length ? (
-        <QuickVariantAdd product={product} />
+        <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (
         <button className="add-button full" type="button" disabled={!product.inventory} onClick={onAdd}>
           <ShoppingBag size={17} />

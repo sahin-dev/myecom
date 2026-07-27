@@ -8,18 +8,28 @@ import {
   MapPin,
   PackageSearch,
   Phone,
+  Plus,
   RefreshCw,
   Search,
+  ShoppingBag,
+  Trash2,
   Truck
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   AdminOrdersResponse,
+  AdminCatalog,
   Order,
+  cancelAdminOrder,
+  createAdminOrder,
+  baseProductOptionLabel,
+  fetchAdminCatalog,
   fetchAdminOrders,
   formatMoney,
+  isBaseProductEnabled,
   updateAdminOrder
 } from "../../lib/catalog";
+import { useAuth } from "../AuthContext";
 import {
   AdminError,
   AdminLoading,
@@ -41,9 +51,25 @@ const orderTransitions: Record<string, string[]> = {
   CANCELLED: []
 };
 
+function defaultOrderVariant(product: AdminCatalog["products"][number]) {
+  if (isBaseProductEnabled(product) && product.inventory > 0) return undefined;
+  return product.variants?.find((variant) => variant.isActive && variant.inventory > 0)?.id
+    ?? product.variants?.find((variant) => variant.isActive)?.id;
+}
+
 export function AdminOrders() {
+  const { user } = useAuth();
+  const can = (permission: string) =>
+    Boolean(user?.permissions.includes("*") || user?.permissions.includes(permission));
   const [result, setResult] = useState<AdminOrdersResponse | null>(null);
   const [selected, setSelected] = useState<Order | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
+  const [draftItems, setDraftItems] = useState<Array<{
+    productId: string;
+    variantId?: string;
+    quantity: number;
+  }>>([]);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -114,6 +140,85 @@ export function AdminOrders() {
     }
   }
 
+  async function beginCreateOrder() {
+    setSelected(null);
+    setCreating(true);
+    setMessage("");
+    try {
+      const nextCatalog = catalog ?? await fetchAdminCatalog();
+      setCatalog(nextCatalog);
+      const first = nextCatalog.products.find((product) => product.status === "ACTIVE");
+      setDraftItems(first ? [{
+        productId: first.id,
+        variantId: defaultOrderVariant(first),
+        quantity: 1
+      }] : []);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Products could not be loaded.");
+      setCreating(false);
+    }
+  }
+
+  function updateDraftItem(
+    index: number,
+    input: Partial<{ productId: string; variantId?: string; quantity: number }>
+  ) {
+    setDraftItems((current) => current.map((item, itemIndex) => {
+      if (itemIndex !== index) return item;
+      if (input.productId) {
+        const product = catalog?.products.find((candidate) => candidate.id === input.productId);
+        return {
+          productId: input.productId,
+          variantId: product ? defaultOrderVariant(product) : undefined,
+          quantity: item.quantity
+        };
+      }
+      return { ...item, ...input };
+    }));
+  }
+
+  async function submitOrder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draftItems.length) return;
+    setSaving(true);
+    setMessage("");
+    const data = new FormData(event.currentTarget);
+    try {
+      const order = await createAdminOrder({
+        customerName: String(data.get("customerName")),
+        email: String(data.get("email")),
+        phone: String(data.get("phone")),
+        shippingAddress: String(data.get("shippingAddress")),
+        paymentMethod: String(data.get("paymentMethod") || ""),
+        deliveryMethodCode: String(data.get("deliveryMethodCode") || ""),
+        items: draftItems
+      });
+      setCreating(false);
+      setSelected(order);
+      setMessage(`${order.orderNumber} was created and inventory was reserved.`);
+      await load();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Order could not be created.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function cancelOrder(order: Order) {
+    if (!window.confirm(`Cancel ${order.orderNumber}? Reserved inventory will be released.`)) return;
+    setSaving(true);
+    try {
+      const cancelled = await cancelAdminOrder(order.id);
+      setSelected(cancelled);
+      setMessage(`${cancelled.orderNumber} was cancelled and its inventory was released.`);
+      await load();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Order could not be cancelled.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function exportOrders() {
     if (!result?.orders.length) return;
     const rows = [
@@ -152,9 +257,12 @@ export function AdminOrders() {
         description="Search, fulfill, track, and document every customer order."
         actions={
           <>
-            <button className="secondary-action" type="button" onClick={exportOrders}>
+            {can("orders.create") ? <button className="primary-action" type="button" onClick={() => void beginCreateOrder()}>
+              <Plus size={17} /> Create order
+            </button> : null}
+            {can("orders.export") ? <button className="secondary-action" type="button" onClick={exportOrders}>
               <Download size={17} /> Export page
-            </button>
+            </button> : null}
             <button className="admin-icon-button" type="button" onClick={() => void load()} title="Refresh orders">
               <RefreshCw size={17} />
             </button>
@@ -184,7 +292,7 @@ export function AdminOrders() {
 
       {message ? <p className="admin-message">{message}</p> : null}
 
-      <div className={`admin-order-workspace ${selected ? "has-detail" : ""}`}>
+      <div className={`admin-order-workspace ${selected || creating ? "has-detail" : ""}`}>
         <section className="admin-order-list">
           <AdminSectionHeader
             title={`${result?.pagination.total ?? 0} orders`}
@@ -208,6 +316,13 @@ export function AdminOrders() {
                     key={order.id}
                     className={selected?.id === order.id ? "selected" : ""}
                     onClick={() => setSelected(order)}
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelected(order);
+                      }
+                    }}
                   >
                     <td>
                       <strong>{order.orderNumber}</strong>
@@ -253,7 +368,60 @@ export function AdminOrders() {
           </div>
         </section>
 
-        {selected ? (
+        {creating && catalog ? (
+          <aside className="admin-order-detail admin-create-order">
+            <div className="admin-detail-head">
+              <div><span>Manual order</span><h2>Create order</h2></div>
+              <button type="button" onClick={() => setCreating(false)} aria-label="Close create order">Close</button>
+            </div>
+            <form className="admin-order-form" onSubmit={submitOrder}>
+              <div className="form-grid">
+                <label>Customer name<input name="customerName" placeholder="Full name" required /></label>
+                <label>Email<input name="email" type="email" placeholder="customer@example.com" required /></label>
+              </div>
+              <label>Phone<input name="phone" placeholder="+880..." required /></label>
+              <label>Shipping address<textarea name="shippingAddress" placeholder="House, road, area, city, postal code" required /></label>
+              <div className="admin-manual-order-lines">
+                <header><span><strong>Order items</strong><small>Prices and inventory are validated when the order is created.</small></span><button type="button" onClick={() => {
+                  const first = catalog.products.find((product) => product.status === "ACTIVE");
+                  if (first) setDraftItems((current) => [...current, { productId: first.id, variantId: defaultOrderVariant(first), quantity: 1 }]);
+                }}><Plus size={15} /> Add line</button></header>
+                {draftItems.map((item, index) => {
+                  const product = catalog.products.find((candidate) => candidate.id === item.productId);
+                  const variants = product?.variants?.filter((variant) => variant.isActive) ?? [];
+                  const variant = variants.find((candidate) => candidate.id === item.variantId);
+                  return (
+                    <div key={`${index}-${item.productId}`}>
+                      <label>Product<select value={item.productId} onChange={(event) => updateDraftItem(index, { productId: event.target.value })}>{catalog.products.filter((candidate) => candidate.status === "ACTIVE").map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>
+                      <label>Option<select value={item.variantId ?? ""} disabled={!variants.length} onChange={(event) => updateDraftItem(index, { variantId: event.target.value || undefined })}>
+                        {!variants.length ? <option value="">{product ? baseProductOptionLabel(product) : "Standard"}</option> : null}
+                        {variants.length && product && isBaseProductEnabled(product) ? (
+                          <option value="">{baseProductOptionLabel(product)} · {formatMoney(product.price)}</option>
+                        ) : null}
+                        {variants.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {formatMoney(candidate.price)}</option>)}
+                      </select></label>
+                      <label>Qty<input type="number" min="1" max={variant?.inventory ?? product?.inventory ?? 1} value={item.quantity} onChange={(event) => updateDraftItem(index, { quantity: Math.max(1, Number(event.target.value) || 1) })} /></label>
+                      <button type="button" disabled={draftItems.length === 1} onClick={() => setDraftItems((current) => current.filter((_, itemIndex) => itemIndex !== index))} title="Remove line"><Trash2 size={16} /></button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="form-grid">
+                <label>Payment method<select name="paymentMethod">{catalog.checkoutMethods.filter((method) => method.type === "PAYMENT" && method.isActive).map((method) => <option key={method.id} value={method.code}>{method.name}</option>)}</select></label>
+                <label>Delivery method<select name="deliveryMethodCode">{catalog.checkoutMethods.filter((method) => method.type === "DELIVERY" && method.isActive).map((method) => <option key={method.id} value={method.code}>{method.name}{method.fee ? ` · ${formatMoney(method.fee)}` : " · Free"}</option>)}</select></label>
+              </div>
+              <div className="admin-manual-total"><span>Item subtotal</span><strong>{formatMoney(draftItems.reduce((sum, item) => {
+                const product = catalog.products.find((candidate) => candidate.id === item.productId);
+                const variant = product?.variants?.find((candidate) => candidate.id === item.variantId);
+                return sum + (variant?.price ?? product?.price ?? 0) * item.quantity;
+              }, 0))}</strong></div>
+              <div className="admin-editor-sticky-actions">
+                <button className="secondary-action" type="button" onClick={() => setCreating(false)}>Cancel</button>
+                <button className="primary-action" type="submit" disabled={saving || !draftItems.length}><ShoppingBag size={16} /> {saving ? "Creating order..." : "Create order"}</button>
+              </div>
+            </form>
+          </aside>
+        ) : selected ? (
           <aside className="admin-order-detail">
             <div className="admin-detail-head">
               <div>
@@ -284,11 +452,11 @@ export function AdminOrders() {
               </dl>
             </div>
 
-            <form className="admin-order-form" key={`${selected.id}-${selected.updatedAt}`} onSubmit={saveOrder}>
+            {can("orders.update") ? <form className="admin-order-form" key={`${selected.id}-${selected.updatedAt}`} onSubmit={saveOrder}>
               <div className="form-grid">
                 <label>Order status
                   <select name="status" defaultValue={selected.status}>
-                    {[selected.status, ...(orderTransitions[selected.status] ?? [])].map((item) => (
+                    {[selected.status, ...(orderTransitions[selected.status] ?? []).filter((item) => item !== "CANCELLED")].map((item) => (
                       <option key={item} value={item}>{formatStatus(item)}</option>
                     ))}
                   </select>
@@ -319,10 +487,14 @@ export function AdminOrders() {
               <label>Private admin note
                 <textarea name="adminNote" defaultValue={selected.adminNote ?? ""} placeholder="Internal note, not shown to customer" />
               </label>
-              <button className="primary-action full" type="submit" disabled={saving}>
-                {saving ? "Saving..." : "Save order"}
-              </button>
-            </form>
+              <div className="admin-editor-sticky-actions">
+                <span />
+                <button className="primary-action" type="submit" disabled={saving}>
+                  {saving ? "Saving..." : "Save order"}
+                </button>
+              </div>
+            </form> : null}
+            {can("orders.delete") && ["PLACED", "CONFIRMED", "PACKED"].includes(selected.status) ? <button className="danger-action admin-cancel-order" type="button" disabled={saving} onClick={() => void cancelOrder(selected)}>Cancel order</button> : null}
 
             <div className="admin-timeline">
               <h3>Tracking history</h3>

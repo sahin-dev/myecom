@@ -63,6 +63,7 @@ export class EcommerceService {
   ) {}
 
   async home() {
+    const now = new Date();
     const [
       banners,
       brands,
@@ -81,7 +82,13 @@ export class EcommerceService {
       checkoutMethods
     ] = await Promise.all([
       this.prisma.banner.findMany({
-        where: { isActive: true },
+        where: {
+          isActive: true,
+          AND: [
+            { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+            { OR: [{ endsAt: null }, { endsAt: { gte: now } }] }
+          ]
+        },
         orderBy: [{ priority: "asc" }, { publishedAt: "desc" }]
       }),
       this.prisma.brand.findMany({ where: { isActive: true }, orderBy: { createdAt: "desc" } }),
@@ -109,10 +116,10 @@ export class EcommerceService {
         take: 4
       }),
       this.prisma.product.findMany({
-        where: { status: "ACTIVE", isCombo: true },
+        where: { status: "ACTIVE", isCombo: true, showOnHome: true },
         include: { brand: true, category: true, images: true, variants: true },
-        orderBy: { updatedAt: "desc" },
-        take: 5
+        orderBy: [{ comboPriority: "asc" }, { updatedAt: "desc" }],
+        take: 1
       }),
       this.prisma.product.findMany({
         where: { status: "ACTIVE", isCertified: true },
@@ -137,13 +144,13 @@ export class EcommerceService {
         take: 250
       }),
       this.prisma.review.findMany({
-        where: { status: "APPROVED", isVerified: true },
+        where: { status: "APPROVED", showOnHome: true },
         include: {
           user: { select: { name: true, avatarUrl: true } },
           product: { select: { name: true, slug: true } }
         },
-        orderBy: { createdAt: "desc" },
-        take: 3
+        orderBy: [{ homePriority: "asc" }, { createdAt: "desc" }],
+        take: 12
       }),
       this.prisma.homeSection.findMany({
         where: { isActive: true },
@@ -174,7 +181,7 @@ export class EcommerceService {
         return {
           category,
           totalProducts: products.length,
-          products: products.slice(0, 4)
+          products: products.slice(0, 12)
         };
       }),
       featuredReviews,
@@ -205,6 +212,35 @@ export class EcommerceService {
     });
   }
 
+  async comboDeals() {
+    const combos = await this.prisma.product.findMany({
+      where: { status: "ACTIVE", isCombo: true },
+      include: {
+        brand: true,
+        category: true,
+        images: { orderBy: { position: "asc" } },
+        variants: { orderBy: { createdAt: "asc" } }
+      },
+      orderBy: [{ comboPriority: "asc" }, { updatedAt: "desc" }]
+    });
+    const componentIds = Array.from(
+      new Set(combos.flatMap((combo) => combo.comboProductIds))
+    );
+    const components = componentIds.length
+      ? await this.prisma.product.findMany({
+          where: { id: { in: componentIds }, status: "ACTIVE" },
+          select: { id: true, name: true, slug: true, imageUrl: true, price: true }
+        })
+      : [];
+    const byId = new Map(components.map((product) => [product.id, product]));
+    return combos.map((combo) => ({
+      ...combo,
+      comboProducts: combo.comboProductIds
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+    }));
+  }
+
   async product(slug: string) {
     const product = await this.prisma.product.findUnique({
       where: { slug },
@@ -225,7 +261,15 @@ export class EcommerceService {
       throw new NotFoundException("Product not found.");
     }
 
-    return product;
+    const comboProducts =
+      product.isCombo && product.comboProductIds.length
+        ? await this.prisma.product.findMany({
+            where: { id: { in: product.comboProductIds }, status: "ACTIVE" },
+            select: { id: true, name: true, slug: true, imageUrl: true, price: true }
+          })
+        : [];
+
+    return { ...product, comboProducts };
   }
 
   checkoutMethods() {
@@ -273,6 +317,7 @@ export class EcommerceService {
         name: dto.name,
         slug: count ? `${slugBase}-${count + 1}` : slugBase,
         icon: dto.icon,
+        imageUrl: dto.imageUrl,
         priority: dto.priority ?? 0
       }
     });
@@ -295,7 +340,8 @@ export class EcommerceService {
         ...dto,
         name: nextName,
         slug: nextSlug,
-        icon: dto.icon === undefined ? undefined : dto.icon.trim() || null
+        icon: dto.icon === undefined ? undefined : dto.icon.trim() || null,
+        imageUrl: dto.imageUrl === undefined ? undefined : dto.imageUrl.trim() || null
       }
     });
   }
@@ -313,6 +359,10 @@ export class EcommerceService {
     return this.prisma.banner.create({
       data: {
         ...dto,
+        startsAt: dto.startsAt ? new Date(dto.startsAt) : undefined,
+        endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
+        focalX: dto.focalX ?? 50,
+        focalY: dto.focalY ?? 50,
         priority: dto.priority ?? 0,
         isActive: dto.isActive ?? true
       }
@@ -333,22 +383,48 @@ export class EcommerceService {
       update: {
         title: dto.title?.trim(),
         logoUrl: dto.logoUrl === undefined ? undefined : dto.logoUrl?.trim() || null,
+        faviconUrl:
+          dto.faviconUrl === undefined ? undefined : dto.faviconUrl?.trim() || null,
         announcement: dto.announcement?.trim(),
         announcementLinkLabel: dto.announcementLinkLabel?.trim(),
-        announcementLinkHref: dto.announcementLinkHref?.trim()
+        announcementLinkHref: dto.announcementLinkHref?.trim(),
+        facebookUrl:
+          dto.facebookUrl === undefined ? undefined : dto.facebookUrl.trim() || null,
+        instagramUrl:
+          dto.instagramUrl === undefined ? undefined : dto.instagramUrl.trim() || null,
+        youtubeUrl:
+          dto.youtubeUrl === undefined ? undefined : dto.youtubeUrl.trim() || null,
+        whatsappUrl:
+          dto.whatsappUrl === undefined ? undefined : dto.whatsappUrl.trim() || null
       },
       create: {
         key: "default",
         title: dto.title?.trim() || "My Ecom",
         logoUrl: dto.logoUrl?.trim() || null,
+        faviconUrl: dto.faviconUrl?.trim() || null,
         announcement: dto.announcement?.trim() || "Free delivery over \u09F33,000",
         announcementLinkLabel: dto.announcementLinkLabel?.trim() || "Track your order",
-        announcementLinkHref: dto.announcementLinkHref?.trim() || "/track-order"
+        announcementLinkHref: dto.announcementLinkHref?.trim() || "/track-order",
+        facebookUrl: dto.facebookUrl?.trim() || null,
+        instagramUrl: dto.instagramUrl?.trim() || null,
+        youtubeUrl: dto.youtubeUrl?.trim() || null,
+        whatsappUrl: dto.whatsappUrl?.trim() || null
       }
     });
   }
 
   async createProduct(dto: CreateProductDto) {
+    if (dto.isCombo) await this.validateComboProducts(dto.comboProductIds ?? []);
+    if (
+      dto.isCombo &&
+      dto.showOnHome &&
+      (dto.status ?? ProductStatus.ACTIVE) === ProductStatus.ACTIVE
+    ) {
+      await this.prisma.product.updateMany({
+        where: { isCombo: true, showOnHome: true },
+        data: { showOnHome: false }
+      });
+    }
     const slugBase = slugify(dto.name);
     const count = await this.prisma.product.count({
       where: { slug: { startsWith: slugBase } }
@@ -367,17 +443,25 @@ export class EcommerceService {
         costPrice: dto.costPrice,
         compareAt: dto.compareAt,
         inventory: dto.inventory ?? 0,
+        baseOptionEnabled: dto.baseOptionEnabled ?? true,
+        baseOptionLabel: dto.baseOptionLabel?.trim() || null,
         imageUrl: imageUrls[0],
         isNew: dto.isNew ?? false,
         isTrending: dto.isTrending ?? false,
         isBestSelling: dto.isBestSelling ?? false,
         isCombo: dto.isCombo ?? false,
+        comboProductIds: dto.isCombo ? Array.from(new Set(dto.comboProductIds ?? [])) : [],
+        showOnHome:
+          dto.isCombo && (dto.status ?? ProductStatus.ACTIVE) === ProductStatus.ACTIVE
+            ? dto.showOnHome ?? false
+            : false,
+        comboPriority: dto.isCombo ? dto.comboPriority ?? 0 : 0,
         isCertified: dto.isCertified ?? false,
         badge: dto.badge,
         brandId: dto.brandId || undefined,
         categoryId: dto.categoryId || undefined,
         tags: dto.tags ?? [],
-        status: "ACTIVE",
+        status: dto.status ?? ProductStatus.ACTIVE,
         images: imageUrls.length
           ? {
               create: imageUrls.map((url, position) => ({
@@ -400,6 +484,45 @@ export class EcommerceService {
       data: { status: ProductStatus.ARCHIVED },
       include: { brand: true, category: true, images: true, variants: true }
     });
+  }
+
+  async createComboDeal(dto: CreateProductDto) {
+    return this.createProduct({
+      ...dto,
+      isCombo: true,
+      badge: dto.badge?.trim() || "Combo deal",
+      tags: Array.from(new Set(["combo", ...(dto.tags ?? [])]))
+    });
+  }
+
+  async updateComboDeal(id: string, dto: AdminUpdateProductDto) {
+    const combo = await this.prisma.product.findUnique({ where: { id } });
+    if (!combo || !combo.isCombo) throw new NotFoundException("Combo deal not found.");
+    return this.adminUpdateProduct(id, { ...dto, isCombo: true });
+  }
+
+  async archiveComboDeal(id: string) {
+    const combo = await this.prisma.product.findUnique({ where: { id } });
+    if (!combo || !combo.isCombo) throw new NotFoundException("Combo deal not found.");
+    const archived = await this.prisma.product.update({
+      where: { id },
+      data: { status: ProductStatus.ARCHIVED, showOnHome: false },
+      include: { brand: true, category: true, images: true, variants: true }
+    });
+    return { archived: true, combo: archived };
+  }
+
+  private async validateComboProducts(ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    if (uniqueIds.length < 2) {
+      throw new BadRequestException("A combo deal must contain at least two products.");
+    }
+    const count = await this.prisma.product.count({
+      where: { id: { in: uniqueIds }, isCombo: false, status: { not: ProductStatus.ARCHIVED } }
+    });
+    if (count !== uniqueIds.length) {
+      throw new BadRequestException("One or more selected combo products are unavailable.");
+    }
   }
 
   async createHomeSection(dto: CreateHomeSectionDto) {
@@ -539,7 +662,7 @@ export class EcommerceService {
       if (variant && variant.productId !== item.productId) {
         throw new BadRequestException("A selected product option is invalid.");
       }
-      if (product?.variants.length && !item.variantId) {
+      if (product?.variants.length && product.baseOptionEnabled === false && !item.variantId) {
         throw new BadRequestException(`${product.name} requires an option selection.`);
       }
       const available = variant?.inventory ?? product?.inventory ?? 0;
@@ -759,6 +882,36 @@ export class EcommerceService {
     }
   }
 
+  async adminCreateOrder(dto: CheckoutDto, actorId: string) {
+    const order = await this.checkout(
+      {
+        ...dto,
+        idempotencyKey:
+          dto.idempotencyKey ?? `admin-${actorId}-${Date.now()}`
+      },
+      undefined
+    );
+    await this.prisma.$transaction([
+      this.prisma.trackingEvent.updateMany({
+        where: { orderId: order.id, status: OrderStatus.PLACED },
+        data: {
+          location: "Admin dashboard",
+          note: "Order created by store staff."
+        }
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          actorId,
+          action: "order.created",
+          entity: "Order",
+          entityId: order.id,
+          metadata: { orderNumber: order.orderNumber, total: order.total }
+        }
+      })
+    ]);
+    return this.adminOrder(order.id);
+  }
+
   async order(idOrNumber: string, email?: string) {
     if (!email) {
       throw new BadRequestException("Order email is required.");
@@ -786,7 +939,11 @@ export class EcommerceService {
     return order;
   }
 
-  async updateOrderStatus(idOrNumber: string, dto: UpdateOrderStatusDto) {
+  async updateOrderStatus(
+    idOrNumber: string,
+    dto: UpdateOrderStatusDto,
+    allowCancellation = false
+  ) {
     if (!Object.values(OrderStatus).includes(dto.status as OrderStatus)) {
       throw new BadRequestException("Invalid order status.");
     }
@@ -800,6 +957,9 @@ export class EcommerceService {
     });
     if (!current) throw new NotFoundException("Order not found.");
     const nextStatus = dto.status as OrderStatus;
+    if (nextStatus === OrderStatus.CANCELLED && !allowCancellation) {
+      throw new BadRequestException("Use the cancel-order action to cancel an order.");
+    }
     if (nextStatus === current.status) return this.adminOrder(current.id);
     if (!orderTransitions[current.status].includes(nextStatus)) {
       throw new BadRequestException(
@@ -835,6 +995,9 @@ export class EcommerceService {
         await transaction.payment.updateMany({
           where: { orderId: current.id, status: PaymentStatus.PENDING },
           data: { status: PaymentStatus.FAILED }
+        });
+        await transaction.couponRedemption.deleteMany({
+          where: { orderId: current.id }
         });
         const paidPayment = current.payments.find(
           (payment) => payment.status === PaymentStatus.PAID
@@ -895,8 +1058,21 @@ export class EcommerceService {
     start.setDate(start.getDate() - days);
     const comparisonStart = new Date(start);
     comparisonStart.setDate(comparisonStart.getDate() - days);
+    const todayStart = new Date(end);
+    todayStart.setHours(0, 0, 0, 0);
+    const activeCutoff = new Date(end.getTime() - 15 * 60 * 1000);
 
-    const [currentOrders, previousOrders, allOrders, products, newCustomers] = await Promise.all([
+    const [
+      currentOrders,
+      previousOrders,
+      allOrders,
+      products,
+      newCustomers,
+      periodVisitors,
+      visitorsToday,
+      activeVisitors,
+      lifetimeVisitors
+    ] = await Promise.all([
       this.prisma.order.findMany({
         where: { createdAt: { gte: start, lte: end } },
         include: {
@@ -926,7 +1102,11 @@ export class EcommerceService {
       }),
       this.prisma.user.count({
         where: { role: "CUSTOMER", createdAt: { gte: start, lte: end } }
-      })
+      }),
+      this.prisma.analyticsSession.count({ where: { createdAt: { gte: start, lte: end } } }),
+      this.prisma.analyticsSession.count({ where: { createdAt: { gte: todayStart, lte: end } } }),
+      this.prisma.analyticsSession.count({ where: { lastSeenAt: { gte: activeCutoff, lte: end } } }),
+      this.prisma.analyticsSession.count()
     ]);
 
     const validCurrent = currentOrders.filter((order) => order.status !== "CANCELLED");
@@ -1184,6 +1364,15 @@ export class EcommerceService {
         dailyRunRate: roundMoney(revenue / days),
         basis: `${days}-day run rate`
       },
+      traffic: {
+        newOrdersToday: currentOrders.filter((order) => order.createdAt >= todayStart).length,
+        newOrderQueue: allOrders.filter((order) => order.status === OrderStatus.PLACED).length,
+        visitorsToday,
+        activeVisitors,
+        lifetimeVisitors,
+        periodVisitors,
+        activeWindowMinutes: 15
+      },
       salesTrend,
       statusBreakdown,
       topProducts,
@@ -1282,6 +1471,9 @@ export class EcommerceService {
   }
 
   async adminUpdateOrder(idOrNumber: string, dto: AdminUpdateOrderDto) {
+    if (dto.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException("Use the cancel-order action to cancel an order.");
+    }
     let current = await this.adminOrder(idOrNumber);
     const statusChanged = dto.status && dto.status !== current.status;
     if (
@@ -1317,6 +1509,14 @@ export class EcommerceService {
         notifications: { orderBy: { createdAt: "desc" } }
       }
     });
+  }
+
+  async adminCancelOrder(idOrNumber: string) {
+    return this.updateOrderStatus(idOrNumber, {
+      status: OrderStatus.CANCELLED,
+      location: "Admin dashboard",
+      note: "Order cancelled by store staff."
+    }, true);
   }
 
   async adminCatalog() {
@@ -1356,16 +1556,56 @@ export class EcommerceService {
   async adminUpdateProduct(id: string, dto: AdminUpdateProductDto) {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found.");
+    const { imageUrls, ...productUpdate } = dto;
+    const willBeCombo = dto.isCombo ?? product.isCombo;
+    const comboProductIds = dto.comboProductIds ?? product.comboProductIds;
+    if (willBeCombo && dto.comboProductIds) {
+      await this.validateComboProducts(dto.comboProductIds);
+    }
+    if (
+      willBeCombo &&
+      dto.showOnHome &&
+      (dto.status ?? product.status) === ProductStatus.ACTIVE
+    ) {
+      await this.prisma.product.updateMany({
+        where: { id: { not: id }, isCombo: true, showOnHome: true },
+        data: { showOnHome: false }
+      });
+    }
     return this.prisma.product.update({
       where: { id },
       data: {
-        ...dto,
+        ...productUpdate,
+        comboProductIds: willBeCombo ? Array.from(new Set(comboProductIds)) : [],
+        showOnHome:
+          willBeCombo && (dto.status ?? product.status) === ProductStatus.ACTIVE
+            ? dto.showOnHome
+            : false,
+        comboPriority: willBeCombo ? dto.comboPriority : 0,
         name: dto.name?.trim(),
         description: dto.description?.trim(),
-        imageUrl: dto.imageUrl === undefined ? undefined : dto.imageUrl.trim() || null,
+        baseOptionLabel:
+          dto.baseOptionLabel === undefined ? undefined : dto.baseOptionLabel.trim() || null,
+        imageUrl:
+          imageUrls === undefined
+            ? dto.imageUrl === undefined
+              ? undefined
+              : dto.imageUrl.trim() || null
+            : imageUrls[0]?.trim() || null,
         badge: dto.badge === undefined ? undefined : dto.badge.trim() || null,
         brandId: dto.brandId === undefined ? undefined : dto.brandId || null,
-        categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null
+        categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null,
+        images:
+          imageUrls === undefined
+            ? undefined
+            : {
+                deleteMany: {},
+                create: Array.from(new Set(imageUrls.filter(Boolean))).map((url, position) => ({
+                  url,
+                  alt: dto.name?.trim() || product.name,
+                  position
+                }))
+              }
       },
       include: {
         brand: true,
@@ -1382,7 +1622,14 @@ export class EcommerceService {
     if ((dto.isActive ?? banner.isActive) && !(dto.imageUrl ?? banner.imageUrl)) {
       throw new BadRequestException("Upload a campaign image before publishing this banner.");
     }
-    return this.prisma.banner.update({ where: { id }, data: dto });
+    return this.prisma.banner.update({
+      where: { id },
+      data: {
+        ...dto,
+        startsAt: dto.startsAt === undefined ? undefined : dto.startsAt ? new Date(dto.startsAt) : null,
+        endsAt: dto.endsAt === undefined ? undefined : dto.endsAt ? new Date(dto.endsAt) : null
+      }
+    });
   }
 
   async adminDeleteBanner(id: string) {

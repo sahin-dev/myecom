@@ -4,7 +4,8 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   SiteSettings,
   fallbackCatalog,
-  fetchCatalog
+  fetchCatalog,
+  resolveMediaUrl
 } from "../lib/catalog";
 
 type SiteSettingsContextValue = {
@@ -24,8 +25,17 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
   }, []);
 
   useEffect(() => {
-    document.title = settings.title;
-  }, [settings.title]);
+    const href = resolveMediaUrl(settings.faviconUrl ?? settings.logoUrl);
+    if (!href) return;
+    let favicon = document.querySelector<HTMLLinkElement>('link[data-dynamic-favicon="true"]');
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.rel = "icon";
+      favicon.dataset.dynamicFavicon = "true";
+      document.head.appendChild(favicon);
+    }
+    favicon.href = href;
+  }, [settings.faviconUrl, settings.logoUrl]);
 
   const value = useMemo(() => ({ settings, setSettings }), [settings]);
 

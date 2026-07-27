@@ -11,7 +11,7 @@ async function bootstrap() {
   const port = config.get<number>("PORT") ?? 4000;
   const allowedOrigins = (
     config.get<string>("WEB_ORIGINS") ??
-    "http://localhost:3000,http://127.0.0.1:3000"
+    "http://localhost:3000,http://127.0.0.1:3000,https://hqwwvtcz-3000.inc1.devtunnels.ms"
   )
     .split(",")
     .map((origin) => origin.trim())

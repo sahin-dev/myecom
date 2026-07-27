@@ -129,7 +129,7 @@ async function main() {
         title: "Combos Built For Family Kitchens",
         subtitle: "Bundle your regular essentials and keep your cart simple.",
         ctaLabel: "View combos",
-        ctaHref: "#combo-deals",
+        ctaHref: "/combo-deals",
         imageUrl: "/images/packing-story.png",
         priority: 2
       },
@@ -192,8 +192,8 @@ async function main() {
         eyebrow: "Better together",
         title: "Build a simpler weekly shop",
         subtitle: "Useful combinations for family kitchens, packed into one practical order.",
-        ctaLabel: "Explore combo",
-        ctaHref: "/shop",
+        ctaLabel: "Explore combo deals",
+        ctaHref: "/combo-deals",
         collection: "comboDeals",
         priority: 30,
         productLimit: 1
@@ -382,7 +382,6 @@ async function main() {
       category: "Oil & Ghee",
       brand: "NaturaMart",
       isBestSelling: true,
-      isCombo: true,
       badge: "Best selling",
       tags: ["ghee", "cooking"]
     },
@@ -395,7 +394,6 @@ async function main() {
       brand: "NaturaMart",
       isBestSelling: true,
       isTrending: true,
-      isCombo: true,
       tags: ["mustard oil", "cooking"]
     },
     {
@@ -484,6 +482,8 @@ async function main() {
       category: "Oil & Ghee",
       brand: "NaturaMart",
       isCombo: true,
+      showOnHome: true,
+      comboPriority: 0,
       isTrending: true,
       badge: "Combo deal",
       tags: ["combo", "honey", "ghee"]
@@ -497,6 +497,8 @@ async function main() {
       category: "Spices",
       brand: "BlueJar",
       isCombo: true,
+      showOnHome: false,
+      comboPriority: 10,
       isNew: true,
       badge: "Combo deal",
       tags: ["combo", "spices"]
@@ -518,6 +520,27 @@ async function main() {
     });
     createdProducts.push(created);
   }
+  const seededBySlug = new Map(createdProducts.map((product) => [product.slug, product.id]));
+  await Promise.all([
+    prisma.product.update({
+      where: { slug: "ghee-honey-combo" },
+      data: {
+        comboProductIds: [
+          seededBySlug.get("gawa-ghee-1kg")!,
+          seededBySlug.get("sundar-honey-1kg")!
+        ]
+      }
+    }),
+    prisma.product.update({
+      where: { slug: "spice-starter-combo" },
+      data: {
+        comboProductIds: [
+          seededBySlug.get("turmeric-powder-500g")!,
+          seededBySlug.get("kala-bhuna-masala-500g")!
+        ]
+      }
+    })
+  ]);
 
   const [admin, customer] = await Promise.all([
     prisma.user.upsert({

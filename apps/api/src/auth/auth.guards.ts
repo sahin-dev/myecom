@@ -9,12 +9,13 @@ import { JwtService } from "@nestjs/jwt";
 import { UserRole } from "@prisma/client";
 import { Reflector } from "@nestjs/core";
 import { PrismaService } from "../prisma/prisma.service";
+import { AccessControlService } from "./access-control.service";
 import {
   AuthUser,
   AuthenticatedRequest,
   OptionalAuthenticatedRequest
 } from "./auth.types";
-import { ADMIN_PERMISSION_KEY, rolePermissions } from "./permissions";
+import { ADMIN_PERMISSION_KEY } from "./permissions";
 
 function bearerToken(header?: string) {
   const [type, token] = header?.split(" ") ?? [];
@@ -25,7 +26,8 @@ function bearerToken(header?: string) {
 export class JwtAuthGuard implements CanActivate {
   constructor(
     protected readonly jwt: JwtService,
-    protected readonly prisma: PrismaService
+    protected readonly prisma: PrismaService,
+    protected readonly access: AccessControlService
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -37,13 +39,21 @@ export class JwtAuthGuard implements CanActivate {
       const claims = await this.jwt.verifyAsync<AuthUser>(token);
       const user = await this.prisma.user.findUnique({
         where: { id: claims.id },
-        select: { id: true, email: true, role: true, isActive: true }
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          isActive: true,
+          accessRole: { select: { id: true, key: true, name: true } }
+        }
       });
       if (!user?.isActive) throw new Error("Inactive account");
       request.user = {
         id: user.id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        accessRole: user.accessRole,
+        permissions: await this.access.effectivePermissions(user.id, user.role)
       };
       return true;
     } catch {
@@ -56,7 +66,8 @@ export class JwtAuthGuard implements CanActivate {
 export class OptionalJwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwt: JwtService,
-    private readonly prisma: PrismaService
+    private readonly prisma: PrismaService,
+    private readonly access: AccessControlService
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -68,10 +79,22 @@ export class OptionalJwtAuthGuard implements CanActivate {
       const claims = await this.jwt.verifyAsync<AuthUser>(token);
       const user = await this.prisma.user.findUnique({
         where: { id: claims.id },
-        select: { id: true, email: true, role: true, isActive: true }
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          isActive: true,
+          accessRole: { select: { id: true, key: true, name: true } }
+        }
       });
       request.user = user?.isActive
-        ? { id: user.id, email: user.email, role: user.role }
+        ? {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            accessRole: user.accessRole,
+            permissions: await this.access.effectivePermissions(user.id, user.role)
+          }
         : undefined;
     } catch {
       request.user = undefined;
@@ -85,9 +108,10 @@ export class AdminGuard extends JwtAuthGuard {
   constructor(
     jwt: JwtService,
     private readonly reflector: Reflector,
-    prisma: PrismaService
+    prisma: PrismaService,
+    access: AccessControlService
   ) {
-    super(jwt, prisma);
+    super(jwt, prisma, access);
   }
 
   async canActivate(context: ExecutionContext) {
@@ -96,13 +120,6 @@ export class AdminGuard extends JwtAuthGuard {
     if (request.user.role === UserRole.CUSTOMER) {
       throw new ForbiddenException("Administrator access required.");
     }
-    if (
-      request.user.role === UserRole.ADMIN ||
-      request.user.role === UserRole.OWNER
-    ) {
-      return true;
-    }
-
     const required =
       this.reflector.getAllAndOverride<string[]>(ADMIN_PERMISSION_KEY, [
         context.getHandler(),
@@ -111,31 +128,8 @@ export class AdminGuard extends JwtAuthGuard {
     if (!required.length) {
       throw new ForbiddenException("This administrative action is restricted.");
     }
-    const custom = await this.prisma.staffPermission.findMany({
-      where: { userId: request.user.id },
-      select: { permission: true }
-    });
-    const available = new Set([
-      ...rolePermissions[request.user.role],
-      ...custom.map((item) => item.permission)
-    ]);
-    if (!required.some((permission) => available.has(permission))) {
+    if (!this.access.can(request.user.permissions, required)) {
       throw new ForbiddenException("You do not have permission for this action.");
-    }
-    return true;
-  }
-}
-
-@Injectable()
-export class OwnerGuard extends JwtAuthGuard {
-  async canActivate(context: ExecutionContext) {
-    await super.canActivate(context);
-    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    if (
-      request.user.role !== UserRole.ADMIN &&
-      request.user.role !== UserRole.OWNER
-    ) {
-      throw new ForbiddenException("Owner or administrator access required.");
     }
     return true;
   }

@@ -21,6 +21,8 @@ import {
   PromotionType,
   PurchaseOrderStatus,
   RefundStatus,
+  ReturnDisposition,
+  ReturnResolutionType,
   ReturnStatus,
   ReviewStatus,
   UserRole
@@ -204,7 +206,7 @@ export class CreatePromotionDto {
   type!: PromotionType;
 
   @IsNumber()
-  @IsPositive()
+  @Min(0)
   value!: number;
 
   @IsOptional()
@@ -253,7 +255,7 @@ export class UpdatePromotionDto {
 
   @IsOptional()
   @IsNumber()
-  @IsPositive()
+  @Min(0)
   value?: number;
 
   @IsOptional()
@@ -290,12 +292,21 @@ export class UpdatePromotionDto {
 }
 
 export class ModerateReviewDto {
+  @IsOptional()
   @IsEnum(ReviewStatus)
-  status!: ReviewStatus;
+  status?: ReviewStatus;
 
   @IsOptional()
   @IsString()
   adminReply?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  showOnHome?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  homePriority?: number;
 }
 
 export class UpdateReturnDto {
@@ -305,6 +316,24 @@ export class UpdateReturnDto {
   @IsOptional()
   @IsString()
   resolution?: string;
+
+  @IsOptional()
+  @IsEnum(ReturnResolutionType)
+  resolutionType?: ReturnResolutionType;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReturnDispositionInputDto)
+  items?: ReturnDispositionInputDto[];
+}
+
+export class ReturnDispositionInputDto {
+  @IsString()
+  returnItemId!: string;
+
+  @IsEnum(ReturnDisposition)
+  disposition!: ReturnDisposition;
 }
 
 export class CreateSupplierDto {
@@ -426,8 +455,13 @@ export class InventoryAdjustmentDto {
 }
 
 export class UpdateStaffDto {
+  @IsOptional()
   @IsEnum(UserRole)
-  role!: UserRole;
+  role?: UserRole;
+
+  @IsOptional()
+  @IsString()
+  accessRoleId?: string;
 
   @IsOptional()
   @IsArray()
@@ -445,13 +479,50 @@ export class CreateStaffDto {
   @IsString()
   password!: string;
 
+  @IsOptional()
   @IsEnum(UserRole)
-  role!: UserRole;
+  role?: UserRole;
+
+  @IsOptional()
+  @IsString()
+  accessRoleId?: string;
 
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   permissions?: string[];
+}
+
+export class CreateAccessRoleDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  permissions!: string[];
+}
+
+export class UpdateAccessRoleDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  permissions?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class UpdateCustomerDto {

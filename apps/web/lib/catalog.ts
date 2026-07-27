@@ -11,6 +11,7 @@ export type Category = {
   name: string;
   slug: string;
   icon?: string | null;
+  imageUrl?: string | null;
   priority: number;
   isActive?: boolean;
 };
@@ -24,12 +25,24 @@ export type Product = {
   costPrice?: number | null;
   compareAt?: number | null;
   inventory: number;
+  baseOptionEnabled?: boolean | null;
+  baseOptionLabel?: string | null;
   status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
   imageUrl?: string | null;
   isNew: boolean;
   isTrending: boolean;
   isBestSelling?: boolean;
   isCombo?: boolean;
+  comboProductIds?: string[];
+  comboProducts?: Array<{
+    id: string;
+    name: string;
+    slug: string;
+    imageUrl?: string | null;
+    price: number;
+  }>;
+  showOnHome?: boolean;
+  comboPriority?: number;
   isCertified?: boolean;
   badge?: string | null;
   brandId?: string | null;
@@ -64,6 +77,25 @@ export type ProductVariant = {
   isActive: boolean;
 };
 
+export function isBaseProductEnabled(product: Pick<Product, "baseOptionEnabled">) {
+  return product.baseOptionEnabled !== false;
+}
+
+export function baseProductOptionLabel(
+  product: Pick<Product, "name" | "baseOptionLabel">
+) {
+  return product.baseOptionLabel?.trim() || product.name;
+}
+
+export function selectableProductInventory(
+  product: Pick<Product, "inventory" | "variants" | "baseOptionEnabled">
+) {
+  const activeVariants = product.variants?.filter((variant) => variant.isActive) ?? [];
+  if (!activeVariants.length) return product.inventory;
+  return activeVariants.reduce((sum, variant) => sum + variant.inventory, 0)
+    + (isBaseProductEnabled(product) ? product.inventory : 0);
+}
+
 export type Review = {
   id: string;
   rating: number;
@@ -71,10 +103,13 @@ export type Review = {
   comment: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   isVerified: boolean;
+  showOnHome: boolean;
+  homePriority: number;
   adminReply?: string | null;
   createdAt: string;
-  user?: { name: string; avatarUrl?: string | null };
-  product?: { name: string; slug: string };
+  updatedAt?: string;
+  user?: { name: string; email?: string; avatarUrl?: string | null };
+  product?: { name: string; slug: string; imageUrl?: string | null };
 };
 
 export type Banner = {
@@ -85,6 +120,10 @@ export type Banner = {
   ctaLabel: string;
   ctaHref: string;
   imageUrl?: string | null;
+  focalX?: number;
+  focalY?: number;
+  startsAt?: string | null;
+  endsAt?: string | null;
   priority: number;
 };
 
@@ -93,9 +132,14 @@ export type SiteSettings = {
   key?: string;
   title: string;
   logoUrl?: string | null;
+  faviconUrl?: string | null;
   announcement: string;
   announcementLinkLabel: string;
   announcementLinkHref: string;
+  facebookUrl?: string | null;
+  instagramUrl?: string | null;
+  youtubeUrl?: string | null;
+  whatsappUrl?: string | null;
 };
 
 export type HomeSection = {
@@ -242,6 +286,15 @@ export type AdminDashboard = {
     dailyRunRate: number;
     basis: string;
   };
+  traffic: {
+    newOrdersToday: number;
+    newOrderQueue: number;
+    visitorsToday: number;
+    activeVisitors: number;
+    lifetimeVisitors: number;
+    periodVisitors: number;
+    activeWindowMinutes: number;
+  };
   salesTrend: Array<{ date: string; revenue: number; orders: number }>;
   statusBreakdown: Array<{ status: string; count: number; value: number }>;
   topProducts: Array<{
@@ -341,6 +394,8 @@ export type Promotion = {
   endsAt: string;
   isActive: boolean;
   _count?: { redemptions: number; orders: number };
+  redemptions?: Array<{ discount: number; email: string; createdAt: string }>;
+  orders?: Array<{ total: number; status: string }>;
 };
 
 export type Supplier = {
@@ -433,6 +488,31 @@ export type StaffMember = {
   createdAt: string;
   isActive: boolean;
   permissions: Array<{ id: string; permission: string }>;
+  accessRole?: Pick<AccessRole, "id" | "key" | "name" | "description"> | null;
+};
+
+export type AccessRole = {
+  id: string;
+  key: string;
+  name: string;
+  description?: string | null;
+  permissions: string[];
+  isSystem: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count: { users: number };
+};
+
+export type PermissionGroup = {
+  key: string;
+  label: string;
+  permissions: Array<{
+    key: string;
+    label: string;
+    description: string;
+    risk?: "high";
+  }>;
 };
 
 export type AuditLog = {
@@ -454,6 +534,8 @@ export type AuthUser = {
   avatarUrl?: string | null;
   createdAt: string;
   isActive?: boolean;
+  permissions: string[];
+  accessRole?: Pick<AccessRole, "id" | "key" | "name"> | null;
 };
 
 export type Address = {
@@ -494,8 +576,23 @@ export type ReturnRequest = {
   reason: string;
   details?: string | null;
   resolution?: string | null;
+  resolutionType?: "REFUND" | "REPLACEMENT" | "STORE_CREDIT" | "NO_ACTION" | null;
   status: string;
-  items: Array<{ id: string; orderItemId: string; quantity: number; orderItem?: Order["items"][number] }>;
+  items: Array<{
+    id: string;
+    orderItemId: string;
+    quantity: number;
+    disposition?: "RESTOCK" | "DAMAGED" | "DISPOSE" | "INSPECTION" | null;
+    orderItem?: Order["items"][number];
+  }>;
+  refund?: {
+    id: string;
+    amount: number;
+    status: Refund["status"];
+    reason: string;
+    createdAt: string;
+    updatedAt?: string;
+  } | null;
   order?: { orderNumber: string; total: number } | Order;
   user?: { name: string; email: string };
   createdAt: string;
@@ -508,9 +605,11 @@ export type Refund = {
   amount: number;
   reason: string;
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
-  order: { id: string; orderNumber: string; customerName: string; email: string; total: number };
+  order: { id?: string; orderNumber: string; customerName: string; email: string; total: number };
   payment?: { provider: string; method: string; transactionId?: string | null } | null;
+  returnRequest?: { id: string; returnNumber: string; status: string } | null;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type PromotionValidation = {
@@ -652,7 +751,7 @@ const productSeeds: Omit<Product, "brand" | "category">[] = [
     isNew: false,
     isTrending: false,
     isBestSelling: true,
-    isCombo: true,
+    isCombo: false,
     isCertified: false,
     badge: "Best selling",
     brandId: "brand-naturamart",
@@ -669,7 +768,7 @@ const productSeeds: Omit<Product, "brand" | "category">[] = [
     isNew: false,
     isTrending: true,
     isBestSelling: true,
-    isCombo: true,
+    isCombo: false,
     isCertified: false,
     brandId: "brand-naturamart",
     categoryId: "cat-oil",
@@ -803,6 +902,9 @@ const productSeeds: Omit<Product, "brand" | "category">[] = [
     isTrending: true,
     isBestSelling: false,
     isCombo: true,
+    comboProductIds: ["product-ghee", "product-honey"],
+    showOnHome: false,
+    comboPriority: 10,
     isCertified: false,
     badge: "Combo deal",
     brandId: "brand-naturamart",
@@ -821,6 +923,9 @@ const productSeeds: Omit<Product, "brand" | "category">[] = [
     isTrending: false,
     isBestSelling: false,
     isCombo: true,
+    comboProductIds: ["product-turmeric", "product-masala"],
+    showOnHome: true,
+    comboPriority: 0,
     isCertified: false,
     badge: "Combo deal",
     brandId: "brand-bluejar",
@@ -829,21 +934,41 @@ const productSeeds: Omit<Product, "brand" | "category">[] = [
   }
 ];
 
-const products = productSeeds.map((product) => ({
+const products: Product[] = productSeeds.map((product) => ({
   ...product,
   brand: brands.find((brand) => brand.id === product.brandId) ?? null,
   category: categories.find((category) => category.id === product.categoryId) ?? null
 }));
 
+for (const product of products) {
+  if (!product.isCombo || !product.comboProductIds?.length) continue;
+  product.comboProducts = product.comboProductIds
+    .map((id) => products.find((item) => item.id === id))
+    .filter((item): item is Product => Boolean(item))
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      slug: item.slug,
+      imageUrl: item.imageUrl,
+      price: item.price
+    }));
+}
+
 export const fallbackProducts = products;
+
+export const fallbackComboDeals = products.filter((product) => product.isCombo);
 
 export const fallbackCatalog: Catalog = {
   siteSettings: {
-    title: "My Ecom",
+    title: "Roshira",
     logoUrl: null,
     announcement: "Free delivery over \u09F33,000",
     announcementLinkLabel: "Track your order",
-    announcementLinkHref: "/track-order"
+    announcementLinkHref: "/track-order",
+    facebookUrl: null,
+    instagramUrl: null,
+    youtubeUrl: null,
+    whatsappUrl: null
   },
   banners: [
     {
@@ -862,7 +987,7 @@ export const fallbackCatalog: Catalog = {
       title: "Combos Built For Family Kitchens",
       subtitle: "Bundle regular essentials and keep your cart simple.",
       ctaLabel: "View combos",
-      ctaHref: "#combo-deals",
+      ctaHref: "/combo-deals",
       imageUrl: "/images/packing-story.png",
       priority: 2
     }
@@ -872,7 +997,7 @@ export const fallbackCatalog: Catalog = {
   newlyLaunched: products.filter((product) => product.isNew),
   trendingProducts: products.filter((product) => product.isTrending),
   topSellingProducts: products.filter((product) => product.isBestSelling),
-  comboDeals: products.filter((product) => product.isCombo),
+  comboDeals: fallbackComboDeals.filter((product) => product.showOnHome),
   certifiedProducts: products.filter((product) => product.isCertified),
   justForYou: products,
   categoryShowcase: categories.map((category) => {
@@ -938,8 +1063,8 @@ export const fallbackCatalog: Catalog = {
       eyebrow: "Better together",
       title: "Refill the pantry with fewer decisions.",
       subtitle: "Practical combinations of products that already belong together.",
-      ctaLabel: "Explore combo",
-      ctaHref: "/shop",
+      ctaLabel: "Explore combo deals",
+      ctaHref: "/combo-deals",
       collection: "comboDeals",
       productLimit: 1,
       priority: 30,
@@ -1116,6 +1241,10 @@ export async function fetchProduct(slug: string) {
   return request<Product>(`/products/${encodeURIComponent(slug)}`);
 }
 
+export async function fetchComboDeals() {
+  return request<Product[]>("/combo-deals");
+}
+
 export async function createCheckout(input: {
   customerName: string;
   email: string;
@@ -1178,6 +1307,10 @@ export async function trackAnalyticsEvent(input: {
 
 export async function fetchProductReviews(productId: string) {
   return request<Review[]>(`/reviews/products/${encodeURIComponent(productId)}`);
+}
+
+export async function fetchMyProductReview(productId: string) {
+  return request<Review | null>(`/reviews/products/${encodeURIComponent(productId)}/mine`);
 }
 
 export async function submitProductReview(
@@ -1390,6 +1523,27 @@ export async function updateAdminOrder(idOrNumber: string, input: {
   });
 }
 
+export async function createAdminOrder(input: {
+  customerName: string;
+  email: string;
+  phone: string;
+  shippingAddress: string;
+  paymentMethod?: string;
+  deliveryMethodCode?: string;
+  items: Array<{ productId: string; variantId?: string; quantity: number }>;
+}) {
+  return request<Order>("/admin/orders", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function cancelAdminOrder(idOrNumber: string) {
+  return request<Order>(`/admin/orders/${encodeURIComponent(idOrNumber)}`, {
+    method: "DELETE"
+  });
+}
+
 export async function fetchAdminCatalog() {
   return request<AdminCatalog>("/admin/catalog");
 }
@@ -1408,12 +1562,17 @@ export async function updateAdminProduct(id: string, input: {
   price?: number;
   costPrice?: number;
   compareAt?: number;
+  baseOptionEnabled?: boolean;
+  baseOptionLabel?: string;
   imageUrl?: string;
   status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
   isNew?: boolean;
   isTrending?: boolean;
   isBestSelling?: boolean;
   isCombo?: boolean;
+  comboProductIds?: string[];
+  showOnHome?: boolean;
+  comboPriority?: number;
   isCertified?: boolean;
   badge?: string;
   brandId?: string;
@@ -1424,6 +1583,44 @@ export async function updateAdminProduct(id: string, input: {
     method: "PATCH",
     body: JSON.stringify(input)
   });
+}
+
+export type ComboDealInput = {
+  name: string;
+  description: string;
+  price: number;
+  costPrice?: number;
+  compareAt?: number;
+  inventory?: number;
+  imageUrl?: string;
+  imageUrls?: string[];
+  comboProductIds: string[];
+  showOnHome?: boolean;
+  comboPriority?: number;
+  status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
+  badge?: string;
+  tags?: string[];
+};
+
+export async function createAdminComboDeal(input: ComboDealInput) {
+  return request<Product>("/admin/combo-deals", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateAdminComboDeal(id: string, input: Partial<ComboDealInput>) {
+  return request<Product>(`/admin/combo-deals/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function archiveAdminComboDeal(id: string) {
+  return request<{ archived: boolean; combo: Product }>(
+    `/admin/combo-deals/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
 }
 
 export async function updateAdminBanner(
@@ -1502,7 +1699,12 @@ export async function fetchAdminReviews(status?: string) {
 
 export async function moderateAdminReview(
   id: string,
-  input: { status: Review["status"]; adminReply?: string }
+  input: {
+    status?: Review["status"];
+    adminReply?: string;
+    showOnHome?: boolean;
+    homePriority?: number;
+  }
 ) {
   return request<Review>(`/admin/reviews/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -1517,7 +1719,15 @@ export async function fetchAdminReturns(status?: string) {
 
 export async function updateAdminReturn(
   id: string,
-  input: { status: string; resolution?: string }
+  input: {
+    status: string;
+    resolution?: string;
+    resolutionType?: ReturnRequest["resolutionType"];
+    items?: Array<{
+      returnItemId: string;
+      disposition: NonNullable<ReturnRequest["items"][number]["disposition"]>;
+    }>;
+  }
 ) {
   return request<ReturnRequest>(`/admin/returns/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -1683,11 +1893,59 @@ export async function fetchStaff() {
   return request<StaffMember[]>("/admin/staff");
 }
 
+export async function fetchPermissionCatalogue() {
+  return request<PermissionGroup[]>("/admin/access/permissions");
+}
+
+export async function fetchAccessRoles() {
+  return request<AccessRole[]>("/admin/access/roles");
+}
+
+export async function createAccessRole(input: {
+  name: string;
+  description?: string;
+  permissions: string[];
+}) {
+  return request<AccessRole>("/admin/access/roles", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateAccessRole(
+  id: string,
+  input: {
+    name?: string;
+    description?: string;
+    permissions?: string[];
+    isActive?: boolean;
+  }
+) {
+  return request<AccessRole>(`/admin/access/roles/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function duplicateAccessRole(id: string) {
+  return request<AccessRole>(
+    `/admin/access/roles/${encodeURIComponent(id)}/duplicate`,
+    { method: "POST" }
+  );
+}
+
+export async function deleteAccessRole(id: string) {
+  return request<{ deleted: boolean }>(
+    `/admin/access/roles/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function updateStaff(
   id: string,
-  input: { role: AuthUser["role"]; permissions?: string[] }
+  input: { accessRoleId: string }
 ) {
-  return request<AuthUser>(`/admin/staff/${encodeURIComponent(id)}`, {
+  return request<StaffMember>(`/admin/staff/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(input)
   });
@@ -1697,8 +1955,7 @@ export async function createStaff(input: {
   name: string;
   email: string;
   password: string;
-  role: AuthUser["role"];
-  permissions?: string[];
+  accessRoleId: string;
 }) {
   return request<StaffMember>("/admin/staff", {
     method: "POST",
