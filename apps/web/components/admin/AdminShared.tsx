@@ -7,7 +7,7 @@ import { uploadAdminImage } from "../../lib/catalog";
 export function useAdminToast() {
   const [message, setMessage] = useState("");
   const [kind, setKind] = useState<"success" | "error">("success");
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 

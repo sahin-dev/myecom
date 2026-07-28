@@ -28,7 +28,7 @@ import {
 } from "./ecommerce.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import type { AuthUser } from "../auth/auth.types";
-import { ExperienceService } from "../experience/experience.service";
+import { ExperienceService, PromotionLine } from "../experience/experience.service";
 import { UpdateCustomerDto } from "../experience/experience.dto";
 
 const slugify = (value: string) =>
@@ -673,11 +673,31 @@ export class EcommerceService {
       }
       return total + (variant?.price ?? product.price) * item.quantity;
     }, 0);
-    const promotion = dto.promotionCode
-      ? await this.experience.findValidPromotion(dto.promotionCode, subtotal, dto.email)
+    const promotionLines: PromotionLine[] = dto.items.map((item) => {
+      const product = productMap.get(item.productId)!;
+      const variant = item.variantId ? variantMap.get(item.variantId) : undefined;
+      return {
+        productId: product.id,
+        categoryId: product.categoryId,
+        brandId: product.brandId,
+        isCombo: product.isCombo,
+        lineTotal: (variant?.price ?? product.price) * item.quantity
+      };
+    });
+    const promotionResult = dto.promotionCode
+      ? await this.experience.findValidPromotion(
+          dto.promotionCode,
+          subtotal,
+          dto.email,
+          promotionLines
+        )
       : null;
-    const discount = promotion
-      ? this.experience.promotionDiscount(promotion, subtotal)
+    const promotion = promotionResult?.promotion ?? null;
+    const discount = promotionResult
+      ? this.experience.promotionDiscount(
+          promotionResult.promotion,
+          promotionResult.eligibleSubtotal
+        )
       : 0;
     const configuredMethods = await this.checkoutMethods();
     const paymentMethods = configuredMethods.filter(

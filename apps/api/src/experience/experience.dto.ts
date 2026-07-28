@@ -18,6 +18,7 @@ import {
 } from "class-validator";
 import {
   AnalyticsEventType,
+  PromotionScope,
   PromotionType,
   PurchaseOrderStatus,
   RefundStatus,
@@ -175,6 +176,19 @@ export class UpdateInfoPageDto {
   points?: InfoPagePointDto[];
 }
 
+export class PromotionCartItemDto {
+  @IsString()
+  productId!: string;
+
+  @IsOptional()
+  @IsString()
+  variantId?: string;
+
+  @IsInt()
+  @Min(1)
+  quantity!: number;
+}
+
 export class ValidatePromotionDto {
   @IsString()
   code!: string;
@@ -182,6 +196,12 @@ export class ValidatePromotionDto {
   @IsNumber()
   @Min(0)
   subtotal!: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PromotionCartItemDto)
+  items?: PromotionCartItemDto[];
 }
 
 export class UpdatePreferencesDto {
@@ -239,6 +259,15 @@ export class CreatePromotionDto {
   @IsEnum(PromotionType)
   type!: PromotionType;
 
+  @IsOptional()
+  @IsEnum(PromotionScope)
+  scope?: PromotionScope;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  targetIds?: string[];
+
   @IsNumber()
   @Min(0)
   value!: number;
@@ -286,6 +315,15 @@ export class UpdatePromotionDto {
   @IsOptional()
   @IsEnum(PromotionType)
   type?: PromotionType;
+
+  @IsOptional()
+  @IsEnum(PromotionScope)
+  scope?: PromotionScope;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  targetIds?: string[];
 
   @IsOptional()
   @IsNumber()

@@ -78,6 +78,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [accountCartReady, setAccountCartReady] = useState(false);
   const [cartOwner, setCartOwner] = useState(guestCartOwner);
   const [cartNotice, setCartNotice] = useState("");
+  const [cartToast, setCartToast] = useState("");
   const previousUserId = useRef<string | null>(null);
   const { user, loading: authLoading } = useAuth();
   const pathname = usePathname();
@@ -230,6 +231,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timeout);
   }, [accountCartReady, cart, user?.id]);
 
+  useEffect(() => {
+    if (!cartToast) return;
+    const timer = window.setTimeout(() => setCartToast(""), 3200);
+    return () => window.clearTimeout(timer);
+  }, [cartToast]);
+
   function addItem(product: Product, quantity = 1, variant?: ProductVariant | null) {
     const activeVariants = (product.variants ?? []).filter((item) => item.isActive);
     if (activeVariants.length && !variant && !isBaseProductEnabled(product)) {
@@ -242,6 +249,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (available < 1) return;
     if (!user) setCartOwner(guestCartOwner);
     setCartNotice("");
+    setCartToast(
+      `${quantity} x ${product.name}${variant ? ` (${variant.name})` : ""} added to your bag.`
+    );
     const lineId = variant?.id ?? product.id;
     setCart((current) => {
       const existing = current.find((line) => (line.variant?.id ?? line.product.id) === lineId);
@@ -313,6 +323,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       {children}
       {!isAdminRoute ? (
         <>
+          <CartToast message={cartToast} />
           <FloatingCartButton />
           <CartDrawer />
         </>
@@ -325,6 +336,16 @@ export function useCart() {
   const context = useContext(CartContext);
   if (!context) throw new Error("useCart must be used inside CartProvider.");
   return context;
+}
+
+function CartToast({ message }: { message: string }) {
+  if (!message) return null;
+  return (
+    <div className="cart-toast" role="status" aria-live="polite">
+      <ShoppingBag size={18} />
+      <span>{message}</span>
+    </div>
+  );
 }
 
 function FloatingCartButton() {

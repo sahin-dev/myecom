@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -29,12 +30,13 @@ import {
   Product,
   ProductVariant,
   fallbackCatalog,
-  fetchCatalog,
+  fetchAccountOrders,
   formatMoney,
   selectableProductInventory,
   resolveMediaUrl
 } from "../lib/catalog";
 import { useCart } from "./CartContext";
+import { useAuth } from "./AuthContext";
 import { HorizontalRail } from "./HorizontalRail";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
@@ -57,19 +59,24 @@ function campaignHref(href: string) {
 }
 
 export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalog?: Catalog }) {
-  const [catalog, setCatalog] = useState(initialCatalog);
+  const catalog = initialCatalog;
   const [activeBanner, setActiveBanner] = useState(0);
   const [previousBanner, setPreviousBanner] = useState<number | null>(null);
   const [bannerDirection, setBannerDirection] = useState<SlideDirection>("next");
   const [bannerPaused, setBannerPaused] = useState(false);
+  const [bannerInteractionPaused, setBannerInteractionPaused] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [shelf, setShelf] = useState<Shelf>("new");
-  const [activeCategory, setActiveCategory] = useState(
-    initialCatalog.categoryShowcase.find((entry) => entry.products.length)?.category.id ?? ""
-  );
+  const [buyAgainProducts, setBuyAgainProducts] = useState<Product[]>([]);
   const { addItem } = useCart();
+  const { user } = useAuth();
 
   useEffect(() => {
-    fetchCatalog().then(setCatalog).catch(() => undefined);
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updatePreference = () => setPrefersReducedMotion(media.matches);
+    updatePreference();
+    media.addEventListener("change", updatePreference);
+    return () => media.removeEventListener("change", updatePreference);
   }, []);
 
   const campaigns = useMemo(() => {
@@ -96,7 +103,12 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
   }, [activeBanner, previousBanner]);
 
   useEffect(() => {
-    if (bannerPaused || campaigns.length < 2) return;
+    if (
+      bannerPaused ||
+      bannerInteractionPaused ||
+      prefersReducedMotion ||
+      campaigns.length < 2
+    ) return;
     const timer = window.setInterval(() => {
       setBannerDirection("next");
       setActiveBanner((current) => {
@@ -105,42 +117,64 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
       });
     }, 6500);
     return () => window.clearInterval(timer);
-  }, [bannerPaused, campaigns.length]);
+  }, [bannerInteractionPaused, bannerPaused, campaigns.length, prefersReducedMotion]);
 
   const popularProducts = useMemo(() => {
-    return uniqueProducts([...catalog.topSellingProducts, ...catalog.justForYou]).slice(0, 16);
+    return uniqueProducts([...catalog.topSellingProducts, ...catalog.justForYou]).slice(0, 8);
   }, [catalog.justForYou, catalog.topSellingProducts]);
 
   const categoryEntries = useMemo(
-    () => catalog.categoryShowcase.filter((entry) => entry.category.isActive !== false),
+    () => catalog.categoryShowcase.filter(
+      (entry) => entry.category.isActive !== false && entry.products.length > 0
+    ),
     [catalog.categoryShowcase]
   );
   const activeBrands = useMemo(
     () => catalog.brands.filter((item) => item.isActive !== false),
     [catalog.brands]
   );
-  const selectedCategory = categoryEntries.find(
-    (entry) => entry.category.id === activeCategory && entry.products.length
-  ) ?? categoryEntries.find((entry) => entry.products.length);
+  const catalogProducts = useMemo(
+    () => uniqueProducts(catalog.categoryShowcase.flatMap((entry) => entry.products)),
+    [catalog.categoryShowcase]
+  );
 
   useEffect(() => {
-    if (!selectedCategory) return;
-    if (selectedCategory.category.id !== activeCategory) {
-      setActiveCategory(selectedCategory.category.id);
+    if (!user) {
+      setBuyAgainProducts([]);
+      return;
     }
-  }, [activeCategory, selectedCategory]);
 
+    setBuyAgainProducts([]);
+    let active = true;
+    void fetchAccountOrders()
+      .then((orders) => {
+        if (!active) return;
+        const productsById = new Map(catalogProducts.map((product) => [product.id, product]));
+        const previousProducts = orders
+          .filter((order) => order.status !== "CANCELLED")
+          .slice()
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+          .flatMap((order) => order.items)
+          .map((item) => productsById.get(item.productId))
+          .filter((product): product is Product => Boolean(product));
+        setBuyAgainProducts(uniqueProducts(previousProducts).slice(0, 4));
+      })
+      .catch(() => {
+        if (active) setBuyAgainProducts([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [catalogProducts, user?.id]);
   const discoveryProducts = useMemo(() => {
-    const used = new Set(popularProducts.map((product) => product.id));
     const primary = shelf === "new" ? catalog.newlyLaunched : catalog.trendingProducts;
     return uniqueProducts([...primary, ...catalog.justForYou])
-      .filter((product) => !used.has(product.id))
-      .slice(0, 16);
+      .slice(0, 8);
   }, [
     catalog.justForYou,
     catalog.newlyLaunched,
     catalog.trendingProducts,
-    popularProducts,
     shelf
   ]);
 
@@ -157,10 +191,15 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
   const popularSection = section("popular");
   const comboSection = section("combo");
   const discoverSection = section("discover");
-  const categoryShowcaseSection = section("category-showcase");
   const brandSection = section("brands");
   const testimonialSection = section("testimonials");
   const customerStories = (catalog.testimonials ?? []).filter((item) => item.isActive);
+  const visibleFeaturedReviews = catalog.featuredReviews.slice(0, 3);
+  const visibleCustomerStories = customerStories.slice(
+    0,
+    Math.max(0, 3 - visibleFeaturedReviews.length)
+  );
+  const activeCampaign = campaigns[activeBanner] ?? campaigns[0];
 
   function moveBanner(direction: number) {
     setBannerDirection(direction > 0 ? "next" : "previous");
@@ -186,10 +225,15 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
       <section
         className="modern-home-hero"
         aria-labelledby="hero-title"
+        onMouseEnter={() => setBannerInteractionPaused(true)}
+        onMouseLeave={() => setBannerInteractionPaused(false)}
+        onFocusCapture={() => setBannerInteractionPaused(true)}
+        onBlurCapture={() => setBannerInteractionPaused(false)}
       >
         <div className="modern-hero-media" aria-hidden="true">
           {campaigns.map((campaign, index) => (
-            <img
+            index === activeBanner || index === previousBanner ? (
+            <Image
               key={campaign.id}
               className={[
                 "modern-hero-image",
@@ -197,31 +241,30 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
                 index === previousBanner ? `exiting exit-${bannerDirection}` : ""
               ].filter(Boolean).join(" ")}
               src={campaign.imageUrl ?? "/images/grocery-hero.png"}
+              fill
+              sizes="100vw"
+              priority={index === activeBanner}
               alt=""
               style={{
                 objectPosition: `${campaign.focalX ?? 50}% ${campaign.focalY ?? 50}%`
               } as CSSProperties}
             />
+            ) : null
           ))}
         </div>
         <div className="modern-hero-copy">
           <div className="modern-hero-content-stage">
-            {campaigns.map((campaign, index) => (
+            {activeCampaign ? (
               <div
-                className={[
-                  "modern-hero-content",
-                  index === activeBanner ? `active content-${bannerDirection}` : "",
-                  index === previousBanner ? `exiting content-exit-${bannerDirection}` : ""
-                ].filter(Boolean).join(" ")}
-                key={campaign.id}
-                aria-hidden={index !== activeBanner}
+                className={`modern-hero-content active content-${bannerDirection}`}
+                key={activeCampaign.id}
               >
-                <p className="eyebrow">{campaign.eyebrow ?? "Everyday pantry market"}</p>
-                <h1 id={index === activeBanner ? "hero-title" : undefined}>{campaign.title}</h1>
-                <p>{campaign.subtitle}</p>
+                <p className="eyebrow">{activeCampaign.eyebrow ?? "Everyday pantry market"}</p>
+                <h1 id="hero-title">{activeCampaign.title}</h1>
+                <p>{activeCampaign.subtitle}</p>
                 <div className="modern-hero-actions">
-                  <Link className="primary-action" href={campaignHref(campaign.ctaHref)}>
-                    {campaign.ctaLabel}
+                  <Link className="primary-action" href={campaignHref(activeCampaign.ctaHref)}>
+                    {activeCampaign.ctaLabel}
                     <ArrowRight size={18} />
                   </Link>
                   <Link className="text-link" href={categorySection ? "#categories" : "/shop"}>
@@ -230,7 +273,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
                   </Link>
                 </div>
               </div>
-            ))}
+            ) : null}
           </div>
           {campaigns.length > 1 ? (
             <div className="modern-hero-controls" aria-label="Campaign controls">
@@ -264,23 +307,6 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
         </div>
       </section>
 
-      {trustSection ? (
-        <section className="modern-service-strip" aria-label="Store benefits">
-          {(trustSection.metadata?.items ?? [
-            { title: "Carefully selected", detail: "Everyday products from trusted suppliers" },
-            { title: "Flexible delivery", detail: "Choose the method that fits your day" },
-            { title: "Order visibility", detail: "Follow each step from packing to arrival" }
-          ]).slice(0, 3).map((item, index) => (
-            <ServiceItem
-              key={item.title}
-              icon={index === 0 ? <ShieldCheck size={20} /> : index === 1 ? <Truck size={20} /> : <PackageCheck size={20} />}
-              title={item.title}
-              text={item.detail}
-            />
-          ))}
-        </section>
-      ) : null}
-
       {categorySection ? <section className="modern-category-section" id="categories">
         <SectionHeading
           eyebrow={categorySection.eyebrow ?? "Browse the pantry"}
@@ -288,47 +314,44 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
           text={categorySection.subtitle ?? undefined}
           action={categorySection.ctaLabel && categorySection.ctaHref ? { label: categorySection.ctaLabel, href: categorySection.ctaHref } : undefined}
         />
-        <HorizontalRail variant="categories" label="product categories">
+        <div className="modern-category-grid">
           {categoryEntries.map((entry) => (
-            <button
-              className={`category-rail-item ${entry.category.id === selectedCategory?.category.id ? "active" : ""}`}
-              type="button"
-              role="tab"
+            <Link
+              href={`/shop?category=${entry.category.slug}`}
               key={entry.category.id}
-              disabled={!entry.products.length}
-              aria-selected={entry.category.id === selectedCategory?.category.id}
-              onClick={() => setActiveCategory(entry.category.id)}
             >
               <CategoryIcon category={entry.category} />
               <span>
                 <strong>{entry.category.name}</strong>
                 <small>{entry.totalProducts} products</small>
               </span>
-            </button>
+              <ChevronRight size={17} />
+            </Link>
           ))}
-        </HorizontalRail>
-        {categoryShowcaseSection && selectedCategory ? (
-          <section className="home-category-shelf" key={selectedCategory.category.id}>
-            <header>
-              <span><CategoryIcon category={selectedCategory.category} /></span>
-              <div>
-                <h3>{selectedCategory.category.name}</h3>
-                <p>{selectedCategory.totalProducts} {selectedCategory.totalProducts === 1 ? "product" : "products"} available</p>
-              </div>
-              <Link href={`/shop?category=${selectedCategory.category.slug}`}>
-                View category <ArrowRight size={15} />
-              </Link>
-            </header>
-            <HorizontalRail variant="products" label={`${selectedCategory.category.name} products`}>
-              {selectedCategory.products
-                .slice(0, Math.min(Math.max(categoryShowcaseSection.productLimit || 8, 8), 12))
-                .map((product) => (
-                  <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
-                ))}
-            </HorizontalRail>
-          </section>
-        ) : null}
+          <Link className="modern-category-all" href="/shop">
+            <span><strong>Shop all products</strong><small>See the full pantry</small></span>
+            <ArrowRight size={18} />
+          </Link>
+        </div>
       </section> : null}
+
+      {buyAgainProducts.length ? (
+        <section className="modern-product-section buy-again-section" aria-labelledby="buy-again-title">
+          <div className="modern-section-heading">
+            <div>
+              <p className="eyebrow">Welcome back</p>
+              <h2 id="buy-again-title">Buy again</h2>
+              <p>Quick access to products from your recent orders.</p>
+            </div>
+            <Link href="/account">View order history <ArrowRight size={16} /></Link>
+          </div>
+          <div className="modern-product-grid" aria-label="Products from recent orders">
+            {buyAgainProducts.map((product) => (
+              <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {popularSection ? <section className="modern-product-section" id="popular">
         <SectionHeading
@@ -337,11 +360,11 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
           text={popularSection.subtitle ?? undefined}
           action={popularSection.ctaLabel && popularSection.ctaHref ? { label: popularSection.ctaLabel, href: popularSection.ctaHref } : undefined}
         />
-        <HorizontalRail variant="products" label="best selling products">
-          {popularProducts.slice(0, Math.min(Math.max(popularSection.productLimit || 8, 8), 16)).map((product) => (
+        <div className="modern-product-grid" aria-label="Best selling products">
+          {popularProducts.slice(0, Math.min(Math.max(popularSection.productLimit || 8, 6), 8)).map((product) => (
             <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
           ))}
-        </HorizontalRail>
+        </div>
       </section> : null}
 
       {combo && comboSection ? (
@@ -382,12 +405,29 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
             </button>
           </div>
         </div>
-        <HorizontalRail key={shelf} variant="products" label={shelf === "new" ? "new products" : "trending products"}>
-          {discoveryProducts.slice(0, Math.min(Math.max(discoverSection.productLimit || 8, 8), 16)).map((product) => (
+        <div className="modern-product-grid" key={shelf} aria-label={shelf === "new" ? "New products" : "Trending products"}>
+          {discoveryProducts.slice(0, Math.min(Math.max(discoverSection.productLimit || 8, 4), 8)).map((product) => (
             <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
           ))}
-        </HorizontalRail>
+        </div>
       </section> : null}
+
+      {trustSection ? (
+        <section className="modern-service-strip" aria-label="Store benefits">
+          {(trustSection.metadata?.items ?? [
+            { title: "Carefully selected", detail: "Everyday products from trusted suppliers" },
+            { title: "Flexible delivery", detail: "Choose the method that fits your day" },
+            { title: "Order visibility", detail: "Follow each step from packing to arrival" }
+          ]).slice(0, 3).map((item, index) => (
+            <ServiceItem
+              key={item.title}
+              icon={index === 0 ? <ShieldCheck size={20} /> : index === 1 ? <Truck size={20} /> : <PackageCheck size={20} />}
+              title={item.title}
+              text={item.detail}
+            />
+          ))}
+        </section>
+      ) : null}
 
       {brandSection && activeBrands.length ? (
         <section className="modern-brand-section" id="brands">
@@ -399,7 +439,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
               Browse all {activeBrands.length} brands <ArrowRight size={15} />
             </Link>
           </div>
-          <HorizontalRail variant="brands" label="available brands">
+          <div className="modern-brand-grid" aria-label="Available brands">
             {activeBrands.map((brand) => (
               <Link href={`/shop?brand=${brand.id}`} key={brand.id}>
                 {brand.logoUrl ? <img src={brand.logoUrl} alt={`${brand.name} logo`} /> : <BadgeCheck size={22} />}
@@ -407,7 +447,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
                 <ChevronRight size={16} />
               </Link>
             ))}
-          </HorizontalRail>
+          </div>
         </section>
       ) : null}
 
@@ -419,7 +459,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
             text={testimonialSection.subtitle ?? undefined}
           />
           <HorizontalRail variant="reviews" label="customer reviews">
-            {catalog.featuredReviews.map((review) => (
+            {visibleFeaturedReviews.map((review) => (
               <article className="modern-review-card customer" key={review.id}>
                 <div className="modern-review-score" aria-label={`${review.rating} out of 5 stars`}>
                   {Array.from({ length: 5 }, (_, index) => (
@@ -437,7 +477,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
                 {review.product ? <Link href={`/products/${review.product.slug}`}>{review.product.name}</Link> : null}
               </article>
             ))}
-            {customerStories.map((story) => (
+            {visibleCustomerStories.map((story) => (
               <article key={story.id}>
                 <div className="modern-review-score" aria-label={`${story.rating} out of 5 stars`}>
                   {Array.from({ length: 5 }, (_, index) => (
@@ -556,7 +596,6 @@ function ProductCard({
         <h3><Link href={`/products/${product.slug}`}>{product.name}</Link></h3>
         <div className="price-row">
           <strong>{formatMoney(displayPrice)}</strong>
-          {displayCompareAt ? <small>{formatMoney(displayCompareAt)}</small> : null}
           {savings ? <em>Save {savings}%</em> : null}
         </div>
         <div className="product-card-facts">
@@ -564,7 +603,6 @@ function ProductCard({
           <span className={availableInventory <= 5 ? "low-stock" : ""}>
             {availableInventory > 5 ? "In stock" : availableInventory > 0 ? `Only ${availableInventory} left` : "Out of stock"}
           </span>
-          <span><Truck size={12} /> 1-2 day delivery</span>
         </div>
       </div>
       {product.variants?.length ? (

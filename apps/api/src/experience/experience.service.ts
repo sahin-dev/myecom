@@ -11,6 +11,7 @@ import {
   PaymentStatus,
   Prisma,
   Promotion,
+  PromotionScope,
   PromotionType,
   PurchaseOrderStatus,
   RefundStatus,
@@ -116,6 +117,14 @@ const DEFAULT_INFO_PAGES: Record<string, { eyebrow: string; title: string; intro
 };
 
 const money = (value: number) => Number(value.toFixed(2));
+
+export type PromotionLine = {
+  productId: string;
+  categoryId: string | null;
+  brandId: string | null;
+  isCombo: boolean;
+  lineTotal: number;
+};
 const monthKey = (date: Date) => date.toISOString().slice(0, 7);
 
 @Injectable()
@@ -462,18 +471,109 @@ export class ExperienceService {
   }
 
   async validatePromotion(dto: ValidatePromotionDto, email?: string) {
-    const promotion = await this.findValidPromotion(dto.code, dto.subtotal, email);
+    const lines = dto.items?.length ? await this.promotionLines(dto.items) : [];
+    const subtotal = lines.length
+      ? money(lines.reduce((sum, line) => sum + line.lineTotal, 0))
+      : dto.subtotal;
+    const { promotion, eligibleSubtotal } = await this.findValidPromotion(
+      dto.code,
+      subtotal,
+      email,
+      lines
+    );
     return {
       id: promotion.id,
       name: promotion.name,
       code: promotion.code,
       type: promotion.type,
-      discount: this.promotionDiscount(promotion, dto.subtotal),
+      scope: promotion.scope,
+      minimumOrder: promotion.minimumOrder,
+      eligibleSubtotal,
+      discount: this.promotionDiscount(promotion, eligibleSubtotal),
       freeShipping: promotion.type === "FREE_SHIPPING"
     };
   }
 
-  async findValidPromotion(code: string, subtotal: number, email?: string) {
+  private async promotionLines(
+    items: Array<{ productId: string; variantId?: string; quantity: number }>
+  ): Promise<PromotionLine[]> {
+    const productIds = [...new Set(items.map((item) => item.productId))];
+    const variantIds = items.flatMap((item) => item.variantId ? [item.variantId] : []);
+    const [products, variants] = await Promise.all([
+      this.prisma.product.findMany({
+        where: { id: { in: productIds }, status: "ACTIVE" },
+        select: {
+          id: true,
+          categoryId: true,
+          brandId: true,
+          isCombo: true,
+          price: true
+        }
+      }),
+      this.prisma.productVariant.findMany({
+        where: { id: { in: variantIds }, isActive: true },
+        select: { id: true, productId: true, price: true }
+      })
+    ]);
+    if (products.length !== productIds.length || variants.length !== variantIds.length) {
+      throw new BadRequestException("Some promotion items are unavailable.");
+    }
+
+    const productMap = new Map(products.map((product) => [product.id, product]));
+    const variantMap = new Map(variants.map((variant) => [variant.id, variant]));
+    return items.map((item) => {
+      const product = productMap.get(item.productId)!;
+      const variant = item.variantId ? variantMap.get(item.variantId) : undefined;
+      if (variant && variant.productId !== product.id) {
+        throw new BadRequestException("A promotion item option is invalid.");
+      }
+      return {
+        productId: product.id,
+        categoryId: product.categoryId,
+        brandId: product.brandId,
+        isCombo: product.isCombo,
+        lineTotal: money((variant?.price ?? product.price) * item.quantity)
+      };
+    });
+  }
+
+  private promotionEligibleSubtotal(
+    promotion: Promotion,
+    subtotal: number,
+    lines: PromotionLine[]
+  ) {
+    if (promotion.scope === PromotionScope.ORDER) return subtotal;
+    if (!lines.length) {
+      throw new BadRequestException("Add eligible products before applying this promotion.");
+    }
+    const eligibleSubtotal = lines
+      .filter((line) => {
+        if (promotion.scope === PromotionScope.CATEGORY) {
+          return Boolean(line.categoryId && promotion.targetIds.includes(line.categoryId));
+        }
+        if (promotion.scope === PromotionScope.BRAND) {
+          return Boolean(line.brandId && promotion.targetIds.includes(line.brandId));
+        }
+        if (promotion.scope === PromotionScope.PRODUCT) {
+          return promotion.targetIds.includes(line.productId);
+        }
+        return line.isCombo && promotion.targetIds.includes(line.productId);
+      })
+      .reduce((sum, line) => sum + line.lineTotal, 0);
+    if (eligibleSubtotal <= 0) {
+      throw new BadRequestException(
+        `This promotion requires an eligible ${promotion.scope.toLowerCase()} item.`
+      );
+    }
+    return money(eligibleSubtotal);
+  }
+
+  async findValidPromotion(
+    code: string,
+    subtotal: number,
+    email?: string,
+    lines: PromotionLine[] = []
+  ) {
     const now = new Date();
     const promotion = await this.prisma.promotion.findFirst({
       where: {
@@ -499,16 +599,17 @@ export class ExperienceService {
         throw new BadRequestException("This promotion has already been used on this account.");
       }
     }
-    return promotion;
+    const eligibleSubtotal = this.promotionEligibleSubtotal(promotion, subtotal, lines);
+    return { promotion, eligibleSubtotal };
   }
 
-  promotionDiscount(promotion: Promotion, subtotal: number) {
+  promotionDiscount(promotion: Promotion, eligibleSubtotal: number) {
     if (promotion.type === PromotionType.FREE_SHIPPING) return 0;
     const raw =
       promotion.type === PromotionType.PERCENTAGE
-        ? subtotal * (promotion.value / 100)
+        ? eligibleSubtotal * (promotion.value / 100)
         : promotion.value;
-    return money(Math.min(raw, promotion.maximumDiscount ?? raw, subtotal));
+    return money(Math.min(raw, promotion.maximumDiscount ?? raw, eligibleSubtotal));
   }
 
   async preferences(userId: string) {
@@ -686,15 +787,44 @@ export class ExperienceService {
     }
   }
 
+  private async promotionTargets(scope: PromotionScope, targetIds?: string[]) {
+    if (scope === PromotionScope.ORDER) return [];
+    const uniqueIds = [...new Set((targetIds ?? []).filter(Boolean))];
+    if (!uniqueIds.length) {
+      throw new BadRequestException(
+        `Choose at least one ${scope.toLowerCase()} for this promotion.`
+      );
+    }
+    const targetCount =
+      scope === PromotionScope.CATEGORY
+        ? await this.prisma.category.count({ where: { id: { in: uniqueIds } } })
+        : scope === PromotionScope.BRAND
+          ? await this.prisma.brand.count({ where: { id: { in: uniqueIds } } })
+          : await this.prisma.product.count({
+              where: {
+                id: { in: uniqueIds },
+                isCombo: scope === PromotionScope.COMBO
+              }
+            });
+    if (targetCount !== uniqueIds.length) {
+      throw new BadRequestException("One or more promotion targets are invalid.");
+    }
+    return uniqueIds;
+  }
+
   async createPromotion(actorId: string, dto: CreatePromotionDto) {
     if (new Date(dto.endsAt) <= new Date(dto.startsAt)) {
       throw new BadRequestException("Promotion end date must be after its start date.");
     }
     this.validatePromotionValue(dto.type, dto.value);
+    const scope = dto.scope ?? PromotionScope.ORDER;
+    const targetIds = await this.promotionTargets(scope, dto.targetIds);
     const promotion = await this.prisma.promotion.create({
       data: {
         ...dto,
         code: dto.code.trim().toUpperCase(),
+        scope,
+        targetIds,
         startsAt: new Date(dto.startsAt),
         endsAt: new Date(dto.endsAt),
         minimumOrder: dto.minimumOrder ?? 0,
@@ -720,11 +850,18 @@ export class ExperienceService {
       throw new BadRequestException("Promotion end date must be after its start date.");
     }
     this.validatePromotionValue(dto.type ?? current.type, dto.value ?? current.value);
+    const scope = dto.scope ?? current.scope;
+    const targetIds = await this.promotionTargets(
+      scope,
+      dto.targetIds ?? current.targetIds
+    );
     const promotion = await this.prisma.promotion.update({
       where: { id },
       data: {
         ...dto,
         code: dto.code?.trim().toUpperCase(),
+        scope,
+        targetIds,
         startsAt: dto.startsAt ? startsAt : undefined,
         endsAt: dto.endsAt ? endsAt : undefined
       },

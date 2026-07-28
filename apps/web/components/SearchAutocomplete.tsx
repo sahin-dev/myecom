@@ -1,7 +1,7 @@
 "use client";
 
 import { Search, X } from "lucide-react";
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useId, useMemo, useState } from "react";
 import {
   Category,
   Product,
@@ -32,6 +32,12 @@ export function SearchAutocomplete({
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [recent, setRecent] = useState<string[]>([]);
+  const searchId = useId();
+  const suggestionsId = `${searchId}-suggestions`;
+  const activeSuggestionId =
+    activeIndex >= 0 && products[activeIndex]
+      ? `${searchId}-product-${products[activeIndex].id}`
+      : undefined;
 
   useEffect(() => {
     try {
@@ -101,16 +107,26 @@ export function SearchAutocomplete({
   const showResults = open && query.trim().length >= 2;
 
   return (
-    <form className="search-shell predictive-search" action="/shop" method="get" onSubmit={submit}>
+    <form
+      className="search-shell predictive-search"
+      action="/shop"
+      method="get"
+      role="search"
+      onSubmit={submit}
+    >
+      <label className="sr-only" htmlFor={searchId}>Search products</label>
       <Search size={19} />
       <input
+        id={searchId}
         name="q"
         value={query}
         placeholder={placeholder}
         role="combobox"
         autoComplete="off"
+        aria-autocomplete="list"
         aria-expanded={Boolean(showRecent || showResults)}
-        aria-controls="site-search-suggestions"
+        aria-controls={showRecent || showResults ? suggestionsId : undefined}
+        aria-activedescendant={activeSuggestionId}
         onFocus={() => setOpen(true)}
         onBlur={() => window.setTimeout(() => setOpen(false), 140)}
         onChange={(event) => {
@@ -126,7 +142,7 @@ export function SearchAutocomplete({
         </button>
       ) : null}
       {showRecent || showResults ? (
-        <div className="search-suggestions" id="site-search-suggestions">
+        <div className="search-suggestions" id={suggestionsId}>
           {showRecent ? (
             <section>
               <header><strong>Recent searches</strong></header>
@@ -154,28 +170,33 @@ export function SearchAutocomplete({
               <section>
                 <header>
                   <strong>Products</strong>
-                  {loading ? <span>Searching...</span> : null}
+                  {loading ? <span role="status" aria-live="polite">Searching...</span> : null}
                 </header>
-                {!loading && !products.length ? <p>No matching products found.</p> : null}
-                {products.map((product, index) => {
-                  const image = productImage(product);
-                  return (
-                    <a
-                      className={index === activeIndex ? "active" : ""}
-                      href={`/products/${product.slug}`}
-                      key={product.id}
-                    >
-                      <span className="search-result-image">
-                        {image ? <img src={image} alt="" /> : <Search size={15} />}
-                      </span>
-                      <span>
-                        <strong>{product.name}</strong>
-                        <small>{product.category?.name ?? "Product"}</small>
-                      </span>
-                      <b>{formatMoney(product.price)}</b>
-                    </a>
-                  );
-                })}
+                {!loading && !products.length ? <p role="status">No matching products found.</p> : null}
+                <div role="listbox" aria-label="Product suggestions">
+                  {products.map((product, index) => {
+                    const image = productImage(product);
+                    return (
+                      <a
+                        className={index === activeIndex ? "active" : ""}
+                        href={`/products/${product.slug}`}
+                        id={`${searchId}-product-${product.id}`}
+                        key={product.id}
+                        role="option"
+                        aria-selected={index === activeIndex}
+                      >
+                        <span className="search-result-image">
+                          {image ? <img src={image} alt="" /> : <Search size={15} />}
+                        </span>
+                        <span>
+                          <strong>{product.name}</strong>
+                          <small>{product.category?.name ?? "Product"}</small>
+                        </span>
+                        <b>{formatMoney(product.price)}</b>
+                      </a>
+                    );
+                  })}
+                </div>
                 <a className="search-view-all" href={`/shop?q=${encodeURIComponent(query.trim())}`}>
                   View all search results
                 </a>

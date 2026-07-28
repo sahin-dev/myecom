@@ -158,7 +158,15 @@ export function CheckoutPage() {
     event.preventDefault();
     setPromotionNotice("");
     try {
-      const result = await validatePromotion(promotionCode.trim(), subtotal);
+      const result = await validatePromotion(
+        promotionCode.trim(),
+        subtotal,
+        checkoutLines.map((line) => ({
+          productId: line.product.id,
+          variantId: line.variant?.id,
+          quantity: line.quantity
+        }))
+      );
       setPromotion(result);
       setPromotionCode(result.code);
       setPromotionNotice(`${result.name} has been applied.`);

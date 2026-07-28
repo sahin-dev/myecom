@@ -53,6 +53,14 @@ enum PromotionType {
   FREE_SHIPPING
 }
 
+enum PromotionScope {
+  ORDER
+  CATEGORY
+  BRAND
+  PRODUCT
+  COMBO
+}
+
 enum ReturnStatus {
   REQUESTED
   APPROVED
@@ -515,6 +523,8 @@ model Promotion {
   name             String
   code             String             @unique
   type             PromotionType
+  scope            PromotionScope     @default(ORDER)
+  targetIds        String[]           @default([])
   value            Float
   minimumOrder     Float              @default(0)
   maximumDiscount  Float?

@@ -413,6 +413,8 @@ export type Promotion = {
   name: string;
   code: string;
   type: "PERCENTAGE" | "FIXED" | "FREE_SHIPPING";
+  scope: "ORDER" | "CATEGORY" | "BRAND" | "PRODUCT" | "COMBO";
+  targetIds: string[];
   value: number;
   minimumOrder: number;
   maximumDiscount?: number | null;
@@ -660,6 +662,9 @@ export type PromotionValidation = {
   name: string;
   code: string;
   type: "PERCENTAGE" | "FIXED" | "FREE_SHIPPING";
+  scope: Promotion["scope"];
+  minimumOrder: number;
+  eligibleSubtotal: number;
   discount: number;
   freeShipping: boolean;
 };
@@ -1366,10 +1371,14 @@ export async function submitProductReview(
   });
 }
 
-export async function validatePromotion(code: string, subtotal: number) {
+export async function validatePromotion(
+  code: string,
+  subtotal: number,
+  items?: Array<{ productId: string; variantId?: string; quantity: number }>
+) {
   return request<PromotionValidation>("/promotions/validate", {
     method: "POST",
-    body: JSON.stringify({ code, subtotal })
+    body: JSON.stringify({ code, subtotal, items })
   });
 }
 
@@ -1713,6 +1722,8 @@ export async function createAdminPromotion(input: {
   name: string;
   code: string;
   type: Promotion["type"];
+  scope?: Promotion["scope"];
+  targetIds?: string[];
   value: number;
   minimumOrder?: number;
   maximumDiscount?: number;

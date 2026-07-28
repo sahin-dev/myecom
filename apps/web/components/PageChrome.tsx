@@ -80,7 +80,7 @@ export function PageHeader({
           </button>
         </nav>
       </header>
-      <nav className="category-nav" aria-label="Shop categories">
+      <nav className={`category-nav ${home ? "home-category-nav" : ""}`} aria-label="Shop categories">
         <button
           className="mobile-category-toggle"
           type="button"
