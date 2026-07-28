@@ -35,8 +35,11 @@ import {
   InventoryAdjustmentDto,
   ModerateReviewDto,
   SaveCartDto,
+  StockAlertDto,
   TrackEventDto,
+  UpdateInfoPageDto,
   UpdateAddressDto,
+  CreateManualRefundDto,
   UpdateAccessRoleDto,
   UpdateCustomerDto,
   UpdateProductImageDto,
@@ -91,6 +94,22 @@ export class ExperienceController {
     return this.experience.trackEvent(dto, request.user?.id);
   }
 
+  @Get("catalog/info-pages")
+  infoPages() {
+    return this.experience.infoPages();
+  }
+
+  @Patch("admin/info-pages/:slug")
+  @UseGuards(AdminGuard)
+  @RequirePermission("content.write")
+  updateInfoPage(
+    @Param("slug") slug: string,
+    @Body() dto: UpdateInfoPageDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.experience.updateInfoPage(request.user.id, slug, dto);
+  }
+
   @Get("reviews/products/:productId")
   productReviews(@Param("productId") productId: string) {
     return this.experience.productReviews(productId);
@@ -122,6 +141,16 @@ export class ExperienceController {
     @Req() request: AuthenticatedRequest
   ) {
     return this.experience.deleteReview(request.user.id, productId);
+  }
+
+  @Post("products/:productId/stock-alert")
+  @UseGuards(JwtAuthGuard)
+  subscribeStockAlert(
+    @Param("productId") productId: string,
+    @Body() dto: StockAlertDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.experience.subscribeStockAlert(request.user.id, productId, dto.variantId);
   }
 
   @Post("promotions/validate")
@@ -454,6 +483,35 @@ export class ExperienceController {
     return this.experience.refunds();
   }
 
+  @Post("admin/orders/:id/refunds")
+  @UseGuards(AdminGuard)
+  @RequirePermission("refunds.write")
+  createManualRefund(
+    @Param("id") id: string,
+    @Body() dto: CreateManualRefundDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.experience.createManualRefund(request.user.id, id, dto);
+  }
+
+  @Get("admin/payments")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.read")
+  payments(
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("provider") provider?: string
+  ) {
+    return this.experience.payments({ search, status, provider });
+  }
+
+  @Post("admin/payments/:id/recheck")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.write")
+  recheckPayment(@Param("id") id: string) {
+    return this.experience.requeryPayment(id);
+  }
+
   @Patch("admin/refunds/:id")
   @UseGuards(AdminGuard)
   @RequirePermission("refunds.write")
@@ -564,5 +622,12 @@ export class ExperienceController {
   @RequirePermission("staff.deactivate")
   deactivateStaff(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
     return this.experience.deactivateStaff(request.user.id, id);
+  }
+
+  @Post("admin/staff/:id/reset-password")
+  @UseGuards(AdminGuard)
+  @RequirePermission("staff.update")
+  sendStaffResetLink(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
+    return this.experience.sendStaffResetLink(request.user.id, id);
   }
 }

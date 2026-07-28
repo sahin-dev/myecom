@@ -203,9 +203,10 @@ export class EcommerceController {
   @RequirePermission("orders.update")
   adminUpdateOrder(
     @Param("idOrNumber") idOrNumber: string,
-    @Body() dto: AdminUpdateOrderDto
+    @Body() dto: AdminUpdateOrderDto,
+    @Req() request: AuthenticatedRequest
   ) {
-    return this.ecommerce.adminUpdateOrder(idOrNumber, dto);
+    return this.ecommerce.adminUpdateOrder(idOrNumber, dto, request.user.id);
   }
 
   @Delete("admin/orders/:idOrNumber")
@@ -348,6 +349,12 @@ export class EcommerceController {
   @RequirePermission("orders.update")
   updateOrderStatus(@Param("idOrNumber") idOrNumber: string, @Body() dto: UpdateOrderStatusDto) {
     return this.ecommerce.updateOrderStatus(idOrNumber, dto);
+  }
+
+  @Patch("orders/:idOrNumber/cancel")
+  @UseGuards(JwtAuthGuard)
+  cancelOwnOrder(@Param("idOrNumber") idOrNumber: string, @Req() request: AuthenticatedRequest) {
+    return this.ecommerce.customerCancelOrder(idOrNumber, request.user);
   }
 
   @Get("notifications")

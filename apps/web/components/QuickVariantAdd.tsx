@@ -57,7 +57,7 @@ export function QuickVariantAdd({
         aria-expanded={open}
       >
         <ShoppingBag size={16} />
-        {available ? selectedLabel ?? "Choose option" : "Out of stock"}
+        <span>{available ? selectedLabel ?? "Choose option" : "Out of stock"}</span>
         {available ? <ChevronDown size={15} /> : null}
       </button>
       {selected !== null ? (

@@ -53,7 +53,9 @@ export const permissionCatalogue: PermissionGroup[] = [
       permission("orders.delete", "Cancel orders", "Cancel eligible orders and release inventory.", "high"),
       permission("orders.export", "Export orders", "Download order records."),
       permission("customers.read", "View customers", "View customer profiles and purchase history."),
-      permission("customers.write", "Update customers", "Update customer details and account access.", "high")
+      permission("customers.write", "Update customers", "Update customer details and account access.", "high"),
+      permission("payments.read", "View payments", "View transaction records, methods, and status for orders."),
+      permission("payments.write", "Manage payments", "Re-check gateway status and reconcile payment records.", "high")
     ]
   },
   {
@@ -115,7 +117,7 @@ export const rolePermissions: Record<UserRole, string[]> = {
   OPERATIONS: [
     "dashboard.read", "orders.read", "orders.create", "orders.update", "orders.delete",
     "orders.export", "customers.read", "customers.write", "returns.read", "returns.write",
-    "refunds.read", "refunds.write", "suppliers.read", "suppliers.write",
+    "refunds.read", "refunds.write", "payments.read", "payments.write", "suppliers.read", "suppliers.write",
     "purchase_orders.read", "purchase_orders.write", "inventory.read", "inventory.write",
     "catalog.read", "uploads.write"
   ],
@@ -128,11 +130,11 @@ export const rolePermissions: Record<UserRole, string[]> = {
   SUPPORT: [
     "dashboard.read", "orders.read", "orders.update", "customers.read",
     "customers.write", "returns.read", "returns.write", "refunds.read",
-    "reviews.read", "reviews.write"
+    "payments.read", "reviews.read", "reviews.write"
   ],
   ANALYST: [
     "dashboard.read", "orders.read", "orders.export", "customers.read",
-    "growth.read", "inventory.read", "catalog.read", "promotions.read"
+    "growth.read", "inventory.read", "catalog.read", "promotions.read", "payments.read"
   ]
 };
 

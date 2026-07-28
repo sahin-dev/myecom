@@ -152,6 +152,8 @@ model User {
   accessRole             AccessRole?             @relation(fields: [accessRoleId], references: [id])
   auditLogs              AuditLog[]              @relation("AuditActor")
   notificationPreference NotificationPreference?
+  passwordResetTokens    PasswordResetToken[]
+  stockAlerts            StockAlert[]
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
 }
@@ -230,6 +232,7 @@ model Product {
   analyticsEvents    AnalyticsEvent[]
   inventoryMovements InventoryMovement[]
   purchaseOrderItems PurchaseOrderItem[]
+  stockAlerts        StockAlert[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 }
@@ -255,6 +258,8 @@ model ProductVariant {
   costPrice          Float?
   compareAt          Float?
   inventory          Int                 @default(0)
+  unitType           String?
+  unitValue          Float?
   attributes         Json?
   isActive           Boolean             @default(true)
   cartItems          CartItem[]
@@ -536,19 +541,22 @@ model CouponRedemption {
 }
 
 model Payment {
-  id              String        @id @default(auto()) @map("_id") @db.ObjectId
-  orderId         String        @db.ObjectId
-  order           Order         @relation(fields: [orderId], references: [id])
-  provider        String
-  method          String
-  amount          Float
-  currency        String        @default("BDT")
-  status          PaymentStatus @default(PENDING)
-  transactionId   String?
-  providerPayload Json?
-  refunds         Refund[]
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                String        @id @default(auto()) @map("_id") @db.ObjectId
+  orderId           String        @db.ObjectId
+  order             Order         @relation(fields: [orderId], references: [id])
+  provider          String
+  method            String
+  amount            Float
+  currency          String        @default("BDT")
+  status            PaymentStatus @default(PENDING)
+  transactionId     String?
+  gatewayReference  String?
+  providerPayload   Json?
+  refunds           Refund[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([gatewayReference])
 }
 
 model Refund {
@@ -726,4 +734,40 @@ model NotificationPreference {
   priceDrop      Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+model PasswordResetToken {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String    @db.ObjectId
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model StockAlert {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String    @db.ObjectId
+  user       User      @relation(fields: [userId], references: [id])
+  productId  String    @db.ObjectId
+  product    Product   @relation(fields: [productId], references: [id])
+  variantId  String?   @db.ObjectId
+  notifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([userId, productId, variantId])
+}
+
+model InfoPage {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  slug      String   @unique
+  eyebrow   String
+  title     String
+  intro     String
+  points    Json
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
 }

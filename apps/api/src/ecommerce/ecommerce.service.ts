@@ -611,6 +611,7 @@ export class EcommerceService {
             include: {
               items: true,
               payments: true,
+              promotion: { select: { code: true, name: true } },
               trackingEvents: { orderBy: { createdAt: "asc" } },
               notifications: true
             }
@@ -623,6 +624,7 @@ export class EcommerceService {
         include: {
           items: true,
           payments: true,
+          promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } },
           notifications: true
         }
@@ -797,7 +799,12 @@ export class EcommerceService {
           },
           payments: {
             create: {
-              provider: paymentMethod === "Cash on delivery" ? "cash" : "pending-gateway",
+              provider:
+                paymentConfig?.code === "BKASH"
+                  ? "bkash"
+                  : paymentMethod === "Cash on delivery"
+                    ? "cash"
+                    : "pending-gateway",
               method: paymentMethod,
               amount: subtotal - discount + shippingFee,
               status: "PENDING"
@@ -830,6 +837,7 @@ export class EcommerceService {
         include: {
           items: true,
           payments: true,
+          promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } },
           notifications: true
         }
@@ -870,6 +878,7 @@ export class EcommerceService {
               include: {
                 items: true,
                 payments: true,
+                promotion: { select: { code: true, name: true } },
                 trackingEvents: { orderBy: { createdAt: "asc" } },
                 notifications: true
               }
@@ -927,6 +936,7 @@ export class EcommerceService {
       },
       include: {
         items: true,
+        promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         notifications: { orderBy: { createdAt: "desc" } }
       }
@@ -1044,6 +1054,7 @@ export class EcommerceService {
         include: {
           items: true,
           payments: true,
+          promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } },
           notifications: { orderBy: { createdAt: "desc" } }
         }
@@ -1440,6 +1451,7 @@ export class EcommerceService {
         where,
         include: {
           items: true,
+          promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } }
         },
         orderBy: { createdAt: "desc" },
@@ -1462,6 +1474,7 @@ export class EcommerceService {
       where: { OR: identifiers },
       include: {
         items: true,
+        promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         notifications: { orderBy: { createdAt: "desc" } }
       }
@@ -1470,11 +1483,18 @@ export class EcommerceService {
     return order;
   }
 
-  async adminUpdateOrder(idOrNumber: string, dto: AdminUpdateOrderDto) {
+  async adminUpdateOrder(idOrNumber: string, dto: AdminUpdateOrderDto, actorId: string) {
     if (dto.status === OrderStatus.CANCELLED) {
       throw new BadRequestException("Use the cancel-order action to cancel an order.");
     }
     let current = await this.adminOrder(idOrNumber);
+    const before = {
+      status: current.status,
+      paymentStatus: current.paymentStatus,
+      paymentMethod: current.paymentMethod,
+      trackingCode: current.trackingCode,
+      courierName: current.courierName
+    };
     const statusChanged = dto.status && dto.status !== current.status;
     if (
       (dto.status ?? current.status) === OrderStatus.CANCELLED &&
@@ -1489,7 +1509,7 @@ export class EcommerceService {
         note: dto.note
       });
     }
-    return this.prisma.order.update({
+    const updated = await this.prisma.order.update({
       where: { id: current.id },
       data: {
         status: undefined,
@@ -1505,10 +1525,31 @@ export class EcommerceService {
       },
       include: {
         items: true,
+        promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         notifications: { orderBy: { createdAt: "desc" } }
       }
     });
+    await this.prisma.auditLog.create({
+      data: {
+        actorId,
+        action: "order.updated",
+        entity: "Order",
+        entityId: updated.id,
+        metadata: {
+          orderNumber: updated.orderNumber,
+          before,
+          after: {
+            status: updated.status,
+            paymentStatus: updated.paymentStatus,
+            paymentMethod: updated.paymentMethod,
+            trackingCode: updated.trackingCode,
+            courierName: updated.courierName
+          }
+        }
+      }
+    });
+    return updated;
   }
 
   async adminCancelOrder(idOrNumber: string) {
@@ -1516,6 +1557,26 @@ export class EcommerceService {
       status: OrderStatus.CANCELLED,
       location: "Admin dashboard",
       note: "Order cancelled by store staff."
+    }, true);
+  }
+
+  async customerCancelOrder(idOrNumber: string, authUser: AuthUser) {
+    const identifiers: Prisma.OrderWhereInput[] = [{ orderNumber: idOrNumber }];
+    if (/^[a-f\d]{24}$/i.test(idOrNumber)) identifiers.push({ id: idOrNumber });
+    const current = await this.prisma.order.findFirst({ where: { OR: identifiers } });
+    if (!current) throw new NotFoundException("Order not found.");
+    if (current.userId !== authUser.id) {
+      throw new BadRequestException("This order does not belong to your account.");
+    }
+    if (!["PLACED", "CONFIRMED"].includes(current.status)) {
+      throw new BadRequestException(
+        "This order is already being prepared for delivery and can no longer be cancelled here — start a return instead once it arrives."
+      );
+    }
+    return this.updateOrderStatus(idOrNumber, {
+      status: OrderStatus.CANCELLED,
+      location: "Customer",
+      note: "Order cancelled by the customer before shipment."
     }, true);
   }
 

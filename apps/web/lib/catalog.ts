@@ -64,6 +64,21 @@ export type ProductImage = {
   position: number;
 };
 
+export type UnitType = "kg" | "g" | "l" | "ml" | "ft" | "in" | "m" | "pcs" | "dozen" | "pack";
+
+export const unitTypeLabels: Record<UnitType, string> = {
+  kg: "kg",
+  g: "g",
+  l: "L",
+  ml: "ml",
+  ft: "ft",
+  in: "in",
+  m: "m",
+  pcs: "pcs",
+  dozen: "dozen",
+  pack: "pack"
+};
+
 export type ProductVariant = {
   id: string;
   productId: string;
@@ -73,6 +88,8 @@ export type ProductVariant = {
   costPrice?: number | null;
   compareAt?: number | null;
   inventory: number;
+  unitType?: UnitType | null;
+  unitValue?: number | null;
   attributes?: Record<string, string> | null;
   isActive: boolean;
 };
@@ -187,6 +204,16 @@ export type CheckoutMethod = {
   priority: number;
 };
 
+export type InfoPageContent = {
+  id?: string;
+  slug: string;
+  eyebrow: string;
+  title: string;
+  intro: string;
+  points: Array<{ title: string; detail: string }>;
+  updatedAt?: string;
+};
+
 export type Catalog = {
   banners: Banner[];
   brands: Brand[];
@@ -234,6 +261,7 @@ export type Order = {
   shippingFee: number;
   total: number;
   discount?: number;
+  promotion?: { code: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
   items: Array<{
@@ -608,6 +636,21 @@ export type Refund = {
   order: { id?: string; orderNumber: string; customerName: string; email: string; total: number };
   payment?: { provider: string; method: string; transactionId?: string | null } | null;
   returnRequest?: { id: string; returnNumber: string; status: string } | null;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type Payment = {
+  id: string;
+  orderId: string;
+  provider: string;
+  method: string;
+  amount: number;
+  currency: string;
+  status: "PENDING" | "PAID" | "FAILED" | "PARTIALLY_REFUNDED" | "REFUNDED";
+  transactionId?: string | null;
+  gatewayReference?: string | null;
+  order: { orderNumber: string; customerName: string; email: string; userId?: string | null; total: number };
   createdAt: string;
   updatedAt?: string;
 };
@@ -1452,6 +1495,17 @@ export async function fetchOrder(idOrNumber: string, email?: string) {
   return request<Order>(`/orders/${encodeURIComponent(idOrNumber)}${query}`);
 }
 
+export async function cancelOrder(idOrNumber: string) {
+  return request<Order>(`/orders/${encodeURIComponent(idOrNumber)}/cancel`, { method: "PATCH" });
+}
+
+export async function subscribeStockAlert(productId: string, variantId?: string) {
+  return request<{ id: string }>(`/products/${encodeURIComponent(productId)}/stock-alert`, {
+    method: "POST",
+    body: JSON.stringify({ variantId })
+  });
+}
+
 export async function createAdminResource<T>(
   path:
     | "brands"
@@ -1750,6 +1804,54 @@ export async function updateAdminRefund(id: string, input: { status: Refund["sta
   });
 }
 
+export async function createManualRefund(orderId: string, input: { amount: number; reason: string }) {
+  return request<Refund>(`/admin/orders/${encodeURIComponent(orderId)}/refunds`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fetchAdminPayments(params?: { search?: string; status?: string; provider?: string }) {
+  const query = new URLSearchParams();
+  if (params?.search) query.set("search", params.search);
+  if (params?.status) query.set("status", params.status);
+  if (params?.provider) query.set("provider", params.provider);
+  const suffix = query.toString();
+  return request<Payment[]>(`/admin/payments${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function recheckAdminPayment(id: string) {
+  return request<Payment>(`/admin/payments/${encodeURIComponent(id)}/recheck`, { method: "POST" });
+}
+
+export async function initiateBkashPayment(orderId: string) {
+  return request<{ bkashURL: string; paymentID: string }>("/checkout/bkash/initiate", {
+    method: "POST",
+    body: JSON.stringify({ orderId })
+  });
+}
+
+export async function executeBkashPayment(paymentID: string) {
+  return request<Order>("/checkout/bkash/execute", {
+    method: "POST",
+    body: JSON.stringify({ paymentID })
+  });
+}
+
+export async function fetchInfoPages() {
+  return request<InfoPageContent[]>("/catalog/info-pages");
+}
+
+export async function updateInfoPage(
+  slug: string,
+  input: { eyebrow?: string; title?: string; intro?: string; points?: Array<{ title: string; detail: string }> }
+) {
+  return request<InfoPageContent>(`/admin/info-pages/${encodeURIComponent(slug)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
 export async function createSupplier(input: {
   name: string;
   contactName?: string;
@@ -1826,6 +1928,8 @@ export async function createProductVariant(
     costPrice?: number;
     compareAt?: number;
     inventory: number;
+    unitType?: UnitType;
+    unitValue?: number;
     attributes?: Record<string, unknown>;
   }
 ) {
@@ -1943,7 +2047,7 @@ export async function deleteAccessRole(id: string) {
 
 export async function updateStaff(
   id: string,
-  input: { accessRoleId: string }
+  input: { accessRoleId?: string; isActive?: boolean }
 ) {
   return request<StaffMember>(`/admin/staff/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -2012,6 +2116,26 @@ export async function changePassword(input: { currentPassword: string; newPasswo
 
 export async function deleteAccount() {
   return request<{ deleted: boolean }>("/auth/me", { method: "DELETE" });
+}
+
+export async function requestPasswordReset(email: string) {
+  return request<{ requested: boolean }>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export async function resetPassword(token: string, newPassword: string) {
+  return request<{ reset: boolean }>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, newPassword })
+  });
+}
+
+export async function sendStaffResetLink(id: string) {
+  return request<{ sent: boolean }>(`/admin/staff/${encodeURIComponent(id)}/reset-password`, {
+    method: "POST"
+  });
 }
 
 export async function fetchAccountOrders() {

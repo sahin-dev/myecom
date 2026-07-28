@@ -141,6 +141,40 @@ export class CreateReviewDto {
   orderId?: string;
 }
 
+export class StockAlertDto {
+  @IsOptional()
+  @IsString()
+  variantId?: string;
+}
+
+class InfoPagePointDto {
+  @IsString()
+  title!: string;
+
+  @IsString()
+  detail!: string;
+}
+
+export class UpdateInfoPageDto {
+  @IsOptional()
+  @IsString()
+  eyebrow?: string;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  intro?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InfoPagePointDto)
+  points?: InfoPagePointDto[];
+}
+
 export class ValidatePromotionDto {
   @IsString()
   code!: string;
@@ -467,6 +501,10 @@ export class UpdateStaffDto {
   @IsArray()
   @IsString({ each: true })
   permissions?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class CreateStaffDto {
@@ -565,6 +603,15 @@ export class CreateVariantDto {
   inventory!: number;
 
   @IsOptional()
+  @IsString()
+  unitType?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  unitValue?: number;
+
+  @IsOptional()
   @IsObject()
   attributes?: Record<string, unknown>;
 }
@@ -592,6 +639,15 @@ export class UpdateVariantDto {
   @IsNumber()
   @IsPositive()
   compareAt?: number;
+
+  @IsOptional()
+  @IsString()
+  unitType?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  unitValue?: number;
 
   @IsOptional()
   @IsObject()
@@ -638,4 +694,13 @@ export class UpdateRefundDto {
   @IsOptional()
   @IsString()
   reason?: string;
+}
+
+export class CreateManualRefundDto {
+  @IsNumber()
+  @IsPositive()
+  amount!: number;
+
+  @IsString()
+  reason!: string;
 }

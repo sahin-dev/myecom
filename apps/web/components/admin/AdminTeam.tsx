@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
+  UserCheck,
   UserMinus,
   UserPlus,
   UsersRound
@@ -30,10 +31,19 @@ import {
   fetchAuditLogs,
   fetchPermissionCatalogue,
   fetchStaff,
+  sendStaffResetLink,
   updateAccessRole,
   updateStaff
 } from "../../lib/catalog";
-import { AdminError, AdminLoading, AdminPageTitle, AdminSectionHeader } from "./AdminShared";
+import {
+  AdminConfirmDialog,
+  AdminError,
+  AdminLoading,
+  AdminPageTitle,
+  AdminSectionHeader,
+  AdminToast,
+  useAdminToast
+} from "./AdminShared";
 
 type TeamView = "staff" | "roles" | "audit";
 
@@ -61,7 +71,9 @@ export function AdminTeam() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const { message, kind, notify } = useAdminToast();
+  const [deleteRoleTarget, setDeleteRoleTarget] = useState<AccessRole | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<StaffMember | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -118,7 +130,6 @@ export function AdminTeam() {
   async function saveRole(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
-    setMessage("");
     try {
       const input = {
         name: roleName,
@@ -134,9 +145,9 @@ export function AdminTeam() {
           : [...current, saved].sort((a, b) => a.name.localeCompare(b.name))
       );
       beginRole(saved);
-      setMessage(`${saved.name} was saved. Assigned staff receive changes immediately.`);
+      notify(`${saved.name} was saved. Assigned staff receive changes immediately.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "The access role could not be saved.");
+      notify(caught instanceof Error ? caught.message : "The access role could not be saved.", "error");
     } finally {
       setSaving(false);
     }
@@ -147,21 +158,22 @@ export function AdminTeam() {
       const copied = await duplicateAccessRole(role.id);
       setRoles((current) => [...current, copied]);
       beginRole(copied);
-      setMessage("Role duplicated. Review its name and permissions before assigning staff.");
+      notify("Role duplicated. Review its name and permissions before assigning staff.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Role could not be duplicated.");
+      notify(caught instanceof Error ? caught.message : "Role could not be duplicated.", "error");
     }
   }
 
   async function removeRole(role: AccessRole) {
-    if (!window.confirm(`Delete ${role.name}?`)) return;
     try {
       await deleteAccessRole(role.id);
       setRoles((current) => current.filter((item) => item.id !== role.id));
       if (editingRole?.id === role.id) beginRole();
-      setMessage(`${role.name} was deleted.`);
+      notify(`${role.name} was deleted.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Role could not be deleted.");
+      notify(caught instanceof Error ? caught.message : "Role could not be deleted.", "error");
+    } finally {
+      setDeleteRoleTarget(null);
     }
   }
 
@@ -179,9 +191,9 @@ export function AdminTeam() {
       });
       setStaff((current) => [created, ...current]);
       form.reset();
-      setMessage(`${created.name} can now sign in with ${created.accessRole?.name ?? "the assigned role"}.`);
+      notify(`${created.name} can now sign in with ${created.accessRole?.name ?? "the assigned role"}.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Staff member could not be created.");
+      notify(caught instanceof Error ? caught.message : "Staff member could not be created.", "error");
     } finally {
       setSaving(false);
     }
@@ -191,20 +203,40 @@ export function AdminTeam() {
     try {
       const updated = await updateStaff(member.id, { accessRoleId });
       setStaff((current) => current.map((item) => item.id === member.id ? updated : item));
-      setMessage(`${member.name}'s access was updated immediately.`);
+      notify(`${member.name}'s access was updated immediately.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Role could not be assigned.");
+      notify(caught instanceof Error ? caught.message : "Role could not be assigned.", "error");
     }
   }
 
   async function deactivate(member: StaffMember) {
-    if (!window.confirm(`Deactivate ${member.name}? They will immediately lose access.`)) return;
     try {
       const updated = await deactivateStaff(member.id);
       setStaff((current) => current.map((item) => item.id === member.id ? updated : item));
-      setMessage(`${member.name} can no longer sign in.`);
+      notify(`${member.name} can no longer sign in.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Staff access could not be changed.");
+      notify(caught instanceof Error ? caught.message : "Staff access could not be changed.", "error");
+    } finally {
+      setDeactivateTarget(null);
+    }
+  }
+
+  async function reactivate(member: StaffMember) {
+    try {
+      const updated = await updateStaff(member.id, { isActive: true });
+      setStaff((current) => current.map((item) => item.id === member.id ? updated : item));
+      notify(`${member.name} can sign in again.`);
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Staff access could not be changed.", "error");
+    }
+  }
+
+  async function sendResetLink(member: StaffMember) {
+    try {
+      await sendStaffResetLink(member.id);
+      notify(`A password reset link was sent to ${member.email}.`);
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "The reset link could not be sent.", "error");
     }
   }
 
@@ -227,7 +259,25 @@ export function AdminTeam() {
         {availableViews.includes("roles") ? <button type="button" className={view === "roles" ? "active" : ""} onClick={() => setView("roles")}><KeyRound size={16} /> Access roles</button> : null}
         {availableViews.includes("audit") ? <button type="button" className={view === "audit" ? "active" : ""} onClick={() => setView("audit")}><History size={16} /> Audit log</button> : null}
       </nav>
-      {message ? <p className="admin-message" role="status">{message}</p> : null}
+      <AdminToast message={message} kind={kind} />
+
+      {deleteRoleTarget ? (
+        <AdminConfirmDialog
+          title={`Delete ${deleteRoleTarget.name}?`}
+          onCancel={() => setDeleteRoleTarget(null)}
+          onConfirm={() => void removeRole(deleteRoleTarget)}
+        />
+      ) : null}
+
+      {deactivateTarget ? (
+        <AdminConfirmDialog
+          title={`Deactivate ${deactivateTarget.name}?`}
+          body="They will immediately lose access to the admin console."
+          confirmLabel="Deactivate"
+          onCancel={() => setDeactivateTarget(null)}
+          onConfirm={() => void deactivate(deactivateTarget)}
+        />
+      ) : null}
 
       {view === "staff" ? (
         <>
@@ -273,9 +323,22 @@ export function AdminTeam() {
                           </select>
                         ) : <strong>{member.accessRole?.name ?? (protectedAccount ? "Owner" : member.role)}</strong>}
                       </td>
-                      <td><span className="admin-scope-count">{assigned?.permissions.includes("*") ? "Full access" : `${assigned?.permissions.length ?? member.permissions.length} permissions`}</span></td>
+                      <td><span className="admin-scope-count">{assigned?.permissions.includes("*") ? "Full access" : `${assigned?.permissions.length ?? member.permissions?.length ?? 0} permissions`}</span></td>
                       <td><span className={`admin-status-dot ${member.isActive ? "active" : ""}`}>{member.isActive ? "Active" : "Inactive"}</span></td>
-                      <td>{member.isActive && can("staff.deactivate") && !protectedAccount ? <button type="button" onClick={() => void deactivate(member)}><UserMinus size={15} /> Deactivate</button> : "Protected"}</td>
+                      <td>
+                        {protectedAccount ? "Protected" : !can("staff.deactivate") ? "—" : (
+                          <div className="admin-row-actions">
+                            {member.isActive ? (
+                              <button type="button" onClick={() => setDeactivateTarget(member)}><UserMinus size={15} /> Deactivate</button>
+                            ) : (
+                              <button type="button" onClick={() => void reactivate(member)}><UserCheck size={15} /> Reactivate</button>
+                            )}
+                            {member.isActive && can("staff.update") ? (
+                              <button type="button" onClick={() => void sendResetLink(member)} title="Send password reset link"><KeyRound size={15} /> Reset link</button>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}</tbody>
@@ -337,7 +400,7 @@ export function AdminTeam() {
                   })}
                 </div>
                 <footer className="admin-editor-actions">
-                  {editingRole && !editingRole.isSystem && can("roles.delete") ? <button className="danger-action" type="button" disabled={editingRole._count.users > 0} onClick={() => void removeRole(editingRole)} title={editingRole._count.users ? "Reassign staff before deleting" : "Delete role"}><Trash2 size={16} /> Delete</button> : <span />}
+                  {editingRole && !editingRole.isSystem && can("roles.delete") ? <button className="danger-action" type="button" disabled={editingRole._count.users > 0} onClick={() => setDeleteRoleTarget(editingRole)} title={editingRole._count.users ? "Reassign staff before deleting" : "Delete role"}><Trash2 size={16} /> Delete</button> : <span />}
                   {can(editingRole ? "roles.update" : "roles.create") ? <button className="primary-action" type="submit" disabled={saving || !roleName.trim()}><Pencil size={16} /> {saving ? "Saving..." : "Save role"}</button> : null}
                 </footer>
               </>

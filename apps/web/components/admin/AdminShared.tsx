@@ -1,8 +1,57 @@
 "use client";
 
-import { ImagePlus, Images, Plus, UploadCloud, X } from "lucide-react";
-import { FormEvent, ReactNode, useState } from "react";
+import { ImagePlus, Images, Plus, Trash2, UploadCloud, X } from "lucide-react";
+import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { uploadAdminImage } from "../../lib/catalog";
+
+export function useAdminToast() {
+  const [message, setMessage] = useState("");
+  const [kind, setKind] = useState<"success" | "error">("success");
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const notify = useCallback((text: string, nextKind: "success" | "error" = "success") => {
+    setMessage(text);
+    setKind(nextKind);
+    window.clearTimeout(timer.current);
+    timer.current = setTimeout(() => setMessage(""), 4500);
+  }, []);
+
+  return { message, kind, notify };
+}
+
+export function AdminToast({ message, kind }: { message: string; kind: "success" | "error" }) {
+  if (!message) return null;
+  return <p className={`admin-message${kind === "error" ? " is-error" : ""}`}>{message}</p>;
+}
+
+export function AdminConfirmDialog({
+  title,
+  body,
+  confirmLabel = "Delete",
+  onConfirm,
+  onCancel
+}: {
+  title: string;
+  body?: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="admin-confirm-overlay" role="dialog" aria-modal="true">
+      <div className="admin-confirm-card">
+        <h3>{title}</h3>
+        {body ? <p>{body}</p> : null}
+        <div className="admin-confirm-actions">
+          <button type="button" className="secondary-action" onClick={onCancel}>Cancel</button>
+          <button type="button" className="danger-action" onClick={onConfirm}><Trash2 size={16} /> {confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export const orderStatuses = [
   "PLACED",

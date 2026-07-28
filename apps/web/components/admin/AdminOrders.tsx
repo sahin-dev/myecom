@@ -9,6 +9,7 @@ import {
   PackageSearch,
   Phone,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   ShoppingBag,
@@ -22,6 +23,7 @@ import {
   Order,
   cancelAdminOrder,
   createAdminOrder,
+  createManualRefund,
   baseProductOptionLabel,
   fetchAdminCatalog,
   fetchAdminOrders,
@@ -30,16 +32,21 @@ import {
   updateAdminOrder
 } from "../../lib/catalog";
 import { useAuth } from "../AuthContext";
+import { useSiteSettings } from "../SiteSettingsContext";
 import {
+  AdminConfirmDialog,
   AdminError,
   AdminLoading,
   AdminPageTitle,
   AdminSectionHeader,
+  AdminToast,
   StatusBadge,
   formatStatus,
   orderStatuses,
-  paymentStatuses
+  paymentStatuses,
+  useAdminToast
 } from "./AdminShared";
+import { PackingSlip } from "./PackingSlip";
 
 const orderTransitions: Record<string, string[]> = {
   PLACED: ["CONFIRMED", "CANCELLED"],
@@ -59,10 +66,12 @@ function defaultOrderVariant(product: AdminCatalog["products"][number]) {
 
 export function AdminOrders() {
   const { user } = useAuth();
+  const { settings } = useSiteSettings();
   const can = (permission: string) =>
     Boolean(user?.permissions.includes("*") || user?.permissions.includes(permission));
   const [result, setResult] = useState<AdminOrdersResponse | null>(null);
   const [selected, setSelected] = useState<Order | null>(null);
+  const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [creating, setCreating] = useState(false);
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [draftItems, setDraftItems] = useState<Array<{
@@ -77,8 +86,13 @@ export function AdminOrders() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
+  const { message, kind, notify } = useAdminToast();
   const [error, setError] = useState("");
+  const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
+  const [refundTarget, setRefundTarget] = useState<Order | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkApplying, setBulkApplying] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,6 +119,7 @@ export function AdminOrders() {
 
   useEffect(() => {
     void load();
+    setSelectedIds(new Set());
   }, [load]);
 
   function applySearch(event: FormEvent<HTMLFormElement>) {
@@ -117,7 +132,6 @@ export function AdminOrders() {
     event.preventDefault();
     if (!selected) return;
     setSaving(true);
-    setMessage("");
     const form = new FormData(event.currentTarget);
     try {
       const updated = await updateAdminOrder(selected.id, {
@@ -131,10 +145,10 @@ export function AdminOrders() {
         adminNote: String(form.get("adminNote") || "")
       });
       setSelected(updated);
-      setMessage(`${updated.orderNumber} was updated and the customer was notified when needed.`);
+      notify(`${updated.orderNumber} was updated and the customer was notified when needed.`);
       await load();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Order update failed.");
+      notify(caught instanceof Error ? caught.message : "Order update failed.", "error");
     } finally {
       setSaving(false);
     }
@@ -143,7 +157,6 @@ export function AdminOrders() {
   async function beginCreateOrder() {
     setSelected(null);
     setCreating(true);
-    setMessage("");
     try {
       const nextCatalog = catalog ?? await fetchAdminCatalog();
       setCatalog(nextCatalog);
@@ -154,7 +167,7 @@ export function AdminOrders() {
         quantity: 1
       }] : []);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Products could not be loaded.");
+      notify(caught instanceof Error ? caught.message : "Products could not be loaded.", "error");
       setCreating(false);
     }
   }
@@ -181,7 +194,6 @@ export function AdminOrders() {
     event.preventDefault();
     if (!draftItems.length) return;
     setSaving(true);
-    setMessage("");
     const data = new FormData(event.currentTarget);
     try {
       const order = await createAdminOrder({
@@ -195,35 +207,89 @@ export function AdminOrders() {
       });
       setCreating(false);
       setSelected(order);
-      setMessage(`${order.orderNumber} was created and inventory was reserved.`);
+      notify(`${order.orderNumber} was created and inventory was reserved.`);
       await load();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Order could not be created.");
+      notify(caught instanceof Error ? caught.message : "Order could not be created.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function issueRefund(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!refundTarget) return;
+    const form = new FormData(event.currentTarget);
+    const amount = Number(form.get("amount"));
+    const reason = String(form.get("reason") || "").trim();
+    if (!amount || amount <= 0 || !reason) return;
+    setSaving(true);
+    try {
+      await createManualRefund(refundTarget.id, { amount, reason });
+      notify(`A refund of ${formatMoney(amount)} was queued for ${refundTarget.orderNumber}.`);
+      setRefundTarget(null);
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Refund could not be issued.", "error");
     } finally {
       setSaving(false);
     }
   }
 
   async function cancelOrder(order: Order) {
-    if (!window.confirm(`Cancel ${order.orderNumber}? Reserved inventory will be released.`)) return;
     setSaving(true);
+    setCancelTarget(null);
     try {
       const cancelled = await cancelAdminOrder(order.id);
       setSelected(cancelled);
-      setMessage(`${cancelled.orderNumber} was cancelled and its inventory was released.`);
+      notify(`${cancelled.orderNumber} was cancelled and its inventory was released.`);
       await load();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Order could not be cancelled.");
+      notify(caught instanceof Error ? caught.message : "Order could not be cancelled.", "error");
     } finally {
       setSaving(false);
     }
   }
 
-  function exportOrders() {
-    if (!result?.orders.length) return;
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((current) =>
+      current.size === (result?.orders.length ?? 0)
+        ? new Set()
+        : new Set(result?.orders.map((order) => order.id))
+    );
+  }
+
+  async function applyBulkStatus() {
+    if (!bulkStatus || !selectedIds.size) return;
+    setBulkApplying(true);
+    try {
+      await Promise.all(
+        [...selectedIds].map((id) => updateAdminOrder(id, { status: bulkStatus }))
+      );
+      notify(`${selectedIds.size} order${selectedIds.size === 1 ? "" : "s"} moved to ${formatStatus(bulkStatus)}.`);
+      setSelectedIds(new Set());
+      setBulkStatus("");
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Bulk status update failed.", "error");
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  function downloadOrdersCsv(orders: Order[], filenamePrefix: string) {
+    if (!orders.length) return;
     const rows = [
       ["Order", "Date", "Customer", "Email", "Phone", "Status", "Payment", "Items", "Total"],
-      ...result.orders.map((order) => [
+      ...orders.map((order) => [
         order.orderNumber,
         new Date(order.createdAt).toISOString(),
         order.customerName,
@@ -241,10 +307,24 @@ export function AdminOrders() {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.download = `${filenamePrefix}-${new Date().toISOString().slice(0, 10)}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
   }
+
+  function exportOrders() {
+    downloadOrdersCsv(result?.orders ?? [], "orders");
+  }
+
+  function exportSelected() {
+    downloadOrdersCsv((result?.orders ?? []).filter((order) => selectedIds.has(order.id)), "orders-selected");
+  }
+
+  const bulkNextStatuses = [...selectedIds].reduce<string[] | null>((common, id) => {
+    const order = result?.orders.find((item) => item.id === id);
+    const options = order ? orderTransitions[order.status] ?? [] : [];
+    return common === null ? options : common.filter((status) => options.includes(status));
+  }, null) ?? [];
 
   if (loading && !result) return <AdminLoading label="Loading the order queue..." />;
   if (error && !result) return <AdminError message={error} retry={() => void load()} />;
@@ -290,7 +370,36 @@ export function AdminOrders() {
         <button className="primary-action" type="submit">Apply</button>
       </form>
 
-      {message ? <p className="admin-message">{message}</p> : null}
+      <AdminToast message={message} kind={kind} />
+
+      {cancelTarget ? (
+        <AdminConfirmDialog
+          title={`Cancel ${cancelTarget.orderNumber}?`}
+          body="Reserved inventory will be released back into stock."
+          confirmLabel="Cancel order"
+          onCancel={() => setCancelTarget(null)}
+          onConfirm={() => void cancelOrder(cancelTarget)}
+        />
+      ) : null}
+
+      {refundTarget ? (
+        <div className="admin-confirm-overlay" role="dialog" aria-modal="true">
+          <form className="admin-confirm-card" onSubmit={issueRefund}>
+            <h3>Issue refund for {refundTarget.orderNumber}</h3>
+            <p>Order total: {formatMoney(refundTarget.total)}. The amount can't exceed the order's remaining refundable balance.</p>
+            <label>Amount
+              <input name="amount" type="number" min="1" max={refundTarget.total} step="0.01" required autoFocus />
+            </label>
+            <label>Reason
+              <input name="reason" type="text" placeholder="Goodwill adjustment, damaged item, etc." required />
+            </label>
+            <div className="admin-confirm-actions">
+              <button type="button" className="secondary-action" onClick={() => setRefundTarget(null)}>Cancel</button>
+              <button type="submit" className="primary-action" disabled={saving}>{saving ? "Issuing..." : "Issue refund"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       <div className={`admin-order-workspace ${selected || creating ? "has-detail" : ""}`}>
         <section className="admin-order-list">
@@ -298,10 +407,35 @@ export function AdminOrders() {
             title={`${result?.pagination.total ?? 0} orders`}
             description="Newest orders are shown first"
           />
+          {selectedIds.size ? (
+            <div className="admin-bulk-toolbar">
+              <span>{selectedIds.size} selected</span>
+              <select value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)} disabled={!bulkNextStatuses.length}>
+                <option value="">{bulkNextStatuses.length ? "Move to..." : "No shared next status"}</option>
+                {bulkNextStatuses.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}
+              </select>
+              <button type="button" className="secondary-action" disabled={!bulkStatus || bulkApplying} onClick={() => void applyBulkStatus()}>
+                {bulkApplying ? "Applying..." : "Apply"}
+              </button>
+              {can("orders.export") ? (
+                <button type="button" className="secondary-action" onClick={exportSelected}>
+                  <Download size={15} /> Export selected
+                </button>
+              ) : null}
+              <button type="button" className="text-link" onClick={() => setSelectedIds(new Set())}>Clear</button>
+            </div>
+          ) : null}
           <div className="admin-table-wrap">
             <table className="admin-table admin-orders-table">
               <thead>
                 <tr>
+                  <th aria-label="Select all">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(result?.orders.length) && selectedIds.size === result?.orders.length}
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
                   <th>Order</th>
                   <th>Customer</th>
                   <th>Status</th>
@@ -324,6 +458,9 @@ export function AdminOrders() {
                       }
                     }}
                   >
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => toggleSelected(order.id)} aria-label={`Select ${order.orderNumber}`} />
+                    </td>
                     <td>
                       <strong>{order.orderNumber}</strong>
                       <small>{new Date(order.createdAt).toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" })}</small>
@@ -428,6 +565,9 @@ export function AdminOrders() {
                 <span>Order details</span>
                 <h2>{selected.orderNumber}</h2>
               </div>
+              <button type="button" className="admin-detail-print" onClick={() => setPrintingOrder(selected)} title="Print packing slip">
+                <Printer size={16} /> Packing slip
+              </button>
               <button type="button" onClick={() => setSelected(null)} aria-label="Close order details">Close</button>
             </div>
 
@@ -447,7 +587,13 @@ export function AdminOrders() {
               ))}
               <dl>
                 <div><dt>Subtotal</dt><dd>{formatMoney(selected.subtotal)}</dd></div>
-                <div><dt>Delivery</dt><dd>{formatMoney(selected.shippingFee)}</dd></div>
+                {selected.discount ? (
+                  <div>
+                    <dt>Discount{selected.promotion ? ` (${selected.promotion.code})` : ""}</dt>
+                    <dd>-{formatMoney(selected.discount)}</dd>
+                  </div>
+                ) : null}
+                <div><dt>Delivery{selected.deliveryMethodName ? ` · ${selected.deliveryMethodName}` : ""}</dt><dd>{formatMoney(selected.shippingFee)}</dd></div>
                 <div><dt>Total</dt><dd>{formatMoney(selected.total)}</dd></div>
               </dl>
             </div>
@@ -468,7 +614,14 @@ export function AdminOrders() {
                 </label>
               </div>
               <label>Payment method
-                <input name="paymentMethod" defaultValue={selected.paymentMethod ?? "Cash on delivery"} />
+                <select name="paymentMethod" defaultValue={selected.paymentMethod ?? "Cash on delivery"}>
+                  {!catalog?.checkoutMethods.some((method) => method.type === "PAYMENT" && method.isActive && method.name === selected.paymentMethod) && selected.paymentMethod ? (
+                    <option value={selected.paymentMethod}>{selected.paymentMethod} (inactive)</option>
+                  ) : null}
+                  {catalog?.checkoutMethods.filter((method) => method.type === "PAYMENT" && method.isActive).map((method) => (
+                    <option key={method.id} value={method.name}>{method.name}</option>
+                  ))}
+                </select>
               </label>
               <div className="form-grid">
                 <label>Courier
@@ -494,7 +647,8 @@ export function AdminOrders() {
                 </button>
               </div>
             </form> : null}
-            {can("orders.delete") && ["PLACED", "CONFIRMED", "PACKED"].includes(selected.status) ? <button className="danger-action admin-cancel-order" type="button" disabled={saving} onClick={() => void cancelOrder(selected)}>Cancel order</button> : null}
+            {can("orders.delete") && ["PLACED", "CONFIRMED", "PACKED"].includes(selected.status) ? <button className="danger-action admin-cancel-order" type="button" disabled={saving} onClick={() => setCancelTarget(selected)}>Cancel order</button> : null}
+            {can("refunds.write") && ["PAID", "PARTIALLY_REFUNDED"].includes(selected.paymentStatus ?? "") ? <button className="secondary-action" type="button" disabled={saving} onClick={() => setRefundTarget(selected)}>Issue refund</button> : null}
 
             <div className="admin-timeline">
               <h3>Tracking history</h3>
@@ -508,6 +662,10 @@ export function AdminOrders() {
           </aside>
         ) : null}
       </div>
+
+      {printingOrder ? (
+        <PackingSlip order={printingOrder} settings={settings} onClose={() => setPrintingOrder(null)} />
+      ) : null}
     </div>
   );
 }

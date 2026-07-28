@@ -3,7 +3,9 @@
 import Link from "next/link";
 import {
   BadgeCheck,
+  Bell,
   ChevronLeft,
+  ChevronRight,
   CreditCard,
   Heart,
   Minus,
@@ -27,6 +29,7 @@ import {
   fetchProductReviews,
   isBaseProductEnabled,
   submitProductReview,
+  subscribeStockAlert,
   trackAnalyticsEvent
 } from "../lib/catalog";
 import { useAuth } from "./AuthContext";
@@ -75,6 +78,7 @@ export function ProductDetails({
     availableQuantity(initialProduct, initialVariant, initialQuantity)
   );
   const [notice, setNotice] = useState("");
+  const [stockAlertRequested, setStockAlertRequested] = useState(false);
   const [reviews, setReviews] = useState<Review[]>(initialProduct.reviews ?? []);
   const [myReview, setMyReview] = useState<Review | null>(null);
   const [reviewNotice, setReviewNotice] = useState("");
@@ -167,6 +171,14 @@ export function ProductDetails({
   const selectedDelivery = catalog.checkoutMethods.find(
     (method) => method.type === "DELIVERY" && method.isActive
   );
+  const activeImageIndex = galleryImages.findIndex((image) => image.url === activeImage);
+
+  function goToImage(delta: number) {
+    if (!galleryImages.length) return;
+    const current = activeImageIndex === -1 ? 0 : activeImageIndex;
+    const next = (current + delta + galleryImages.length) % galleryImages.length;
+    setActiveImage(galleryImages[next].url);
+  }
   const averageRating =
     reviews.length > 0
       ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length
@@ -176,6 +188,20 @@ export function ProductDetails({
     setQuantity((current) =>
       Math.min(Math.max(current + delta, 1), Math.max(availableInventory, 1))
     );
+  }
+
+  async function notifyStock() {
+    if (!user) {
+      setNotice("Sign in to get notified when this is back in stock.");
+      return;
+    }
+    try {
+      await subscribeStockAlert(product.id, selectedVariant?.id);
+      setStockAlertRequested(true);
+      setNotice("We'll email you when this is back in stock.");
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : "Could not set up the stock alert.");
+    }
   }
 
   async function submitReview(event: FormEvent<HTMLFormElement>) {
@@ -264,6 +290,26 @@ export function ProductDetails({
             ) : (
               <ProductArt product={product} />
             )}
+            {galleryImages.length > 1 ? (
+              <>
+                <button
+                  type="button"
+                  className="horizontal-rail-control gallery-nav prev"
+                  onClick={() => goToImage(-1)}
+                  aria-label="Previous image"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                <button
+                  type="button"
+                  className="horizontal-rail-control gallery-nav next"
+                  onClick={() => goToImage(1)}
+                  aria-label="Next image"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -349,18 +395,30 @@ export function ProductDetails({
             </div>
           </div>
           <div className="detail-actions">
-            <button
-              className="secondary-action"
-              type="button"
-              disabled={!canPurchase}
-              onClick={() => {
-                addItem(product, quantity, selectedVariant);
-                setNotice(`${quantity} x ${product.name} added to your bag.`);
-              }}
-            >
-              <ShoppingBag size={18} />
-              {availableInventory < 1 ? "Out of stock" : "Add to cart"}
-            </button>
+            {availableInventory < 1 ? (
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={stockAlertRequested}
+                onClick={() => void notifyStock()}
+              >
+                <Bell size={18} />
+                {stockAlertRequested ? "We'll email you" : "Notify me when back in stock"}
+              </button>
+            ) : (
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={!canPurchase}
+                onClick={() => {
+                  addItem(product, quantity, selectedVariant);
+                  setNotice(`${quantity} x ${product.name} added to your bag.`);
+                }}
+              >
+                <ShoppingBag size={18} />
+                Add to cart
+              </button>
+            )}
             <button
               className={`primary-action ${canPurchase ? "" : "disabled-link"}`}
               type="button"
@@ -539,8 +597,12 @@ export function ProductDetails({
         <button
           className="primary-action"
           type="button"
-          disabled={!canPurchase}
+          disabled={availableInventory < 1 ? stockAlertRequested : !canPurchase}
           onClick={() => {
+            if (availableInventory < 1) {
+              void notifyStock();
+              return;
+            }
             if (requiresVariant && !selectedVariant) {
               document.querySelector(".variant-picker")?.scrollIntoView({
                 behavior: "smooth",
@@ -552,12 +614,12 @@ export function ProductDetails({
             setNotice(`${quantity} x ${product.name} added to your bag.`);
           }}
         >
-          <ShoppingBag size={17} />
-          {requiresVariant && !selectedVariant
-            ? "Choose option"
-            : availableInventory > 0
-              ? "Add to cart"
-              : "Out of stock"}
+          {availableInventory < 1 ? <Bell size={17} /> : <ShoppingBag size={17} />}
+          {availableInventory < 1
+            ? stockAlertRequested ? "We'll email you" : "Notify me"
+            : requiresVariant && !selectedVariant
+              ? "Choose option"
+              : "Add to cart"}
         </button>
       </div>
 

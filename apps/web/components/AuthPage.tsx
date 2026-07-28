@@ -115,6 +115,9 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
               </button>
             </div>
           </label>
+          {mode === "login" ? (
+            <a className="text-link" href="/reset-password">Forgot password?</a>
+          ) : null}
           {error ? <p className="form-error">{error}</p> : null}
           <button className="primary-action full" type="submit" disabled={submitting}>
             {submitting ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}

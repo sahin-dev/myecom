@@ -21,12 +21,15 @@ import {
   updateAdminComboDeal
 } from "../../lib/catalog";
 import {
+  AdminConfirmDialog,
   AdminError,
   AdminLoading,
   AdminMultiUploadField,
   AdminPageTitle,
   AdminSectionHeader,
-  StatusBadge
+  AdminToast,
+  StatusBadge,
+  useAdminToast
 } from "./AdminShared";
 
 function imageUrls(product: Product) {
@@ -45,8 +48,9 @@ export function AdminCombos() {
   const [componentSearch, setComponentSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
+  const { message, kind, notify } = useAdminToast();
   const [error, setError] = useState("");
+  const [archiveTarget, setArchiveTarget] = useState<Product | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -176,7 +180,7 @@ export function AdminCombos() {
   async function createCombo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (componentIds.length < 2) {
-      setMessage("Select at least two products for this combo.");
+      notify("Select at least two products for this combo.", "error");
       return;
     }
     setSaving(true);
@@ -197,10 +201,10 @@ export function AdminCombos() {
             }
           : current
       );
-      setMessage(`${combo.name} was created.`);
+      notify(`${combo.name} was created.`);
       closeEditor();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Combo deal could not be created.");
+      notify(caught instanceof Error ? caught.message : "Combo deal could not be created.", "error");
     } finally {
       setSaving(false);
     }
@@ -210,7 +214,7 @@ export function AdminCombos() {
     event.preventDefault();
     if (!selected) return;
     if (componentIds.length < 2) {
-      setMessage("Select at least two products for this combo.");
+      notify("Select at least two products for this combo.", "error");
       return;
     }
     setSaving(true);
@@ -222,23 +226,25 @@ export function AdminCombos() {
       mergeCombo(combo);
       setSelected(combo);
       setImages(imageUrls(combo));
-      setMessage(`${combo.name} was updated.`);
+      notify(`${combo.name} was updated.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Combo deal could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Combo deal could not be updated.", "error");
     } finally {
       setSaving(false);
     }
   }
 
   async function archiveCombo() {
-    if (!selected || !window.confirm(`Archive ${selected.name}?`)) return;
+    if (!selected) return;
     try {
       const result = await archiveAdminComboDeal(selected.id);
       mergeCombo(result.combo);
-      setMessage(`${selected.name} was archived.`);
+      notify(`${selected.name} was archived.`);
       closeEditor();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Combo deal could not be archived.");
+      notify(caught instanceof Error ? caught.message : "Combo deal could not be archived.", "error");
+    } finally {
+      setArchiveTarget(null);
     }
   }
 
@@ -275,7 +281,17 @@ export function AdminCombos() {
         <div><small>Average saving</small><strong>{summary.averageSaving}%</strong></div>
       </section>
 
-      {message ? <p className="admin-message" role="status">{message}</p> : null}
+      <AdminToast message={message} kind={kind} />
+
+      {archiveTarget ? (
+        <AdminConfirmDialog
+          title={`Archive ${archiveTarget.name}?`}
+          body="It will disappear from the storefront."
+          confirmLabel="Archive"
+          onCancel={() => setArchiveTarget(null)}
+          onConfirm={() => void archiveCombo()}
+        />
+      ) : null}
 
       <div className={`admin-inventory-workspace admin-combo-workspace ${selected || creating ? "has-detail" : ""}`}>
         <section>
@@ -358,7 +374,7 @@ export function AdminCombos() {
                 label="Combo images"
                 values={images}
                 onChange={setImages}
-                onMessage={setMessage}
+                onMessage={notify}
                 maxFiles={6}
                 recommendedDimensions="1200 x 900 px"
               />
@@ -408,7 +424,7 @@ export function AdminCombos() {
 
               <div className="admin-editor-sticky-actions">
                 {selected ? (
-                  <button className="secondary-action" type="button" onClick={() => void archiveCombo()}>
+                  <button className="secondary-action" type="button" onClick={() => setArchiveTarget(selected)}>
                     <Trash2 size={16} /> Archive
                   </button>
                 ) : <button className="secondary-action" type="button" onClick={closeEditor}>Cancel</button>}

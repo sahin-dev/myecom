@@ -15,6 +15,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AdminCatalog,
   Product,
+  UnitType,
   addProductImage,
   adjustInventory,
   createAdminResource,
@@ -24,20 +25,126 @@ import {
   deleteProductVariant,
   fetchAdminCatalog,
   formatMoney,
+  unitTypeLabels,
   updateProductImage,
   updateProductVariant,
   updateAdminProduct
 } from "../../lib/catalog";
 import { useAuth } from "../AuthContext";
 import {
+  AdminConfirmDialog,
   AdminError,
   AdminLoading,
   AdminMultiUploadField,
   AdminPageTitle,
   AdminSectionHeader,
+  AdminToast,
   AdminUploadField,
-  StatusBadge
+  StatusBadge,
+  useAdminToast
 } from "./AdminShared";
+
+const unitOptions: UnitType[] = ["kg", "g", "l", "ml", "ft", "in", "m", "pcs", "dozen", "pack"];
+
+function composeVariantName(unitType: string, unitValue: string, customName: string) {
+  if (!unitType) return customName.trim();
+  const label = unitTypeLabels[unitType as UnitType] ?? unitType;
+  const value = unitValue.trim();
+  return value ? `${value} ${label}` : label;
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+      } else field += char;
+    } else if (char === '"') {
+      inQuotes = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      field = "";
+      if (row.some((cell) => cell.trim() !== "")) rows.push(row);
+      row = [];
+    } else {
+      field += char;
+    }
+  }
+  if (field || row.length) {
+    row.push(field);
+    if (row.some((cell) => cell.trim() !== "")) rows.push(row);
+  }
+  return rows;
+}
+
+type CsvProductRow = {
+  line: number;
+  name: string;
+  description: string;
+  price: number;
+  costPrice?: number;
+  compareAt?: number;
+  inventory: number;
+  badge: string;
+  tags: string[];
+  brandId?: string;
+  categoryId?: string;
+  errors: string[];
+};
+
+function parseProductCsv(text: string, catalog: AdminCatalog): CsvProductRow[] {
+  const rows = parseCsv(text);
+  if (!rows.length) return [];
+  const header = rows[0].map((cell) => cell.trim().toLowerCase());
+  const col = (key: string) => header.indexOf(key);
+  const idx = {
+    name: col("name"),
+    description: col("description"),
+    price: col("price"),
+    costPrice: col("costprice"),
+    compareAt: col("compareat"),
+    inventory: col("inventory"),
+    badge: col("badge"),
+    tags: col("tags"),
+    brand: col("brand"),
+    category: col("category")
+  };
+  return rows.slice(1).map((cells, index) => {
+    const get = (i: number) => (i >= 0 ? (cells[i] ?? "").trim() : "");
+    const name = get(idx.name);
+    const price = Number(get(idx.price));
+    const inventory = Number(get(idx.inventory) || "0");
+    const errors: string[] = [];
+    if (!name) errors.push("Name is required.");
+    if (!get(idx.price) || Number.isNaN(price) || price <= 0) errors.push("Price must be a positive number.");
+    if (get(idx.inventory) && Number.isNaN(inventory)) errors.push("Inventory must be a number.");
+    const brandName = get(idx.brand).toLowerCase();
+    const categoryName = get(idx.category).toLowerCase();
+    return {
+      line: index + 2,
+      name,
+      description: get(idx.description) || name,
+      price,
+      costPrice: get(idx.costPrice) ? Number(get(idx.costPrice)) : undefined,
+      compareAt: get(idx.compareAt) ? Number(get(idx.compareAt)) : undefined,
+      inventory: Number.isNaN(inventory) ? 0 : inventory,
+      badge: get(idx.badge),
+      tags: get(idx.tags) ? get(idx.tags).split("|").map((tag) => tag.trim()).filter(Boolean) : [],
+      brandId: catalog.brands.find((brand) => brand.name.toLowerCase() === brandName)?.id,
+      categoryId: catalog.categories.find((category) => category.name.toLowerCase() === categoryName)?.id,
+      errors
+    };
+  });
+}
 
 export function AdminInventory() {
   const { user } = useAuth();
@@ -51,8 +158,19 @@ export function AdminInventory() {
   const [stockFilter, setStockFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
+  const { message, kind, notify } = useAdminToast();
+  const notifyUpload = useCallback(
+    (text: string) => notify(text, /could not|failed|unavailable/i.test(text) ? "error" : "success"),
+    [notify]
+  );
   const [error, setError] = useState("");
+  const [archiveTarget, setArchiveTarget] = useState<Product | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkArchiveOpen, setBulkArchiveOpen] = useState(false);
+  const [csvRows, setCsvRows] = useState<CsvProductRow[]>([]);
+  const [csvFileName, setCsvFileName] = useState("");
+  const [importing, setImporting] = useState(false);
   const hasPermission = (permission: string) =>
     user?.permissions.includes("*") || user?.permissions.includes(permission);
   const canManageCatalog =
@@ -139,9 +257,9 @@ export function AdminInventory() {
           : current
       );
       setSelected(updated);
-      setMessage(`${updated.name} was updated.`);
+      notify(`${updated.name} was updated.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Product update failed.");
+      notify(caught instanceof Error ? caught.message : "Product update failed.", "error");
     } finally {
       setSaving(false);
     }
@@ -163,9 +281,9 @@ export function AdminInventory() {
           : current
       );
       setSelected(updated);
-      setMessage("Original product option updated.");
+      notify("Original product option updated.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Original product option could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Original product option could not be updated.", "error");
     } finally {
       setSaving(false);
     }
@@ -199,12 +317,12 @@ export function AdminInventory() {
         tags: String(form.get("tags") || "").split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean)
       });
       setCatalog((current) => current ? { ...current, products: [product, ...current.products] } : current);
-      setMessage(`${product.name} was created.`);
+      notify(`${product.name} was created.`);
       setProductImages([]);
       setCreating(false);
       formElement.reset();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Product could not be created.");
+      notify(caught instanceof Error ? caught.message : "Product could not be created.", "error");
     }
   }
 
@@ -213,14 +331,24 @@ export function AdminInventory() {
     if (!selected) return;
     const form = event.currentTarget;
     const data = new FormData(form);
+    const unitType = String(data.get("unitType") || "");
+    const unitValue = String(data.get("unitValue") || "");
+    const customName = String(data.get("customName") || "");
+    const name = composeVariantName(unitType, unitValue, customName);
+    if (!name) {
+      notify("Choose a unit and quantity, or enter a custom label, for this option.", "error");
+      return;
+    }
     try {
       const cost = String(data.get("costPrice") || "");
       const created = await createProductVariant(selected.id, {
-        name: String(data.get("name")),
+        name,
         sku: String(data.get("sku")),
         price: Number(data.get("price")),
         costPrice: cost ? Number(cost) : undefined,
-        inventory: Number(data.get("inventory") || 0)
+        inventory: Number(data.get("inventory") || 0),
+        unitType: unitType ? (unitType as UnitType) : undefined,
+        unitValue: unitType && unitValue ? Number(unitValue) : undefined
       });
       const updated = { ...selected, variants: [...(selected.variants ?? []), created] };
       setSelected(updated);
@@ -229,9 +357,9 @@ export function AdminInventory() {
         products: current.products.map((item) => item.id === updated.id ? updated : item)
       } : current);
       form.reset();
-      setMessage(`${created.name} option added.`);
+      notify(`${created.name} option added.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Product option could not be added.");
+      notify(caught instanceof Error ? caught.message : "Product option could not be added.", "error");
     }
   }
 
@@ -252,16 +380,16 @@ export function AdminInventory() {
       setCatalog(nextCatalog);
       setSelected(nextCatalog.products.find((item) => item.id === selected.id) ?? null);
       form.reset();
-      setMessage("Inventory adjustment posted to the ledger.");
+      notify("Inventory adjustment posted to the ledger.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Inventory could not be adjusted.");
+      notify(caught instanceof Error ? caught.message : "Inventory could not be adjusted.", "error");
     }
   }
 
   async function addGalleryImage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || !galleryImage) {
-      setMessage("Upload an image before adding it to the gallery.");
+      notify("Upload an image before adding it to the gallery.", "error");
       return;
     }
     const data = new FormData(event.currentTarget);
@@ -278,9 +406,9 @@ export function AdminInventory() {
         products: current.products.map((item) => item.id === updated.id ? updated : item)
       } : current);
       setGalleryImage("");
-      setMessage("Gallery image added.");
+      notify("Gallery image added.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Gallery image could not be added.");
+      notify(caught instanceof Error ? caught.message : "Gallery image could not be added.", "error");
     }
   }
 
@@ -294,9 +422,9 @@ export function AdminInventory() {
         ...current,
         products: current.products.map((item) => item.id === updated.id ? updated : item)
       } : current);
-      setMessage("Gallery image removed.");
+      notify("Gallery image removed.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Gallery image could not be removed.");
+      notify(caught instanceof Error ? caught.message : "Gallery image could not be removed.", "error");
     }
   }
 
@@ -316,9 +444,9 @@ export function AdminInventory() {
           .sort((a, b) => a.position - b.position)
       };
       setSelected(updated);
-      setMessage("Gallery details updated.");
+      notify("Gallery details updated.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Gallery details could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Gallery details could not be updated.", "error");
     }
   }
 
@@ -326,13 +454,19 @@ export function AdminInventory() {
     event.preventDefault();
     if (!selected) return;
     const data = new FormData(event.currentTarget);
+    const unitType = String(data.get("unitType") || "");
+    const unitValue = String(data.get("unitValue") || "");
+    const customName = String(data.get("customName") || "");
+    const name = composeVariantName(unitType, unitValue, customName);
     try {
       const updatedVariant = await updateProductVariant(selected.id, id, {
-        name: String(data.get("name")),
+        name: name || undefined,
         sku: String(data.get("sku")),
         price: Number(data.get("price")),
         costPrice: Number(data.get("costPrice") || 0),
         compareAt: Number(data.get("compareAt") || 0),
+        unitType: unitType ? (unitType as UnitType) : null,
+        unitValue: unitType && unitValue ? Number(unitValue) : null,
         isActive: data.get("isActive") === "on"
       });
       const updated = {
@@ -340,9 +474,9 @@ export function AdminInventory() {
         variants: (selected.variants ?? []).map((item) => item.id === id ? updatedVariant : item)
       };
       setSelected(updated);
-      setMessage(`${updatedVariant.name} updated.`);
+      notify(`${updatedVariant.name} updated.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Product option could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Product option could not be updated.", "error");
     }
   }
 
@@ -355,22 +489,110 @@ export function AdminInventory() {
         ...current,
         variants: (current.variants ?? []).map((item) => item.id === id ? { ...item, isActive: false } : item)
       } : current);
-      setMessage("Product option removed or archived.");
+      notify("Product option removed or archived.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Product option could not be removed.");
+      notify(caught instanceof Error ? caught.message : "Product option could not be removed.", "error");
     }
   }
 
   async function archiveProduct() {
-    if (!selected || !window.confirm(`Archive ${selected.name}?`)) return;
+    if (!selected) return;
     try {
       await deleteAdminResource("products", selected.id);
       await load();
       setSelected(null);
-      setMessage("Product archived.");
+      notify("Product archived.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Product could not be archived.");
+      notify(caught instanceof Error ? caught.message : "Product could not be archived.", "error");
+    } finally {
+      setArchiveTarget(null);
     }
+  }
+
+  function toggleProductSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllProducts() {
+    setSelectedIds((current) =>
+      current.size === products.length ? new Set() : new Set(products.map((product) => product.id))
+    );
+  }
+
+  async function applyBulkFlag(flag: "isTrending" | "isNew" | "isBestSelling") {
+    setBulkApplying(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => updateAdminProduct(id, { [flag]: true })));
+      notify(`${selectedIds.size} product${selectedIds.size === 1 ? "" : "s"} updated.`);
+      setSelectedIds(new Set());
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Bulk update failed.", "error");
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  async function bulkArchive() {
+    setBulkApplying(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => deleteAdminResource("products", id)));
+      notify(`${selectedIds.size} product${selectedIds.size === 1 ? "" : "s"} archived.`);
+      setSelectedIds(new Set());
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Bulk archive failed.", "error");
+    } finally {
+      setBulkApplying(false);
+      setBulkArchiveOpen(false);
+    }
+  }
+
+  function handleCsvFile(file?: File) {
+    if (!file || !catalog) return;
+    setCsvFileName(file.name);
+    file.text().then((text) => setCsvRows(parseProductCsv(text, catalog)));
+  }
+
+  async function importCsvRows() {
+    const validRows = csvRows.filter((row) => !row.errors.length);
+    if (!validRows.length) return;
+    setImporting(true);
+    let imported = 0;
+    let failed = 0;
+    for (const row of validRows) {
+      try {
+        await createAdminResource<Product>("products", {
+          name: row.name,
+          description: row.description,
+          price: row.price,
+          costPrice: row.costPrice,
+          compareAt: row.compareAt,
+          inventory: row.inventory,
+          badge: row.badge || undefined,
+          tags: row.tags,
+          brandId: row.brandId,
+          categoryId: row.categoryId
+        });
+        imported += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setImporting(false);
+    setCsvRows([]);
+    setCsvFileName("");
+    notify(
+      failed
+        ? `${imported} product${imported === 1 ? "" : "s"} imported, ${failed} failed.`
+        : `${imported} product${imported === 1 ? "" : "s"} imported.`,
+      failed ? "error" : "success"
+    );
+    await load();
   }
 
   if (loading && !catalog) return <AdminLoading label="Loading products and stock..." />;
@@ -390,6 +612,17 @@ export function AdminInventory() {
                 <Plus size={17} /> Add product
               </button>
             ) : null}
+            {canManageCatalog ? (
+              <label className="secondary-action">
+                <PackagePlus size={17} /> Import CSV
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  style={{ display: "none" }}
+                  onChange={(event) => { handleCsvFile(event.target.files?.[0]); event.target.value = ""; }}
+                />
+              </label>
+            ) : null}
             <button className="admin-icon-button" type="button" onClick={() => void load()} title="Refresh inventory">
               <RefreshCw size={17} />
             </button>
@@ -405,7 +638,65 @@ export function AdminInventory() {
         <div><small>Retail stock value</small><strong>{formatMoney(summary.retailValue)}</strong></div>
       </section>
 
-      {message ? <p className="admin-message">{message}</p> : null}
+      <AdminToast message={message} kind={kind} />
+
+      {csvRows.length ? (
+        <section className="admin-data-panel">
+          <AdminSectionHeader
+            title={`Import preview — ${csvFileName}`}
+            description={`${csvRows.filter((row) => !row.errors.length).length} of ${csvRows.length} rows are ready to import. Columns: name, description, price, costPrice, compareAt, inventory, badge, tags (pipe-separated), brand, category.`}
+          />
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead><tr><th>Line</th><th>Name</th><th>Price</th><th>Inventory</th><th>Brand</th><th>Category</th><th>Status</th></tr></thead>
+              <tbody>
+                {csvRows.map((row) => (
+                  <tr key={row.line}>
+                    <td>{row.line}</td>
+                    <td>{row.name || "—"}</td>
+                    <td>{Number.isNaN(row.price) ? "—" : formatMoney(row.price)}</td>
+                    <td>{row.inventory}</td>
+                    <td>{row.brandId ? "Matched" : "—"}</td>
+                    <td>{row.categoryId ? "Matched" : "—"}</td>
+                    <td>{row.errors.length ? <span className="admin-cell-alert">{row.errors.join(" ")}</span> : <StatusBadge value="ACTIVE" kind="product" />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="admin-row-actions">
+            <button type="button" className="secondary-action" onClick={() => { setCsvRows([]); setCsvFileName(""); }}>Cancel</button>
+            <button
+              type="button"
+              className="primary-action"
+              disabled={importing || !csvRows.some((row) => !row.errors.length)}
+              onClick={() => void importCsvRows()}
+            >
+              {importing ? "Importing..." : `Import ${csvRows.filter((row) => !row.errors.length).length} products`}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {archiveTarget ? (
+        <AdminConfirmDialog
+          title={`Archive ${archiveTarget.name}?`}
+          body="It will disappear from the storefront. Products already ordered are unaffected."
+          confirmLabel="Archive"
+          onCancel={() => setArchiveTarget(null)}
+          onConfirm={() => void archiveProduct()}
+        />
+      ) : null}
+
+      {bulkArchiveOpen ? (
+        <AdminConfirmDialog
+          title={`Archive ${selectedIds.size} product${selectedIds.size === 1 ? "" : "s"}?`}
+          body="They will disappear from the storefront. Products already ordered are unaffected."
+          confirmLabel="Archive"
+          onCancel={() => setBulkArchiveOpen(false)}
+          onConfirm={() => void bulkArchive()}
+        />
+      ) : null}
 
       <div className={`admin-inventory-workspace ${selected || creating ? "has-detail" : ""}`}>
         <section>
@@ -423,9 +714,23 @@ export function AdminInventory() {
             </select>
           </div>
           <AdminSectionHeader title={`${products.length} products`} description="Select a product to update stock, cost, visibility, or merchandising." />
+          {canManageCatalog && selectedIds.size ? (
+            <div className="admin-bulk-toolbar">
+              <span>{selectedIds.size} selected</span>
+              <button type="button" className="secondary-action" disabled={bulkApplying} onClick={() => void applyBulkFlag("isTrending")}>Mark trending</button>
+              <button type="button" className="secondary-action" disabled={bulkApplying} onClick={() => void applyBulkFlag("isNew")}>Mark new</button>
+              <button type="button" className="secondary-action" disabled={bulkApplying} onClick={() => void applyBulkFlag("isBestSelling")}>Mark best selling</button>
+              <button type="button" className="danger-action" disabled={bulkApplying} onClick={() => setBulkArchiveOpen(true)}>Archive</button>
+              <button type="button" className="text-link" onClick={() => setSelectedIds(new Set())}>Clear</button>
+            </div>
+          ) : null}
           <div className="admin-table-wrap">
             <table className="admin-table admin-products-table">
-              <thead><tr><th>Product</th><th>Status</th><th>Price</th><th>Cost</th><th>Stock</th><th /></tr></thead>
+              <thead><tr>
+                <th aria-label="Select all">
+                  <input type="checkbox" checked={Boolean(products.length) && selectedIds.size === products.length} onChange={toggleSelectAllProducts} />
+                </th>
+                <th>Product</th><th>Status</th><th>Price</th><th>Cost</th><th>Stock</th><th /></tr></thead>
               <tbody>
                 {products.map((product) => (
                   <tr
@@ -440,6 +745,9 @@ export function AdminInventory() {
                       }
                     }}
                   >
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <input type="checkbox" checked={selectedIds.has(product.id)} onChange={() => toggleProductSelected(product.id)} aria-label={`Select ${product.name}`} />
+                    </td>
                     <td>
                       <div className="admin-product-cell">
                         <span>{product.imageUrl ? <img src={product.imageUrl} alt="" /> : <Boxes size={19} />}</span>
@@ -503,7 +811,7 @@ export function AdminInventory() {
                 <label><input type="checkbox" name="isCertified" defaultChecked={selected.isCertified} /> Certified</label>
               </div>
               <div className="admin-editor-sticky-actions">
-                <button className="secondary-action" type="button" onClick={() => void archiveProduct()}><Trash2 size={16} /> Archive</button>
+                <button className="secondary-action" type="button" onClick={() => setArchiveTarget(selected)}><Trash2 size={16} /> Archive</button>
                 <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : "Save product"}</button>
               </div>
             </form> : null}
@@ -566,9 +874,17 @@ export function AdminInventory() {
                 {selected.variants?.map((variant) => (
                   <form key={variant.id} onSubmit={(event) => void editVariant(event, variant.id)}>
                     <div className="form-grid">
-                      <label>Option name<input name="name" defaultValue={variant.name} required /></label>
-                      <label>SKU<input name="sku" defaultValue={variant.sku} required /></label>
+                      <label>Unit
+                        <select name="unitType" defaultValue={variant.unitType ?? ""}>
+                          <option value="">Custom label</option>
+                          {unitOptions.map((unit) => <option key={unit} value={unit}>{unitTypeLabels[unit]}</option>)}
+                        </select>
+                      </label>
+                      <label>Quantity<input name="unitValue" type="number" min="0" step="any" defaultValue={variant.unitValue ?? ""} placeholder="e.g. 500" /></label>
                     </div>
+                    <label>Custom label<input name="customName" defaultValue={variant.unitType ? "" : variant.name} placeholder="e.g. Small, Original" /></label>
+                    <small className="form-note">Displayed as: {variant.name}</small>
+                    <label>SKU<input name="sku" defaultValue={variant.sku} required /></label>
                     <div className="form-grid">
                       <label>Selling price<input name="price" type="number" min="0" step="0.01" defaultValue={variant.price} required /></label>
                       <label>Unit cost<input name="costPrice" type="number" min="0" step="0.01" defaultValue={variant.costPrice ?? ""} /></label>
@@ -583,9 +899,16 @@ export function AdminInventory() {
             ) : <p className="muted-copy">No size or pack options yet.</p>}
             <form className="admin-editor-form" onSubmit={addVariant}>
               <div className="form-grid">
-                <label>Option name<input name="name" placeholder="500 g" required /></label>
-                <label>SKU<input name="sku" placeholder="HONEY-500" required /></label>
+                <label>Unit
+                  <select name="unitType" defaultValue="">
+                    <option value="">Custom label</option>
+                    {unitOptions.map((unit) => <option key={unit} value={unit}>{unitTypeLabels[unit]}</option>)}
+                  </select>
+                </label>
+                <label>Quantity<input name="unitValue" type="number" min="0" step="any" placeholder="e.g. 500" /></label>
               </div>
+              <label>Custom label<input name="customName" placeholder="e.g. Small, Original — used when Unit is Custom" /></label>
+              <label>SKU<input name="sku" placeholder="HONEY-500" required /></label>
               <div className="form-grid">
                 <label>Price<input name="price" type="number" min="0" step="0.01" required /></label>
                 <label>Unit cost<input name="costPrice" type="number" min="0" step="0.01" /></label>
@@ -614,7 +937,7 @@ export function AdminInventory() {
               </div>
             ) : null}
             <form className="admin-editor-form" onSubmit={addGalleryImage}>
-              <AdminUploadField label="Gallery image" value={galleryImage} onChange={setGalleryImage} onMessage={setMessage} recommendedDimensions="1200 x 1200 px" />
+              <AdminUploadField label="Gallery image" value={galleryImage} onChange={setGalleryImage} onMessage={notifyUpload} recommendedDimensions="1200 x 1200 px" />
               <label>Alternative text<input name="alt" placeholder={selected.name} /></label>
               <button className="secondary-action full" type="submit">Add to gallery</button>
             </form></> : null}
@@ -649,7 +972,7 @@ export function AdminInventory() {
               </label>
               <label>Brand<select name="brandId" defaultValue=""><option value="">No brand</option>{catalog.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label>
               <label>Category<select name="categoryId" defaultValue=""><option value="">No category</option>{catalog.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-              <AdminMultiUploadField label="Product images" values={productImages} onChange={setProductImages} onMessage={setMessage} recommendedDimensions="1200 x 1200 px" />
+              <AdminMultiUploadField label="Product images" values={productImages} onChange={setProductImages} onMessage={notifyUpload} recommendedDimensions="1200 x 1200 px" />
               <label>Badge<input name="badge" /></label>
               <label>Tags<input name="tags" placeholder="honey, organic, gift" /></label>
               <div className="check-row two">

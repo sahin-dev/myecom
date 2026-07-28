@@ -15,6 +15,9 @@ import { ExperienceController } from "./experience/experience.controller";
 import { ExperienceService } from "./experience/experience.service";
 import { PrismaService } from "./prisma/prisma.service";
 import { UploadsController } from "./uploads/uploads.controller";
+import { PaymentsController } from "./payments/payments.controller";
+import { BkashService } from "./payments/bkash.service";
+import { MailService } from "./mail/mail.service";
 
 @Module({
   imports: [
@@ -31,7 +34,13 @@ import { UploadsController } from "./uploads/uploads.controller";
       })
     })
   ],
-  controllers: [AuthController, EcommerceController, ExperienceController, UploadsController],
+  controllers: [
+    AuthController,
+    EcommerceController,
+    ExperienceController,
+    UploadsController,
+    PaymentsController
+  ],
   providers: [
     AuthService,
     AccessControlService,
@@ -40,7 +49,9 @@ import { UploadsController } from "./uploads/uploads.controller";
     PrismaService,
     JwtAuthGuard,
     OptionalJwtAuthGuard,
-    AdminGuard
+    AdminGuard,
+    BkashService,
+    MailService
   ]
 })
 export class AppModule {}

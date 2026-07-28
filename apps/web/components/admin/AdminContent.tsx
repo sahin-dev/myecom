@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   CreditCard,
+  FileText,
   ImagePlus,
   Layers3,
   LayoutTemplate,
@@ -20,7 +21,7 @@ import {
   Trash2,
   Truck
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AdminCatalog,
   Banner,
@@ -28,25 +29,31 @@ import {
   Category,
   CheckoutMethod,
   HomeSection,
+  InfoPageContent,
   Testimonial,
   createAdminResource,
   deleteAdminResource,
   fetchAdminCatalog,
+  fetchInfoPages,
   updateAdminResource,
+  updateInfoPage,
   updateSiteSettings
 } from "../../lib/catalog";
 import { useSiteSettings } from "../SiteSettingsContext";
 import {
+  AdminConfirmDialog,
   AdminError,
   AdminForm,
   AdminLoading,
   AdminPageTitle,
   AdminSectionHeader,
+  AdminToast,
   AdminUploadField,
-  StatusBadge
+  StatusBadge,
+  useAdminToast
 } from "./AdminShared";
 
-type ContentMode = "identity" | "homepage" | "banners" | "brands" | "categories" | "testimonials" | "checkout";
+type ContentMode = "identity" | "homepage" | "banners" | "brands" | "categories" | "testimonials" | "checkout" | "pages";
 type Editable = HomeSection | (Banner & { isActive: boolean }) | Brand | Category | Testimonial | CheckoutMethod;
 
 const modes: Array<{ id: ContentMode; label: string; icon: React.ReactNode }> = [
@@ -56,8 +63,18 @@ const modes: Array<{ id: ContentMode; label: string; icon: React.ReactNode }> = 
   { id: "brands", label: "Brands", icon: <Store size={17} /> },
   { id: "categories", label: "Categories", icon: <Layers3 size={17} /> },
   { id: "testimonials", label: "Homepage reviews", icon: <Star size={17} /> },
-  { id: "checkout", label: "Checkout methods", icon: <CreditCard size={17} /> }
+  { id: "checkout", label: "Checkout methods", icon: <CreditCard size={17} /> },
+  { id: "pages", label: "Info pages", icon: <FileText size={17} /> }
 ];
+
+const infoPageTitles: Record<string, string> = {
+  about: "About us",
+  contact: "Contact us",
+  delivery: "Delivery information",
+  returns: "Returns and refunds",
+  privacy: "Privacy policy",
+  terms: "Terms and conditions"
+};
 
 function value(form: FormData, key: string) {
   return String(form.get(key) ?? "").trim();
@@ -83,21 +100,24 @@ export function AdminContent() {
   const [image, setImage] = useState("");
   const [siteLogo, setSiteLogo] = useState("");
   const [siteFavicon, setSiteFavicon] = useState("");
-  const [message, setMessage] = useState("");
-  const [messageKind, setMessageKind] = useState<"success" | "error">("success");
+  const { message, kind: messageKind, notify } = useAdminToast();
   const [confirmTarget, setConfirmTarget] = useState<{ path: string; id: string; label: string } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [previewKey, setPreviewKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [infoPages, setInfoPages] = useState<InfoPageContent[]>([]);
+  const [editingPage, setEditingPage] = useState<InfoPageContent | null>(null);
+  const [savingPage, setSavingPage] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const nextCatalog = await fetchAdminCatalog();
+      const [nextCatalog, nextInfoPages] = await Promise.all([fetchAdminCatalog(), fetchInfoPages()]);
       setCatalog(nextCatalog);
+      setInfoPages(nextInfoPages);
       setSiteLogo(nextCatalog.siteSettings.logoUrl ?? "");
       setSiteFavicon(
         nextCatalog.siteSettings.faviconUrl ?? nextCatalog.siteSettings.logoUrl ?? ""
@@ -123,22 +143,13 @@ export function AdminContent() {
     setEditing(null);
     setCreating(false);
     setImage("");
+    setEditingPage(null);
   }, [mode]);
 
   useEffect(() => {
-    if (!editing && !creating) return;
+    if (!editing && !creating && !editingPage) return;
     document.getElementById("admin-content-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [editing, creating]);
-
-  const messageTimer = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => () => window.clearTimeout(messageTimer.current), []);
-
-  const notify = useCallback((text: string, kind: "success" | "error" = "success") => {
-    setMessage(text);
-    setMessageKind(kind);
-    window.clearTimeout(messageTimer.current);
-    messageTimer.current = setTimeout(() => setMessage(""), 4500);
-  }, []);
+  }, [editing, creating, editingPage]);
 
   const notifyUpload = useCallback(
     (text: string) => notify(text, /could not|failed|unavailable/i.test(text) ? "error" : "success"),
@@ -391,6 +402,33 @@ export function AdminContent() {
     }
   }
 
+  async function savePage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingPage) return;
+    const form = new FormData(event.currentTarget);
+    const points = value(form, "points")
+      .split("\n")
+      .map((line) => line.split("|").map((part) => part.trim()))
+      .filter(([title, detail]) => title && detail)
+      .map(([title, detail]) => ({ title, detail }));
+    setSavingPage(true);
+    try {
+      const updated = await updateInfoPage(editingPage.slug, {
+        eyebrow: value(form, "eyebrow"),
+        title: value(form, "title"),
+        intro: value(form, "intro"),
+        points
+      });
+      setInfoPages((current) => current.map((page) => page.slug === updated.slug ? updated : page));
+      setEditingPage(null);
+      notify(`${infoPageTitles[updated.slug] ?? updated.slug} updated.`);
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Page could not be saved.", "error");
+    } finally {
+      setSavingPage(false);
+    }
+  }
+
   if (loading && !catalog) return <AdminLoading label="Loading storefront content..." />;
   if (error && !catalog) return <AdminError message={error} retry={() => void load()} />;
   if (!catalog) return null;
@@ -402,6 +440,7 @@ export function AdminContent() {
     id === "brands" ? catalog.brands.length :
     id === "categories" ? catalog.categories.length :
     id === "testimonials" ? catalog.testimonials.length :
+    id === "pages" ? infoPages.length :
     catalog.checkoutMethods.length;
 
   return (
@@ -431,7 +470,7 @@ export function AdminContent() {
           </button>
         ))}
       </div>
-      {message ? <p className={`admin-message${messageKind === "error" ? " is-error" : ""}`}>{message}</p> : null}
+      <AdminToast message={message} kind={messageKind} />
 
       {previewOpen ? (
         <section className="admin-storefront-preview">
@@ -580,17 +619,63 @@ export function AdminContent() {
         } />
       ) : null}
 
-      {confirmTarget ? (
-        <div className="admin-confirm-overlay" role="dialog" aria-modal="true">
-          <div className="admin-confirm-card">
-            <h3>Delete {confirmTarget.label}?</h3>
-            <p>Items already in use may be archived instead of removed. This can&apos;t be undone.</p>
-            <div className="admin-confirm-actions">
-              <button type="button" className="secondary-action" onClick={() => setConfirmTarget(null)}>Cancel</button>
-              <button type="button" className="danger-action" onClick={() => void performRemove()}><Trash2 size={16} /> Delete</button>
+      {mode === "pages" ? (
+        <div className={`admin-content-grid ${editingPage ? "editor-open" : "editor-closed"}`}>
+          <section>
+            <AdminSectionHeader
+              title="Info pages"
+              description="About, contact, delivery, returns, privacy, and terms — shown to every visitor at the bottom of the site."
+            />
+            <div className="admin-content-list">
+              {infoPages.map((page) => (
+                <article key={page.slug}>
+                  <div className="admin-content-image"><FileText size={20} /></div>
+                  <div>
+                    <strong>{infoPageTitles[page.slug] ?? page.slug}</strong>
+                    <p>{page.intro}</p>
+                    <small>{page.points.length} points</small>
+                  </div>
+                  <div className="admin-row-actions">
+                    <button type="button" onClick={() => setEditingPage(page)} title="Edit"><Pencil size={16} /></button>
+                  </div>
+                </article>
+              ))}
             </div>
-          </div>
+          </section>
+          {editingPage ? (
+            <aside className="admin-content-editor" id="admin-content-editor">
+              <button type="button" onClick={() => setEditingPage(null)}>Close editor</button>
+              <AdminForm
+                key={editingPage.slug}
+                title={`Edit ${infoPageTitles[editingPage.slug] ?? editingPage.slug}`}
+                onSubmit={savePage}
+                submitLabel={savingPage ? "Saving..." : "Save page"}
+              >
+                <label>Eyebrow<input name="eyebrow" defaultValue={editingPage.eyebrow} required /></label>
+                <label>Title<input name="title" defaultValue={editingPage.title} required /></label>
+                <label>Intro<textarea name="intro" defaultValue={editingPage.intro} required /></label>
+                <label>Points
+                  <textarea
+                    name="points"
+                    placeholder={"Email | support@myecom.local\nPhone | +880 1700 000 000"}
+                    defaultValue={editingPage.points.map((point) => `${point.title} | ${point.detail}`).join("\n")}
+                    required
+                  />
+                  <small>One per line, as Title | Detail.</small>
+                </label>
+              </AdminForm>
+            </aside>
+          ) : null}
         </div>
+      ) : null}
+
+      {confirmTarget ? (
+        <AdminConfirmDialog
+          title={`Delete ${confirmTarget.label}?`}
+          body="Items already in use may be archived instead of removed. This can't be undone."
+          onCancel={() => setConfirmTarget(null)}
+          onConfirm={() => void performRemove()}
+        />
       ) : null}
     </div>
   );

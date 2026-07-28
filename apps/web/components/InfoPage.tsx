@@ -7,7 +7,7 @@ import {
   ShieldCheck,
   Truck
 } from "lucide-react";
-import { fallbackCatalog } from "../lib/catalog";
+import { InfoPageContent, fallbackCatalog } from "../lib/catalog";
 import { PageFooter, PageHeader } from "./PageChrome";
 
 const pages = {
@@ -81,8 +81,14 @@ const pages = {
 
 export type InfoPageSlug = keyof typeof pages;
 
-export function InfoPage({ page }: { page: InfoPageSlug }) {
-  const content = pages[page];
+export function InfoPage({ page, content }: { page: InfoPageSlug; content?: InfoPageContent | null }) {
+  const fallback = pages[page];
+  const eyebrow = content?.eyebrow ?? fallback.eyebrow;
+  const title = content?.title ?? fallback.title;
+  const intro = content?.intro ?? fallback.intro;
+  const points = content?.points.length
+    ? content.points.map((point) => [point.title, point.detail] as const)
+    : fallback.points;
 
   return (
     <main>
@@ -90,14 +96,14 @@ export function InfoPage({ page }: { page: InfoPageSlug }) {
       <section className="info-hero">
         <img src="/images/packing-story.png" alt="Pantry essentials prepared for delivery" />
         <div>
-          <span className="info-icon">{content.icon}</span>
-          <p className="eyebrow">{content.eyebrow}</p>
-          <h1>{content.title}</h1>
-          <p>{content.intro}</p>
+          <span className="info-icon">{fallback.icon}</span>
+          <p className="eyebrow">{eyebrow}</p>
+          <h1>{title}</h1>
+          <p>{intro}</p>
         </div>
       </section>
       <section className="info-points">
-        {content.points.map(([title, text], index) => (
+        {points.map(([title, text], index) => (
           <article key={title}>
             <span>{String(index + 1).padStart(2, "0")}</span>
             <h2>{title}</h2>

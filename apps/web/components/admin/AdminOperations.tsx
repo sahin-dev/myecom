@@ -8,6 +8,7 @@ import {
   PackagePlus,
   RefreshCw,
   RotateCcw,
+  Search,
   Truck,
   XCircle
 } from "lucide-react";
@@ -15,6 +16,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AdminCatalog,
   InventoryMovement,
+  Payment,
   PurchaseOrder,
   Refund,
   ReturnRequest,
@@ -23,23 +25,28 @@ import {
   createSupplier,
   deleteSupplier,
   fetchAdminCatalog,
+  fetchAdminPayments,
   fetchAdminReturns,
   fetchAdminRefunds,
   fetchInventoryMovements,
   fetchPurchaseOrders,
   fetchSuppliers,
   formatMoney,
+  recheckAdminPayment,
   updateAdminReturn,
   updateAdminRefund,
   updatePurchaseOrder,
   updateSupplier
 } from "../../lib/catalog";
 import {
+  AdminConfirmDialog,
   AdminError,
   AdminLoading,
   AdminPageTitle,
   AdminSectionHeader,
-  StatusBadge
+  AdminToast,
+  StatusBadge,
+  useAdminToast
 } from "./AdminShared";
 
 const returnTransitions: Record<string, string[]> = {
@@ -66,11 +73,16 @@ export function AdminOperations() {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [refunds, setRefunds] = useState<Refund[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [paymentSearch, setPaymentSearch] = useState("");
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState("ALL");
+  const [recheckingPaymentId, setRecheckingPaymentId] = useState("");
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const { message, kind, notify } = useAdminToast();
+  const [removeSupplierTarget, setRemoveSupplierTarget] = useState<Supplier | null>(null);
   const [returnFilter, setReturnFilter] = useState("OPEN");
   const [selectedReturnId, setSelectedReturnId] = useState("");
   const [returnResolution, setReturnResolution] = useState("");
@@ -110,13 +122,14 @@ export function AdminOperations() {
     setLoading(true);
     setError("");
     try {
-      const [returnData, supplierData, poData, movementData, catalogData, refundData] = await Promise.all([
+      const [returnData, supplierData, poData, movementData, catalogData, refundData, paymentData] = await Promise.all([
         fetchAdminReturns(),
         fetchSuppliers(),
         fetchPurchaseOrders(),
         fetchInventoryMovements(),
         fetchAdminCatalog(),
-        fetchAdminRefunds()
+        fetchAdminRefunds(),
+        fetchAdminPayments()
       ]);
       setReturns(returnData);
       setSuppliers(supplierData);
@@ -124,6 +137,7 @@ export function AdminOperations() {
       setMovements(movementData);
       setCatalog(catalogData);
       setRefunds(refundData);
+      setPayments(paymentData);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Operations data is unavailable.");
     } finally {
@@ -142,20 +156,19 @@ export function AdminOperations() {
         .filter((returnItem) => returnItem.disposition)
         .map((returnItem) => [returnItem.id, returnItem.disposition!])
     ));
-    setMessage("");
   }
 
   async function resolveReturn(item: ReturnRequest, status: string) {
     if (status === "REJECTED" && !returnResolution.trim()) {
-      setMessage("Add a reason before rejecting this return.");
+      notify("Add a reason before rejecting this return.", "error");
       return;
     }
     if (status === "RECEIVED" && item.items.some((line) => !returnDispositions[line.id])) {
-      setMessage("Choose restock, inspect, damaged, or dispose for every returned item.");
+      notify("Choose restock, inspect, damaged, or dispose for every returned item.", "error");
       return;
     }
     if (status === "RESOLVED" && returnResolutionType === "REFUND") {
-      setMessage("Choose replacement, store credit, or no action to resolve without a refund.");
+      notify("Choose replacement, store credit, or no action to resolve without a refund.", "error");
       return;
     }
     setUpdatingReturn(true);
@@ -178,9 +191,9 @@ export function AdminOperations() {
       setReturns((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
       setSelectedReturnId(updated.id);
       setReturnResolution(updated.resolution ?? "");
-      setMessage(`${item.returnNumber} moved to ${status.toLowerCase()}.`);
+      notify(`${item.returnNumber} moved to ${status.toLowerCase()}.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Return could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Return could not be updated.", "error");
     } finally {
       setUpdatingReturn(false);
     }
@@ -208,7 +221,7 @@ export function AdminOperations() {
       setEditingSupplier(null);
       form.reset();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Supplier could not be created.");
+      notify(caught instanceof Error ? caught.message : "Supplier could not be created.", "error");
     }
   }
 
@@ -229,9 +242,9 @@ export function AdminOperations() {
       });
       setPurchaseOrders((current) => [created, ...current]);
       form.reset();
-      setMessage(`${created.poNumber} created.`);
+      notify(`${created.poNumber} created.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Purchase order could not be created.");
+      notify(caught instanceof Error ? caught.message : "Purchase order could not be created.", "error");
     }
   }
 
@@ -239,10 +252,10 @@ export function AdminOperations() {
     try {
       const updated = await updatePurchaseOrder(item.id, { status: "RECEIVED", receiveAll: true });
       setPurchaseOrders((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
-      setMessage(`${item.poNumber} received and inventory updated.`);
+      notify(`${item.poNumber} received and inventory updated.`);
       void load();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Purchase order could not be received.");
+      notify(caught instanceof Error ? caught.message : "Purchase order could not be received.", "error");
     }
   }
 
@@ -251,9 +264,9 @@ export function AdminOperations() {
     try {
       const updated = await updatePurchaseOrder(item.id, { status });
       setPurchaseOrders((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
-      setMessage(`${item.poNumber} moved to ${status.toLowerCase().replace(/_/g, " ")}.`);
+      notify(`${item.poNumber} moved to ${status.toLowerCase().replace(/_/g, " ")}.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Purchase order could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Purchase order could not be updated.", "error");
     }
   }
 
@@ -262,18 +275,19 @@ export function AdminOperations() {
       const updated = await updateSupplier(item.id, { isActive: !item.isActive });
       setSuppliers((current) => current.map((entry) => entry.id === item.id ? updated : entry));
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Supplier could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Supplier could not be updated.", "error");
     }
   }
 
   async function removeSupplier(item: Supplier) {
-    if (!window.confirm(`Remove ${item.name}?`)) return;
     try {
       await deleteSupplier(item.id);
       await load();
-      setMessage(`${item.name} was removed or archived.`);
+      notify(`${item.name} was removed or archived.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Supplier could not be removed.");
+      notify(caught instanceof Error ? caught.message : "Supplier could not be removed.", "error");
+    } finally {
+      setRemoveSupplierTarget(null);
     }
   }
 
@@ -288,11 +302,35 @@ export function AdminOperations() {
             : entry
         ));
       }
-      setMessage(`Refund for ${item.order.orderNumber} updated.`);
+      notify(`Refund for ${item.order.orderNumber} updated.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Refund could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Refund could not be updated.", "error");
     }
   }
+
+  async function recheckPayment(item: Payment) {
+    setRecheckingPaymentId(item.id);
+    try {
+      const updated = await recheckAdminPayment(item.id);
+      setPayments((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
+      notify(`Payment for ${item.order.orderNumber} is now ${updated.status.toLowerCase()}.`);
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Payment could not be re-checked.", "error");
+    } finally {
+      setRecheckingPaymentId("");
+    }
+  }
+
+  const filteredPayments = useMemo(() => payments.filter((item) => {
+    if (paymentStatusFilter !== "ALL" && item.status !== paymentStatusFilter) return false;
+    const search = paymentSearch.trim().toLowerCase();
+    if (!search) return true;
+    return (
+      item.order.orderNumber.toLowerCase().includes(search) ||
+      item.transactionId?.toLowerCase().includes(search) ||
+      item.method.toLowerCase().includes(search)
+    );
+  }), [payments, paymentStatusFilter, paymentSearch]);
 
   if (loading && !catalog) return <AdminLoading label="Loading fulfillment and supply operations..." />;
   if (error && !catalog) return <AdminError message={error} retry={() => void load()} />;
@@ -305,12 +343,22 @@ export function AdminOperations() {
         description="Resolve returns, coordinate suppliers, receive stock, and preserve an auditable inventory trail."
         actions={<button className="admin-icon-button" type="button" onClick={() => void load()} title="Refresh operations"><RefreshCw size={17} /></button>}
       />
-      {message ? <p className="admin-message">{message}</p> : null}
+      <AdminToast message={message} kind={kind} />
+
+      {removeSupplierTarget ? (
+        <AdminConfirmDialog
+          title={`Remove ${removeSupplierTarget.name}?`}
+          body="Suppliers linked to purchase orders are archived instead of deleted."
+          onCancel={() => setRemoveSupplierTarget(null)}
+          onConfirm={() => void removeSupplier(removeSupplierTarget)}
+        />
+      ) : null}
 
       <nav className="admin-subnav" aria-label="Operations sections">
         <a href="#operations-returns">Returns</a>
         <a href="#operations-supply">Supply</a>
         <a href="#operations-refunds">Refunds</a>
+        <a href="#operations-payments">Payments</a>
         <a href="#operations-orders">Purchase orders</a>
         <a href="#operations-ledger">Inventory ledger</a>
       </nav>
@@ -516,7 +564,7 @@ export function AdminOperations() {
                 <small>{supplier.leadTimeDays} day lead time</small>
                 <button type="button" onClick={() => setEditingSupplier(supplier)}>Edit</button>
                 <button type="button" onClick={() => void toggleSupplier(supplier)}>{supplier.isActive ? "Disable" : "Enable"}</button>
-                <button type="button" onClick={() => void removeSupplier(supplier)}>Delete</button>
+                <button type="button" onClick={() => setRemoveSupplierTarget(supplier)}>Delete</button>
               </article>
             ))}
           </div>
@@ -573,6 +621,55 @@ export function AdminOperations() {
             ))}</tbody>
           </table>
           {!refunds.length ? <p className="muted-copy">No refunds are waiting.</p> : null}
+        </div>
+      </section>
+
+      <section className="admin-data-panel" id="operations-payments">
+        <AdminSectionHeader title="Payments" description="Transaction records for every order, across every configured payment method." />
+        <form className="admin-filterbar" onSubmit={(event) => event.preventDefault()}>
+          <label className="admin-search">
+            <Search size={17} />
+            <input
+              value={paymentSearch}
+              onChange={(event) => setPaymentSearch(event.target.value)}
+              placeholder="Order number, transaction ID, or method"
+            />
+          </label>
+          <select value={paymentStatusFilter} onChange={(event) => setPaymentStatusFilter(event.target.value)}>
+            <option value="ALL">All payment statuses</option>
+            <option value="PENDING">Pending</option>
+            <option value="PAID">Paid</option>
+            <option value="FAILED">Failed</option>
+            <option value="PARTIALLY_REFUNDED">Partially refunded</option>
+            <option value="REFUNDED">Refunded</option>
+          </select>
+        </form>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead><tr><th>Order</th><th>Customer</th><th>User ID</th><th>Method</th><th>Transaction ID</th><th>Amount</th><th>Date</th><th>Status</th><th /></tr></thead>
+            <tbody>{filteredPayments.map((item) => (
+              <tr key={item.id}>
+                <td><strong>{item.order.orderNumber}</strong></td>
+                <td>{item.order.customerName}<small>{item.order.email}</small></td>
+                <td><small>{item.order.userId ?? "Guest"}</small></td>
+                <td>{item.method}<small>{item.provider}</small></td>
+                <td>{item.transactionId ?? "—"}</td>
+                <td>{formatMoney(item.amount)}</td>
+                <td>{new Date(item.createdAt).toLocaleString("en-BD")}</td>
+                <td><StatusBadge value={item.status} kind="payment" /></td>
+                <td>
+                  {item.provider === "bkash" && item.gatewayReference ? (
+                    <div className="admin-row-actions">
+                      <button type="button" onClick={() => void recheckPayment(item)} disabled={recheckingPaymentId === item.id}>
+                        <RefreshCw size={14} /> {recheckingPaymentId === item.id ? "Checking..." : "Re-check"}
+                      </button>
+                    </div>
+                  ) : null}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {!filteredPayments.length ? <p className="muted-copy">No payments match this filter.</p> : null}
         </div>
       </section>
 

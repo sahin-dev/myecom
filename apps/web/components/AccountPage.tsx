@@ -3,6 +3,7 @@
 import {
   Bell,
   Check,
+  ChevronDown,
   KeyRound,
   LogOut,
   MapPin,
@@ -12,7 +13,8 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
-  Trash2
+  Trash2,
+  Truck
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -25,6 +27,7 @@ import {
   ReturnRequest,
   createAddress,
   createReturnRequest,
+  cancelOrder,
   cancelReturnRequest,
   changePassword,
   deleteAddress,
@@ -45,9 +48,11 @@ import {
 } from "../lib/catalog";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
+import { OrderReceipt } from "./OrderReceipt";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
 import { QuickVariantAdd } from "./QuickVariantAdd";
+import { useSiteSettings } from "./SiteSettingsContext";
 
 const defaultPreferences: NotificationPreferences = {
   id: "",
@@ -79,7 +84,10 @@ const returnStatusCopy: Record<string, string> = {
 
 export function AccountPage() {
   const { user, loading, logout, updateProfile } = useAuth();
+  const { settings } = useSiteSettings();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
   const [recommendations, setRecommendations] = useState<Product[]>([]);
@@ -211,6 +219,17 @@ export function AccountPage() {
       setReturnMessage(`${updated.returnNumber} was cancelled.`);
     } catch (caught) {
       setReturnMessage(caught instanceof Error ? caught.message : "Return could not be cancelled.");
+    }
+  }
+
+  async function cancelOwnOrder(order: Order) {
+    if (!window.confirm(`Cancel order ${order.orderNumber}? This can't be undone.`)) return;
+    try {
+      const updated = await cancelOrder(order.orderNumber);
+      setOrders((current) => current.map((item) => item.id === order.id ? updated : item));
+      setMessage(`${order.orderNumber} was cancelled.`);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Order could not be cancelled.");
     }
   }
 
@@ -396,18 +415,68 @@ export function AccountPage() {
           </div>
           {orders.length ? (
             <div className="account-orders">
-              {orders.map((order) => (
-                <article key={order.id}>
-                  <div>
-                    <strong>{order.orderNumber}</strong>
-                    <span>{order.status.replace(/_/g, " ")}</span>
-                  </div>
-                  <strong>{formatMoney(order.total)}</strong>
-                  <a href={`/track-order?order=${order.orderNumber}&email=${encodeURIComponent(user.email)}`}>
-                    Track
-                  </a>
-                </article>
-              ))}
+              {orders.map((order) => {
+                const expanded = expandedOrderId === order.id;
+                return (
+                  <article key={order.id} className={expanded ? "expanded" : ""}>
+                    <button
+                      type="button"
+                      className="account-order-toggle"
+                      onClick={() => setExpandedOrderId(expanded ? null : order.id)}
+                      aria-expanded={expanded}
+                    >
+                      <ChevronDown size={15} className={expanded ? "flip" : ""} />
+                      <span>
+                        <strong>{order.orderNumber}</strong>
+                        <span>{order.status.replace(/_/g, " ")}</span>
+                      </span>
+                    </button>
+                    <strong>{formatMoney(order.total)}</strong>
+                    <a href={`/track-order?order=${order.orderNumber}&email=${encodeURIComponent(user.email)}`}>
+                      Track
+                    </a>
+                    {["PLACED", "CONFIRMED"].includes(order.status) ? (
+                      <button className="text-link danger" type="button" onClick={() => void cancelOwnOrder(order)}>
+                        Cancel order
+                      </button>
+                    ) : null}
+                    {expanded ? (
+                      <div className="account-order-detail">
+                        <div className="account-order-items">
+                          {order.items.map((item) => (
+                            <div key={item.id}>
+                              <span>
+                                <strong>{item.productName}</strong>
+                                {item.variantName ? <small>{item.variantName}</small> : null}
+                                <small>{item.quantity} x {formatMoney(item.unitPrice)}</small>
+                              </span>
+                              <strong>{formatMoney(item.quantity * item.unitPrice)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="account-order-meta">
+                          <p><MapPin size={14} /> {order.shippingAddress}</p>
+                          {order.deliveryMethodName ? <p><Truck size={14} /> {order.deliveryMethodName}</p> : null}
+                        </div>
+                        <dl className="account-order-summary">
+                          <div><dt>Subtotal</dt><dd>{formatMoney(order.subtotal)}</dd></div>
+                          {order.discount ? (
+                            <div>
+                              <dt>Discount{order.promotion ? ` (${order.promotion.code})` : ""}</dt>
+                              <dd>-{formatMoney(order.discount)}</dd>
+                            </div>
+                          ) : null}
+                          <div><dt>Delivery</dt><dd>{formatMoney(order.shippingFee)}</dd></div>
+                          <div><dt>Total</dt><dd>{formatMoney(order.total)}</dd></div>
+                        </dl>
+                        <button type="button" className="text-link" onClick={() => setReceiptOrder(order)}>
+                          Download receipt
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <div className="account-empty">
@@ -690,6 +759,9 @@ export function AccountPage() {
       ) : null}
 
       <PageFooter categories={fallbackCatalog.categories} />
+      {receiptOrder ? (
+        <OrderReceipt order={receiptOrder} settings={settings} onClose={() => setReceiptOrder(null)} />
+      ) : null}
     </main>
   );
 }

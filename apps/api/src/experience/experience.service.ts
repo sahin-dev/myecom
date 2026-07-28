@@ -27,6 +27,7 @@ import {
   CreatePromotionDto,
   CreatePurchaseOrderDto,
   CreateReturnDto,
+  CreateManualRefundDto,
   CreateReviewDto,
   CreateStaffDto,
   CreateSupplierDto,
@@ -43,17 +44,87 @@ import {
   UpdateRefundDto,
   UpdateReturnDto,
   UpdateSupplierDto,
+  UpdateInfoPageDto,
   UpdateStaffDto,
   UpdateVariantDto,
   ValidatePromotionDto
 } from "./experience.dto";
+import { BkashService } from "../payments/bkash.service";
+import { AuthService } from "../auth/auth.service";
+
+const DEFAULT_INFO_PAGES: Record<string, { eyebrow: string; title: string; intro: string; points: { title: string; detail: string }[] }> = {
+  about: {
+    eyebrow: "Our story",
+    title: "A more thoughtful pantry shop",
+    intro: "My Ecom brings useful groceries, clear product information, and dependable delivery into one calm shopping experience.",
+    points: [
+      { title: "Carefully selected", detail: "We prioritize useful products, transparent details, and reliable availability." },
+      { title: "Built for real routines", detail: "The store is organized around how households actually refill a pantry." },
+      { title: "Clear from cart to door", detail: "Checkout, notifications, and tracking stay understandable throughout." }
+    ]
+  },
+  contact: {
+    eyebrow: "Talk to us",
+    title: "Help is close by",
+    intro: "Questions about an order, product, or delivery? Reach our support team and include your order number when available.",
+    points: [
+      { title: "Email", detail: "support@myecom.local" },
+      { title: "Phone", detail: "+880 1700 000 000" },
+      { title: "Hours", detail: "Saturday-Thursday, 9:00 AM-8:00 PM" }
+    ]
+  },
+  delivery: {
+    eyebrow: "Delivery",
+    title: "From our pantry to yours",
+    intro: "Orders are checked, packed, and handed to delivery partners with status updates at every major step.",
+    points: [
+      { title: "Dhaka delivery", detail: "Most orders arrive within 1-2 business days." },
+      { title: "Delivery fee", detail: "Free over ৳3,000; otherwise ৳80." },
+      { title: "Tracking", detail: "Use your order number and checkout email on the tracking page." }
+    ]
+  },
+  returns: {
+    eyebrow: "Returns",
+    title: "Simple help when something is wrong",
+    intro: "If an item arrives damaged, incorrect, or unusable, contact us promptly so we can review it.",
+    points: [
+      { title: "Report quickly", detail: "Contact support within 48 hours of delivery." },
+      { title: "Keep the packaging", detail: "Photos of the item and original package help us resolve issues." },
+      { title: "Resolution", detail: "Eligible cases receive a replacement, store credit, or refund." }
+    ]
+  },
+  privacy: {
+    eyebrow: "Privacy",
+    title: "Your information stays purposeful",
+    intro: "We collect only the account, order, and delivery information required to operate the store.",
+    points: [
+      { title: "Account security", detail: "Passwords are hashed and authentication uses time-limited signed tokens." },
+      { title: "Order information", detail: "Delivery details are used to fulfil and support your purchase." },
+      { title: "Your control", detail: "You may request account corrections or deletion through support." }
+    ]
+  },
+  terms: {
+    eyebrow: "Terms",
+    title: "Clear expectations for every order",
+    intro: "Using My Ecom means providing accurate checkout information and following the store policies listed here.",
+    points: [
+      { title: "Availability", detail: "Inventory and delivery estimates may change before an order is confirmed." },
+      { title: "Pricing", detail: "The checkout total shown when an order is placed is the applicable amount." },
+      { title: "Responsible use", detail: "Accounts and admin tools must not be accessed without permission." }
+    ]
+  }
+};
 
 const money = (value: number) => Number(value.toFixed(2));
 const monthKey = (date: Date) => date.toISOString().slice(0, 7);
 
 @Injectable()
 export class ExperienceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly bkash: BkashService,
+    private readonly auth: AuthService
+  ) {}
 
   async searchCatalog(query: {
     search?: string;
@@ -1099,7 +1170,45 @@ export class ExperienceService {
       quantity: dto.quantity,
       reason: dto.reason
     });
+    if ((currentInventory ?? 0) <= 0 && (currentInventory ?? 0) + dto.quantity > 0) {
+      await this.notifyStockAlerts(dto.productId, dto.variantId, product.name);
+    }
     return result;
+  }
+
+  async subscribeStockAlert(userId: string, productId: string, variantId?: string) {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException("Product not found.");
+    return this.prisma.stockAlert.upsert({
+      where: {
+        userId_productId_variantId: {
+          userId,
+          productId,
+          variantId: (variantId ?? null) as string
+        }
+      },
+      create: { userId, productId, variantId },
+      update: {}
+    });
+  }
+
+  private async notifyStockAlerts(productId: string, variantId: string | undefined, productName: string) {
+    const subscribers = await this.prisma.stockAlert.findMany({
+      where: { productId, variantId: variantId ?? null, notifiedAt: null },
+      include: { user: { select: { email: true } } }
+    });
+    if (!subscribers.length) return;
+    await this.prisma.notification.createMany({
+      data: subscribers.map((subscriber) => ({
+        email: subscriber.user.email,
+        title: "Back in stock",
+        message: `${productName} is back in stock. Order it before it sells out again.`
+      }))
+    });
+    await this.prisma.stockAlert.updateMany({
+      where: { id: { in: subscribers.map((subscriber) => subscriber.id) } },
+      data: { notifiedAt: new Date() }
+    });
   }
 
   async createVariant(actorId: string, productId: string, dto: CreateVariantDto) {
@@ -1206,6 +1315,138 @@ export class ExperienceService {
       },
       orderBy: { createdAt: "desc" }
     });
+  }
+
+  async createManualRefund(actorId: string, orderId: string, dto: CreateManualRefundDto) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { payments: true, refunds: true }
+    });
+    if (!order) throw new NotFoundException("Order not found.");
+    const paidPayment = order.payments.find((payment) => payment.status === PaymentStatus.PAID);
+    if (!paidPayment) {
+      throw new BadRequestException("This order has no paid payment to refund against.");
+    }
+    const alreadyRefunded = order.refunds
+      .filter((refund) => refund.status !== RefundStatus.FAILED)
+      .reduce((sum, refund) => sum + refund.amount, 0);
+    if (dto.amount > order.total - alreadyRefunded) {
+      throw new BadRequestException("Refund amount exceeds the order's refundable balance.");
+    }
+    const refund = await this.prisma.refund.create({
+      data: {
+        orderId: order.id,
+        paymentId: paidPayment.id,
+        amount: dto.amount,
+        reason: dto.reason,
+        status: RefundStatus.PENDING
+      },
+      include: {
+        order: { select: { orderNumber: true, customerName: true, email: true, total: true } },
+        payment: { select: { provider: true, method: true, transactionId: true } },
+        returnRequest: { select: { id: true, returnNumber: true, status: true } }
+      }
+    });
+    await this.audit(actorId, "refund.created", "Refund", refund.id, {
+      orderNumber: order.orderNumber,
+      amount: dto.amount,
+      reason: dto.reason
+    });
+    return refund;
+  }
+
+  payments(query: { search?: string; status?: string; provider?: string }) {
+    const search = query.search?.trim();
+    return this.prisma.payment.findMany({
+      where: {
+        status: query.status ? (query.status as PaymentStatus) : undefined,
+        provider: query.provider || undefined,
+        ...(search
+          ? {
+              OR: [
+                { transactionId: { contains: search, mode: "insensitive" } },
+                { gatewayReference: { contains: search, mode: "insensitive" } },
+                { order: { orderNumber: { contains: search, mode: "insensitive" } } }
+              ]
+            }
+          : {})
+      },
+      include: {
+        order: {
+          select: {
+            orderNumber: true,
+            customerName: true,
+            email: true,
+            userId: true,
+            total: true
+          }
+        }
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200
+    });
+  }
+
+  async requeryPayment(id: string) {
+    const payment = await this.prisma.payment.findUnique({ where: { id } });
+    if (!payment) throw new NotFoundException("Payment not found.");
+    if (payment.provider !== "bkash" || !payment.gatewayReference) {
+      throw new BadRequestException("Only bKash payments with a gateway reference can be re-checked.");
+    }
+    const result = await this.bkash.queryPayment(payment.gatewayReference);
+    const transactionStatus = result.transactionStatus as string | undefined;
+    const status: PaymentStatus =
+      transactionStatus === "Completed"
+        ? PaymentStatus.PAID
+        : transactionStatus === "Initiated"
+          ? PaymentStatus.PENDING
+          : PaymentStatus.FAILED;
+    const updated = await this.prisma.payment.update({
+      where: { id },
+      data: {
+        status,
+        transactionId: (result.trxID as string | undefined) ?? payment.transactionId,
+        providerPayload: result as unknown as Prisma.InputJsonValue
+      }
+    });
+    await this.prisma.order.update({
+      where: { id: payment.orderId },
+      data: { paymentStatus: status }
+    });
+    return updated;
+  }
+
+  async infoPages() {
+    const existing = await this.prisma.infoPage.findMany();
+    const existingSlugs = new Set(existing.map((page) => page.slug));
+    const missing = Object.keys(DEFAULT_INFO_PAGES).filter((slug) => !existingSlugs.has(slug));
+    if (missing.length) {
+      await this.prisma.infoPage.createMany({
+        data: missing.map((slug) => ({
+          slug,
+          ...DEFAULT_INFO_PAGES[slug],
+          points: DEFAULT_INFO_PAGES[slug].points as unknown as Prisma.InputJsonValue
+        }))
+      });
+      return this.prisma.infoPage.findMany();
+    }
+    return existing;
+  }
+
+  async updateInfoPage(actorId: string, slug: string, dto: UpdateInfoPageDto) {
+    if (!DEFAULT_INFO_PAGES[slug]) throw new NotFoundException("Unknown info page.");
+    await this.infoPages();
+    const updated = await this.prisma.infoPage.update({
+      where: { slug },
+      data: {
+        eyebrow: dto.eyebrow,
+        title: dto.title,
+        intro: dto.intro,
+        points: dto.points as unknown as Prisma.InputJsonValue | undefined
+      }
+    });
+    await this.audit(actorId, "info_page.updated", "InfoPage", updated.id, { slug });
+    return updated;
   }
 
   async updateRefund(actorId: string, id: string, dto: UpdateRefundDto) {
@@ -1543,7 +1784,8 @@ export class ExperienceService {
       where: { id },
       data: {
         role: dto.role,
-        accessRoleId: dto.accessRoleId
+        accessRoleId: dto.accessRoleId,
+        isActive: dto.isActive
       },
       include: { permissions: true, accessRole: true }
     });
@@ -1573,10 +1815,19 @@ export class ExperienceService {
     }
     const user = await this.prisma.user.update({
       where: { id },
-      data: { isActive: false }
+      data: { isActive: false },
+      include: { permissions: true, accessRole: true }
     });
     await this.audit(actorId, "staff.deactivated", "User", id);
     return user;
+  }
+
+  async sendStaffResetLink(actorId: string, id: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException("Staff member not found.");
+    await this.auth.issueResetToken(user);
+    await this.audit(actorId, "staff.reset_link_sent", "User", id);
+    return { sent: true };
   }
 
   private async audit(

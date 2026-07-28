@@ -17,11 +17,14 @@ import {
   updateAdminPromotion
 } from "../../lib/catalog";
 import {
+  AdminConfirmDialog,
   AdminError,
   AdminLoading,
   AdminPageTitle,
   AdminSectionHeader,
-  StatusBadge
+  AdminToast,
+  StatusBadge,
+  useAdminToast
 } from "./AdminShared";
 
 export function AdminGrowth() {
@@ -31,7 +34,8 @@ export function AdminGrowth() {
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const { message, kind, notify } = useAdminToast();
+  const [deleteTarget, setDeleteTarget] = useState<Promotion | null>(null);
   const [reviewReplies, setReviewReplies] = useState<Record<string, string>>({});
   const [reviewPriorities, setReviewPriorities] = useState<Record<string, number>>({});
   const [reviewFilter, setReviewFilter] = useState<"ALL" | Review["status"] | "HOMEPAGE">("ALL");
@@ -85,12 +89,12 @@ export function AdminGrowth() {
       setPromotions((current) => editingPromotion
         ? current.map((item) => item.id === promotion.id ? promotion : item)
         : [promotion, ...current]);
-      setMessage(`${promotion.code} is ready.`);
+      notify(`${promotion.code} is ready.`);
       setEditingPromotion(null);
       setPromotionType("PERCENTAGE");
       form.reset();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Promotion could not be created.");
+      notify(caught instanceof Error ? caught.message : "Promotion could not be created.", "error");
     }
   }
 
@@ -101,7 +105,7 @@ export function AdminGrowth() {
         current.map((promotion) => promotion.id === updated.id ? updated : promotion)
       );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Promotion could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Promotion could not be updated.", "error");
     }
   }
 
@@ -120,14 +124,13 @@ export function AdminGrowth() {
       setReviews((current) =>
         current.map((item) => item.id === updated.id ? updated : item)
       );
-      setMessage(showOnHome ? "Review is now showcased on the homepage." : `Review saved as ${status.toLowerCase()}.`);
+      notify(showOnHome ? "Review is now showcased on the homepage." : `Review saved as ${status.toLowerCase()}.`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Review could not be updated.");
+      notify(caught instanceof Error ? caught.message : "Review could not be updated.", "error");
     }
   }
 
   async function removePromotion(item: Promotion) {
-    if (!window.confirm(`Delete ${item.code}?`)) return;
     try {
       const result = await deleteAdminPromotion(item.id);
       setPromotions((current) =>
@@ -137,9 +140,15 @@ export function AdminGrowth() {
             )
           : current.filter((promotion) => promotion.id !== item.id)
       );
-      setMessage(`${item.code} was removed or archived.`);
+      notify(
+        result.archived
+          ? `${item.code} has usage history, so it was archived instead of deleted.`
+          : `${item.code} was deleted.`
+      );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Promotion could not be removed.");
+      notify(caught instanceof Error ? caught.message : "Promotion could not be removed.", "error");
+    } finally {
+      setDeleteTarget(null);
     }
   }
 
@@ -171,7 +180,16 @@ export function AdminGrowth() {
           </>
         }
       />
-      {message ? <p className="admin-message">{message}</p> : null}
+      <AdminToast message={message} kind={kind} />
+
+      {deleteTarget ? (
+        <AdminConfirmDialog
+          title={`Delete ${deleteTarget.code}?`}
+          body="Promotions already used by a customer are archived instead of deleted."
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void removePromotion(deleteTarget)}
+        />
+      ) : null}
 
       <nav className="admin-subnav" aria-label="Marketing sections">
         <a href="#growth-analytics">Analytics</a>
@@ -270,7 +288,7 @@ export function AdminGrowth() {
                     {promotion.isActive ? "Pause" : "Activate"}
                   </button>
                   <button type="button" onClick={() => editPromotion(promotion)}>Edit</button>
-                  <button type="button" onClick={() => void removePromotion(promotion)} title="Delete promotion"><Trash2 size={15} /></button>
+                  <button type="button" onClick={() => setDeleteTarget(promotion)} title="Delete promotion"><Trash2 size={15} /></button>
                 </div>
               </article>
             ))}

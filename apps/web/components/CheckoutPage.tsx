@@ -22,6 +22,7 @@ import {
   fetchCatalog,
   fetchProduct,
   formatMoney,
+  initiateBkashPayment,
   isBaseProductEnabled,
   trackAnalyticsEvent,
   validatePromotion
@@ -202,6 +203,20 @@ export function CheckoutPage() {
       });
       setOrder(created);
       if (!directLine) clearCart();
+
+      if (paymentMethodCode === "BKASH") {
+        try {
+          const { bkashURL } = await initiateBkashPayment(created.id);
+          window.location.href = bkashURL;
+          return;
+        } catch (bkashError) {
+          setNotice(
+            bkashError instanceof Error
+              ? `Your order was placed, but bKash payment could not be started: ${bkashError.message}`
+              : "Your order was placed, but bKash payment could not be started. Please contact support."
+          );
+        }
+      }
     } catch (caught) {
       setNotice(
         caught instanceof Error
