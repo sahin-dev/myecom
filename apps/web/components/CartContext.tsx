@@ -1,6 +1,7 @@
 "use client";
 
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
+import { usePathname } from "next/navigation";
 import {
   Dispatch,
   ReactNode,
@@ -79,6 +80,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [cartNotice, setCartNotice] = useState("");
   const previousUserId = useRef<string | null>(null);
   const { user, loading: authLoading } = useAuth();
+  const pathname = usePathname();
+  const isAdminRoute = pathname === "/admin" || pathname.startsWith("/admin/");
 
   useEffect(() => {
     let active = true;
@@ -308,8 +311,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
   return (
     <CartContext.Provider value={value}>
       {children}
-      <FloatingCartButton />
-      <CartDrawer />
+      {!isAdminRoute ? (
+        <>
+          <FloatingCartButton />
+          <CartDrawer />
+        </>
+      ) : null}
     </CartContext.Provider>
   );
 }
@@ -363,9 +370,15 @@ function CartDrawer() {
     cartNotice,
     clearCartNotice,
     updateQuantity,
-    removeItem
+    removeItem,
+    clearCart
   } = useCart();
   const checkoutHref = cart.length ? "/checkout" : "#";
+  const emptyCart = () => {
+    if (window.confirm("Empty your shopping bag? This will remove all items.")) {
+      clearCart();
+    }
+  };
 
   return (
     <>
@@ -375,9 +388,22 @@ function CartDrawer() {
             <span>Shopping bag</span>
             <strong>{cartCount} {cartCount === 1 ? "item" : "items"}</strong>
           </div>
-          <button className="icon-button" type="button" onClick={() => setIsOpen(false)}>
-            <X size={19} />
-          </button>
+          <div className="drawer-header-actions">
+            {cart.length ? (
+              <button className="clear-cart-button" type="button" onClick={emptyCart}>
+                <Trash2 size={14} />
+                Empty bag
+              </button>
+            ) : null}
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => setIsOpen(false)}
+              aria-label="Close shopping bag"
+            >
+              <X size={19} />
+            </button>
+          </div>
         </div>
         <div className="drawer-lines">
           {cartNotice ? (

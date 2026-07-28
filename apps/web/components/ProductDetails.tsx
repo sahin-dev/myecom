@@ -39,6 +39,20 @@ import { ProductArt } from "./ProductArt";
 import { useWishlist } from "./WishlistContext";
 
 const money = (value: number) => `\u09F3${new Intl.NumberFormat("en-BD").format(value)}`;
+const reviewDate = new Intl.DateTimeFormat("en-BD", {
+  day: "numeric",
+  month: "short",
+  year: "numeric"
+});
+
+function formatReviewDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : reviewDate.format(date);
+}
+
+function reviewerInitial(name?: string) {
+  return (name?.trim().charAt(0) || "C").toUpperCase();
+}
 
 function preferredVariant(product: Product, requestedId?: string) {
   const active = product.variants?.filter((variant) => variant.isActive) ?? [];
@@ -78,7 +92,9 @@ export function ProductDetails({
     availableQuantity(initialProduct, initialVariant, initialQuantity)
   );
   const [notice, setNotice] = useState("");
+  const [noticeTone, setNoticeTone] = useState<"info" | "success" | "error">("info");
   const [stockAlertRequested, setStockAlertRequested] = useState(false);
+  const [stockAlertLoading, setStockAlertLoading] = useState(false);
   const [reviews, setReviews] = useState<Review[]>(initialProduct.reviews ?? []);
   const [myReview, setMyReview] = useState<Review | null>(null);
   const [reviewNotice, setReviewNotice] = useState("");
@@ -93,6 +109,8 @@ export function ProductDetails({
     setActiveImage(initialProduct.images?.[0]?.url ?? initialProduct.imageUrl ?? null);
     setQuantity(availableQuantity(initialProduct, variant, initialQuantity));
     setNotice("");
+    setNoticeTone("info");
+    setStockAlertRequested(false);
     setReviews(initialProduct.reviews ?? []);
   }, [initialProduct, initialQuantity, initialVariantId, slug]);
 
@@ -179,10 +197,26 @@ export function ProductDetails({
     const next = (current + delta + galleryImages.length) % galleryImages.length;
     setActiveImage(galleryImages[next].url);
   }
+
+  function chooseVariant(variant: ProductVariant | null) {
+    setSelectedVariant(variant);
+    setQuantity(1);
+    setStockAlertRequested(false);
+    setNotice("");
+  }
+
   const averageRating =
     reviews.length > 0
       ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length
       : product.rating ?? 0;
+  const ratingBreakdown = [5, 4, 3, 2, 1].map((rating) => {
+    const count = reviews.filter((review) => review.rating === rating).length;
+    return {
+      rating,
+      count,
+      percentage: reviews.length ? (count / reviews.length) * 100 : 0
+    };
+  });
 
   function changeQuantity(delta: number) {
     setQuantity((current) =>
@@ -193,14 +227,21 @@ export function ProductDetails({
   async function notifyStock() {
     if (!user) {
       setNotice("Sign in to get notified when this is back in stock.");
+      setNoticeTone("info");
       return;
     }
+    setStockAlertLoading(true);
+    setNotice("");
     try {
       await subscribeStockAlert(product.id, selectedVariant?.id);
       setStockAlertRequested(true);
       setNotice("We'll email you when this is back in stock.");
+      setNoticeTone("success");
     } catch (caught) {
       setNotice(caught instanceof Error ? caught.message : "Could not set up the stock alert.");
+      setNoticeTone("error");
+    } finally {
+      setStockAlertLoading(false);
     }
   }
 
@@ -326,6 +367,24 @@ export function ProductDetails({
               <Heart size={20} fill={isSaved(product.slug) ? "currentColor" : "none"} />
             </button>
           </div>
+          <div className="product-summary-line">
+            <a href="#customer-reviews" aria-label={`Read ${reviews.length} customer reviews`}>
+              <span className="stars" aria-hidden="true">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <Star
+                    key={index}
+                    size={14}
+                    fill={index < Math.round(averageRating) ? "currentColor" : "none"}
+                  />
+                ))}
+              </span>
+              <strong>{averageRating.toFixed(1)}</strong>
+              <span>{reviews.length} {reviews.length === 1 ? "review" : "reviews"}</span>
+            </a>
+            <span className={`stock-status ${availableInventory > 0 ? "available" : "unavailable"}`}>
+              {availableInventory > 0 ? `${availableInventory} in stock` : "Out of stock"}
+            </span>
+          </div>
           <div className="detail-price">
             <strong>{money(unitPrice)}</strong>
             {compareAt ? <small>{money(compareAt)}</small> : null}
@@ -340,10 +399,7 @@ export function ProductDetails({
                   <button
                     className={selectedVariant === null ? "active" : ""}
                     type="button"
-                    onClick={() => {
-                      setSelectedVariant(null);
-                      setQuantity(1);
-                    }}
+                    onClick={() => chooseVariant(null)}
                     disabled={product.inventory < 1}
                   >
                     {baseProductOptionLabel(product)}
@@ -356,10 +412,7 @@ export function ProductDetails({
                       className={selectedVariant?.id === variant.id ? "active" : ""}
                       type="button"
                       key={variant.id}
-                      onClick={() => {
-                        setSelectedVariant(variant);
-                        setQuantity(1);
-                      }}
+                      onClick={() => chooseVariant(variant)}
                       disabled={variant.inventory < 1}
                     >
                       {variant.name}
@@ -379,33 +432,49 @@ export function ProductDetails({
                 : "Delivery configured at checkout"}
             </span>
             <span>
-              <PackageCheck size={18} /> {availableInventory} items available
+              <PackageCheck size={18} /> {availableInventory > 0
+                ? `${availableInventory} items available`
+                : "Restock alert available"}
             </span>
           </div>
-          <div className="quantity-row">
-            <span>Quantity</span>
-            <div className="detail-quantity">
-              <button type="button" onClick={() => changeQuantity(-1)} aria-label="Decrease quantity">
-                <Minus size={17} />
-              </button>
-              <strong>{quantity}</strong>
-              <button type="button" onClick={() => changeQuantity(1)} aria-label="Increase quantity">
-                <Plus size={17} />
-              </button>
-            </div>
-          </div>
-          <div className="detail-actions">
-            {availableInventory < 1 ? (
+          {availableInventory < 1 ? (
+            <div className="stock-alert-panel">
+              <div className="stock-alert-copy">
+                <span><Bell size={19} /></span>
+                <div>
+                  <strong>Get a restock alert</strong>
+                  <p>We will email you as soon as this option is available again.</p>
+                </div>
+              </div>
               <button
                 className="secondary-action"
                 type="button"
-                disabled={stockAlertRequested}
+                disabled={stockAlertRequested || stockAlertLoading}
                 onClick={() => void notifyStock()}
               >
                 <Bell size={18} />
-                {stockAlertRequested ? "We'll email you" : "Notify me when back in stock"}
+                {stockAlertLoading
+                  ? "Setting up alert..."
+                  : stockAlertRequested
+                    ? "Alert is active"
+                    : "Notify me when available"}
               </button>
-            ) : (
+            </div>
+          ) : (
+            <>
+              <div className="quantity-row">
+                <span>Quantity</span>
+                <div className="detail-quantity">
+                  <button type="button" onClick={() => changeQuantity(-1)} aria-label="Decrease quantity">
+                    <Minus size={17} />
+                  </button>
+                  <strong>{quantity}</strong>
+                  <button type="button" onClick={() => changeQuantity(1)} aria-label="Increase quantity">
+                    <Plus size={17} />
+                  </button>
+                </div>
+              </div>
+              <div className="detail-actions">
               <button
                 className="secondary-action"
                 type="button"
@@ -413,36 +482,38 @@ export function ProductDetails({
                 onClick={() => {
                   addItem(product, quantity, selectedVariant);
                   setNotice(`${quantity} x ${product.name} added to your bag.`);
+                  setNoticeTone("success");
                 }}
               >
                 <ShoppingBag size={18} />
                 Add to cart
               </button>
-            )}
-            <button
-              className={`primary-action ${canPurchase ? "" : "disabled-link"}`}
-              type="button"
-              disabled={!canPurchase}
-              onClick={() => {
-                const query = new URLSearchParams({
-                  product: product.slug,
-                  quantity: String(quantity)
-                });
-                if (selectedVariant) query.set("variant", selectedVariant.id);
-                window.location.assign(`/checkout?${query.toString()}`);
-              }}
-            >
-              <CreditCard size={18} />
-              Buy now
-            </button>
-          </div>
+                <button
+                  className={`primary-action ${canPurchase ? "" : "disabled-link"}`}
+                  type="button"
+                  disabled={!canPurchase}
+                  onClick={() => {
+                    const query = new URLSearchParams({
+                      product: product.slug,
+                      quantity: String(quantity)
+                    });
+                    if (selectedVariant) query.set("variant", selectedVariant.id);
+                    window.location.assign(`/checkout?${query.toString()}`);
+                  }}
+                >
+                  <CreditCard size={18} />
+                  Buy now
+                </button>
+              </div>
+            </>
+          )}
           {product.brand ? (
             <div className="brand-chip">
               <span>Brand</span>
               <strong>{product.brand.name}</strong>
             </div>
           ) : null}
-          {notice ? <p className="detail-notice">{notice}</p> : null}
+          {notice ? <p className={`detail-notice ${noticeTone}`} role="status">{notice}</p> : null}
         </div>
       </section>
 
@@ -472,81 +543,117 @@ export function ProductDetails({
         ) : null}
       </section>
 
-      <section className="product-review-section">
-        <div className="rating-overview">
-          <strong>{averageRating.toFixed(1)}</strong>
-          <span>Average rating</span>
-          <div className="stars" aria-label={`${averageRating.toFixed(1)} out of 5 stars`}>
-            {Array.from({ length: 5 }).map((_, index) => (
-              <Star
-                key={index}
-                size={19}
-                fill={index < Math.round(averageRating) ? "currentColor" : "none"}
-              />
-            ))}
+      <section className="product-review-section" id="customer-reviews">
+        <header className="review-section-heading">
+          <div>
+            <p className="eyebrow">Customer feedback</p>
+            <h2>Reviews from our customers</h2>
+            <p>Helpful experiences from people who have tried this product.</p>
           </div>
-          <p>
-            {reviews.length
-              ? `${reviews.length} customer ${reviews.length === 1 ? "review" : "reviews"}`
-              : "Be the first to review this product."}
-          </p>
-          <div className="review-list">
-            {reviews.map((review) => (
-              <article key={review.id}>
-                <div>
-                  <strong>{review.user?.name ?? "Customer"}</strong>
-                  {review.isVerified ? (
-                    <span><BadgeCheck size={14} /> Verified purchase</span>
-                  ) : null}
-                </div>
-                <div className="stars">
-                  {Array.from({ length: 5 }).map((_, index) => (
-                    <Star
-                      key={index}
-                      size={14}
-                      fill={index < review.rating ? "currentColor" : "none"}
-                    />
-                  ))}
-                </div>
-                {review.title ? <strong>{review.title}</strong> : null}
-                <p>{review.comment}</p>
-                {review.adminReply ? <small>Store reply: {review.adminReply}</small> : null}
-              </article>
-            ))}
-          </div>
-        </div>
-        <form
-          className="review-form"
-          key={myReview ? `${myReview.id}-${myReview.updatedAt ?? myReview.status}` : "new-review"}
-          onSubmit={submitReview}
-        >
-          <p className="eyebrow">Share your experience</p>
-          <h2>{myReview ? "Edit your review" : "Submit your review"}</h2>
-          {myReview ? (
-            <div className={`customer-review-state ${myReview.status.toLowerCase()}`}>
-              <strong>{myReview.status === "APPROVED" ? "Published" : myReview.status === "PENDING" ? "Awaiting approval" : "Needs revision"}</strong>
-              <span>Editing sends the review back to moderation.</span>
+          <div className="review-score" aria-label={`${averageRating.toFixed(1)} out of 5 stars`}>
+            <strong>{averageRating.toFixed(1)}</strong>
+            <div>
+              <span className="stars" aria-hidden="true">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <Star
+                    key={index}
+                    size={17}
+                    fill={index < Math.round(averageRating) ? "currentColor" : "none"}
+                  />
+                ))}
+              </span>
+              <small>{reviews.length} {reviews.length === 1 ? "submitted review" : "submitted reviews"}</small>
             </div>
-          ) : null}
-          <label className="field-label">Review title
-            <input
-              name="title"
-              placeholder="Optional short summary"
-              defaultValue={myReview?.title ?? ""}
-            />
-          </label>
-          <label className="field-label">Your review
-            <textarea
-              name="review"
-              placeholder="Share product quality, packaging, and delivery details"
-              defaultValue={myReview?.comment ?? ""}
-              required
-            />
-          </label>
-          <div className="form-grid">
+          </div>
+        </header>
+
+        <div className="review-layout">
+          <div className="review-feed">
+            <div className="rating-breakdown" aria-label="Rating breakdown">
+              {ratingBreakdown.map((item) => (
+                <div key={item.rating}>
+                  <span>{item.rating} <Star size={12} fill="currentColor" /></span>
+                  <span className="rating-track"><i style={{ width: `${item.percentage}%` }} /></span>
+                  <small>{item.count}</small>
+                </div>
+              ))}
+            </div>
+            <div className="review-feed-heading">
+              <div>
+                <h3>Submitted reviews</h3>
+                <p>Published feedback for {product.name}</p>
+              </div>
+              <span>{reviews.length}</span>
+            </div>
+            {reviews.length ? (
+              <div className="review-list">
+                {reviews.map((review) => (
+                  <article key={review.id}>
+                    <header>
+                      <span className="reviewer-avatar" aria-hidden="true">
+                        {reviewerInitial(review.user?.name)}
+                      </span>
+                      <div>
+                        <strong>{review.user?.name ?? "Customer"}</strong>
+                        <small>{formatReviewDate(review.createdAt)}</small>
+                      </div>
+                      {review.isVerified ? (
+                        <span className="verified-review"><BadgeCheck size={14} /> Verified purchase</span>
+                      ) : null}
+                    </header>
+                    <div className="review-rating-row">
+                      <span className="stars" aria-label={`${review.rating} out of 5 stars`}>
+                        {Array.from({ length: 5 }).map((_, index) => (
+                          <Star
+                            key={index}
+                            size={14}
+                            fill={index < review.rating ? "currentColor" : "none"}
+                          />
+                        ))}
+                      </span>
+                      <small>{review.rating}.0</small>
+                    </div>
+                    {review.title ? <h4>{review.title}</h4> : null}
+                    <p>{review.comment}</p>
+                    {review.adminReply ? (
+                      <div className="review-reply">
+                        <strong>Response from the store</strong>
+                        <p>{review.adminReply}</p>
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-review-list">
+                <Star size={24} />
+                <strong>No submitted reviews yet</strong>
+                <p>Be the first customer to share a useful experience.</p>
+              </div>
+            )}
+          </div>
+
+          <form
+            className="review-form"
+            key={myReview ? `${myReview.id}-${myReview.updatedAt ?? myReview.status}` : "new-review"}
+            onSubmit={submitReview}
+          >
+            <p className="eyebrow">Your feedback</p>
+            <h3>{myReview ? "Manage your review" : "Write a review"}</h3>
+            <p className="review-form-intro">
+              {user
+                ? "Tell other customers what stood out about this product."
+                : "Sign in to submit and manage your product review."}
+            </p>
+            {myReview ? (
+              <div className={`customer-review-state ${myReview.status.toLowerCase()}`}>
+                <strong>{myReview.status === "APPROVED" ? "Published" : myReview.status === "PENDING" ? "Awaiting approval" : "Needs revision"}</strong>
+                <span>Editing sends the review back to moderation.</span>
+              </div>
+            ) : null}
             <label className="field-label">Rating
               <select name="rating" defaultValue={myReview?.rating ? String(myReview.rating) : ""} required>
-                <option value="" disabled>Select rating</option>
+                <option value="" disabled>Select your rating</option>
                 <option value="5">5 - Excellent</option>
                 <option value="4">4 - Very good</option>
                 <option value="3">3 - Good</option>
@@ -554,13 +661,28 @@ export function ProductDetails({
                 <option value="1">1 - Poor</option>
               </select>
             </label>
-            <button className="primary-action" type="submit" disabled={submittingReview}>
+            <label className="field-label">Review title
+              <input
+                name="title"
+                placeholder="Summarize your experience"
+                defaultValue={myReview?.title ?? ""}
+              />
+            </label>
+            <label className="field-label">Your review
+              <textarea
+                name="review"
+                placeholder="Share product quality, packaging, and delivery details"
+                defaultValue={myReview?.comment ?? ""}
+                required
+              />
+            </label>
+            <button className="primary-action review-submit" type="submit" disabled={submittingReview}>
               {submittingReview ? "Saving..." : myReview ? "Update review" : "Submit review"}
             </button>
-          </div>
-          {myReview ? <button className="text-link danger" type="button" onClick={() => void removeMyReview()}>Delete my review</button> : null}
-          {reviewNotice ? <p className="detail-notice">{reviewNotice}</p> : null}
-        </form>
+            {myReview ? <button className="text-link danger" type="button" onClick={() => void removeMyReview()}>Delete my review</button> : null}
+            {reviewNotice ? <p className="detail-notice" role="status">{reviewNotice}</p> : null}
+          </form>
+        </div>
       </section>
 
       <section className="related-products">
@@ -597,7 +719,7 @@ export function ProductDetails({
         <button
           className="primary-action"
           type="button"
-          disabled={availableInventory < 1 ? stockAlertRequested : !canPurchase}
+          disabled={availableInventory < 1 ? stockAlertRequested || stockAlertLoading : !canPurchase}
           onClick={() => {
             if (availableInventory < 1) {
               void notifyStock();
@@ -612,11 +734,16 @@ export function ProductDetails({
             }
             addItem(product, quantity, selectedVariant);
             setNotice(`${quantity} x ${product.name} added to your bag.`);
+            setNoticeTone("success");
           }}
         >
           {availableInventory < 1 ? <Bell size={17} /> : <ShoppingBag size={17} />}
           {availableInventory < 1
-            ? stockAlertRequested ? "We'll email you" : "Notify me"
+            ? stockAlertLoading
+              ? "Setting alert..."
+              : stockAlertRequested
+                ? "We'll email you"
+                : "Notify me"
             : requiresVariant && !selectedVariant
               ? "Choose option"
               : "Add to cart"}

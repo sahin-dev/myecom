@@ -458,13 +458,15 @@ export function AdminInventory() {
     const unitValue = String(data.get("unitValue") || "");
     const customName = String(data.get("customName") || "");
     const name = composeVariantName(unitType, unitValue, customName);
+    const costPrice = String(data.get("costPrice") || "").trim();
+    const compareAt = String(data.get("compareAt") || "").trim();
     try {
       const updatedVariant = await updateProductVariant(selected.id, id, {
         name: name || undefined,
         sku: String(data.get("sku")),
         price: Number(data.get("price")),
-        costPrice: Number(data.get("costPrice") || 0),
-        compareAt: Number(data.get("compareAt") || 0),
+        costPrice: costPrice ? Number(costPrice) : null,
+        compareAt: compareAt ? Number(compareAt) : null,
         unitType: unitType ? (unitType as UnitType) : null,
         unitValue: unitType && unitValue ? Number(unitValue) : null,
         isActive: data.get("isActive") === "on"
@@ -889,7 +891,7 @@ export function AdminInventory() {
                       <label>Selling price<input name="price" type="number" min="0" step="0.01" defaultValue={variant.price} required /></label>
                       <label>Unit cost<input name="costPrice" type="number" min="0" step="0.01" defaultValue={variant.costPrice ?? ""} /></label>
                     </div>
-                    <label>Compare price<input name="compareAt" type="number" min="0" step="0.01" defaultValue={variant.compareAt ?? ""} /></label>
+                    <label>Compare price<input name="compareAt" type="number" min="0.01" step="0.01" defaultValue={variant.compareAt ?? ""} placeholder="Optional" /></label>
                     <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={variant.isActive} /> Active · {variant.inventory} in stock</label>
                     <button type="submit">Save option</button>
                     <button type="button" onClick={() => void removeVariant(variant.id)} title={`Remove ${variant.name}`}><Trash2 size={15} /></button>

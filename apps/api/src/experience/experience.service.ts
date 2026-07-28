@@ -1179,16 +1179,20 @@ export class ExperienceService {
   async subscribeStockAlert(userId: string, productId: string, variantId?: string) {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException("Product not found.");
-    return this.prisma.stockAlert.upsert({
-      where: {
-        userId_productId_variantId: {
-          userId,
-          productId,
-          variantId: (variantId ?? null) as string
-        }
-      },
-      create: { userId, productId, variantId },
-      update: {}
+
+    const normalizedVariantId = variantId ?? null;
+    const existingAlert = await this.prisma.stockAlert.findFirst({
+      where: { userId, productId, variantId: normalizedVariantId }
+    });
+    if (existingAlert) {
+      return this.prisma.stockAlert.update({
+        where: { id: existingAlert.id },
+        data: { notifiedAt: null }
+      });
+    }
+
+    return this.prisma.stockAlert.create({
+      data: { userId, productId, variantId: normalizedVariantId }
     });
   }
 

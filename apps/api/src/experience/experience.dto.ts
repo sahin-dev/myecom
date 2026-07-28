@@ -633,12 +633,12 @@ export class UpdateVariantDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  costPrice?: number;
+  costPrice?: number | null;
 
   @IsOptional()
   @IsNumber()
   @IsPositive()
-  compareAt?: number;
+  compareAt?: number | null;
 
   @IsOptional()
   @IsString()

@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   KeyRound,
+  LayoutDashboard,
   LogOut,
   MapPin,
   PackageCheck,
@@ -14,7 +15,8 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
-  Truck
+  Truck,
+  UserRound
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -144,6 +146,10 @@ export function AccountPage() {
     () => eligibleOrders.find((order) => order.id === returnOrderId),
     [eligibleOrders, returnOrderId]
   );
+  const unreadNotificationCount = notifications.filter((item) => !item.isRead).length;
+  const activeReturnCount = returns.filter(
+    (item) => !["RESOLVED", "REFUNDED", "REJECTED", "CANCELLED"].includes(item.status)
+  ).length;
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -344,14 +350,31 @@ export function AccountPage() {
     );
   }
 
+  const accountInitials = user.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+  const memberSince = new Date(user.createdAt).toLocaleDateString("en-BD", {
+    month: "short",
+    year: "numeric"
+  });
+
   return (
     <main>
       <PageHeader categories={fallbackCatalog.categories} />
       <section className="account-hero">
-        <div>
-          <p className="eyebrow">Your account</p>
-          <h1>Hello, {user.name.split(" ")[0]}</h1>
-          <p>{user.email}</p>
+        <div className="account-identity">
+          <span className="account-avatar" aria-hidden="true">{accountInitials}</span>
+          <div>
+            <p className="eyebrow">Your account</p>
+            <h1>Hello, {user.name.split(" ")[0]}</h1>
+            <div className="account-identity-meta">
+              <span>{user.email}</span>
+              <span>Member since {memberSince}</span>
+            </div>
+          </div>
         </div>
         <div className="account-actions">
           {user.role !== "CUSTOMER" ? (
@@ -366,8 +389,63 @@ export function AccountPage() {
 
       {message ? <p className="account-global-notice">{message}</p> : null}
 
+      <section className="account-summary" aria-label="Account overview">
+        <a href="#account-orders">
+          <span><PackageCheck size={19} /></span>
+          <strong>{orders.length}</strong>
+          <small>{orders.length === 1 ? "Order" : "Orders"}</small>
+        </a>
+        <a href="#account-addresses">
+          <span><MapPin size={19} /></span>
+          <strong>{addresses.length}</strong>
+          <small>Saved addresses</small>
+        </a>
+        <a href="#account-notifications">
+          <span><Bell size={19} /></span>
+          <strong>{unreadNotificationCount}</strong>
+          <small>Unread updates</small>
+        </a>
+        <a href="#account-returns">
+          <span><RotateCcw size={19} /></span>
+          <strong>{activeReturnCount}</strong>
+          <small>Active returns</small>
+        </a>
+      </section>
+
+      <div className="account-shell">
+        <aside className="account-section-nav" aria-label="Account sections">
+          <div>
+            <LayoutDashboard size={18} />
+            <strong>Manage account</strong>
+          </div>
+          <nav>
+            <a href="#account-profile"><UserRound size={17} /><span>Profile & security</span></a>
+            <a href="#account-orders">
+              <PackageCheck size={17} />
+              <span>Orders</span>
+              {orders.length ? <b>{orders.length}</b> : null}
+            </a>
+            <a href="#account-addresses">
+              <MapPin size={17} />
+              <span>Addresses</span>
+              {addresses.length ? <b>{addresses.length}</b> : null}
+            </a>
+            <a href="#account-notifications">
+              <Bell size={17} />
+              <span>Notifications</span>
+              {unreadNotificationCount ? <b>{unreadNotificationCount}</b> : null}
+            </a>
+            <a href="#account-returns">
+              <RotateCcw size={17} />
+              <span>Returns</span>
+              {activeReturnCount ? <b>{activeReturnCount}</b> : null}
+            </a>
+          </nav>
+        </aside>
+
+        <div className="account-content">
       <section className="account-dashboard">
-        <div className="account-panel">
+        <div className="account-panel" id="account-profile">
           <div className="panel-heading">
             <Settings size={20} />
             <div>
@@ -405,7 +483,7 @@ export function AccountPage() {
           </form>
         </div>
 
-        <div className="account-panel order-history">
+        <div className="account-panel order-history" id="account-orders">
           <div className="panel-heading">
             <PackageCheck size={20} />
             <div>
@@ -489,7 +567,7 @@ export function AccountPage() {
         </div>
       </section>
 
-      <section className="account-wide-panel">
+      <section className="account-wide-panel" id="account-addresses">
         <div className="panel-heading">
           <MapPin size={20} />
           <div>
@@ -548,7 +626,7 @@ export function AccountPage() {
       </section>
 
       <section className="account-dashboard">
-        <div className="account-panel">
+        <div className="account-panel" id="account-notifications">
           <div className="panel-heading">
             <Bell size={20} />
             <div>
@@ -604,7 +682,7 @@ export function AccountPage() {
           </div>
         </div>
 
-        <div className="account-panel">
+        <div className="account-panel" id="account-returns">
           <div className="panel-heading">
             <RotateCcw size={20} />
             <div>
@@ -757,6 +835,8 @@ export function AccountPage() {
           </div>
         </section>
       ) : null}
+        </div>
+      </div>
 
       <PageFooter categories={fallbackCatalog.categories} />
       {receiptOrder ? (
