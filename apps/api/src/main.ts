@@ -34,6 +34,23 @@ async function bootstrap() {
   );
 
   await app.listen(port);
+
+  let isClosing = false;
+  const shutdown = async () => {
+    if (isClosing) return;
+    isClosing = true;
+
+    try {
+      await app.close();
+      process.exit(0);
+    } catch (error) {
+      console.error(error);
+      process.exit(1);
+    }
+  };
+
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }
 
 bootstrap();

@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "my-ecom-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+
+  // Set production variables in Cloudflare Workers Builds or uncomment for local deploys:
+  // "vars": {
+  //   "NEXT_PUBLIC_API_URL": "https://api.example.com"
+  // }
+}

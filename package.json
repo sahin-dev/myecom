@@ -2,7 +2,7 @@
   "name": "my-ecom",
   "private": true,
   "scripts": {
-    "dev": "pnpm --parallel --filter @my-ecom/api --filter @my-ecom/web dev",
+    "dev": "node scripts/dev.cjs",
     "dev:api": "pnpm --filter @my-ecom/api dev",
     "dev:web": "pnpm --filter @my-ecom/web dev",
     "build": "pnpm -r build",

@@ -4,23 +4,24 @@ import { ShopPage } from "../../components/ShopPage";
 export const metadata: Metadata = { title: "Shop" };
 
 type ShopRouteProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 function first(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
-export default function ShopRoute({ searchParams = {} }: ShopRouteProps) {
+export default async function ShopRoute({ searchParams }: ShopRouteProps) {
+  const resolvedSearchParams = (await searchParams) ?? {};
   const initialQuery = {
-    search: first(searchParams.q),
-    category: first(searchParams.category),
-    brand: first(searchParams.brand),
-    sort: first(searchParams.sort) || "featured",
-    inStock: first(searchParams.inStock) === "true",
-    minPrice: first(searchParams.minPrice),
-    maxPrice: first(searchParams.maxPrice),
-    page: Math.max(1, Number(first(searchParams.page)) || 1)
+    search: first(resolvedSearchParams.q),
+    category: first(resolvedSearchParams.category),
+    brand: first(resolvedSearchParams.brand),
+    sort: first(resolvedSearchParams.sort) || "featured",
+    inStock: first(resolvedSearchParams.inStock) === "true",
+    minPrice: first(resolvedSearchParams.minPrice),
+    maxPrice: first(resolvedSearchParams.maxPrice),
+    page: Math.max(1, Number(first(resolvedSearchParams.page)) || 1)
   };
   const routeKey = JSON.stringify(initialQuery);
 

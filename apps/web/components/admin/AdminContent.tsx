@@ -130,7 +130,7 @@ export function AdminContent() {
     document.getElementById("admin-content-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [editing, creating]);
 
-  const messageTimer = useRef<ReturnType<typeof setTimeout>>();
+  const messageTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(messageTimer.current), []);
 
   const notify = useCallback((text: string, kind: "success" | "error" = "success") => {

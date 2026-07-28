@@ -12,11 +12,21 @@ const pageTitles: Record<string, string> = {
   terms: "Terms and conditions"
 };
 
-export function generateMetadata({ params }: { params: { info: string } }): Metadata {
-  return { title: pageTitles[params.info] ?? "Information" };
+export async function generateMetadata({
+  params
+}: {
+  params: Promise<{ info: string }>;
+}): Promise<Metadata> {
+  const { info } = await params;
+  return { title: pageTitles[info] ?? "Information" };
 }
 
-export default function InformationRoute({ params }: { params: { info: string } }) {
-  if (!pages.includes(params.info)) notFound();
-  return <InfoPage page={params.info as InfoPageSlug} />;
+export default async function InformationRoute({
+  params
+}: {
+  params: Promise<{ info: string }>;
+}) {
+  const { info } = await params;
+  if (!pages.includes(info)) notFound();
+  return <InfoPage page={info as InfoPageSlug} />;
 }

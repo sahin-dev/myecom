@@ -13,9 +13,10 @@ const productForPage = cache(fetchProduct);
 export async function generateMetadata({
   params
 }: {
-  params: { slug: string };
+  params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
-  return productForPage(params.slug)
+  const { slug } = await params;
+  return productForPage(slug)
     .then((product) => ({
       title: product.name,
       description: product.description,
@@ -32,20 +33,21 @@ export default async function ProductPage({
   params,
   searchParams
 }: {
-  params: { slug: string };
-  searchParams: { variant?: string; quantity?: string };
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ variant?: string; quantity?: string }>;
 }) {
-  const product = await productForPage(params.slug).catch(() => null);
+  const [{ slug }, resolvedSearchParams] = await Promise.all([params, searchParams]);
+  const product = await productForPage(slug).catch(() => null);
   if (!product) notFound();
   const catalog = await fetchCatalog().catch(() => fallbackCatalog);
-  const quantity = Number(searchParams.quantity);
+  const quantity = Number(resolvedSearchParams.quantity);
 
   return (
     <ProductDetails
-      slug={params.slug}
+      slug={slug}
       initialProduct={product}
       initialCatalog={catalog}
-      initialVariantId={searchParams.variant}
+      initialVariantId={resolvedSearchParams.variant}
       initialQuantity={Number.isInteger(quantity) && quantity > 0 ? quantity : 1}
     />
   );

@@ -1180,6 +1180,13 @@ export const testimonials: Testimonial[] = [
 ];
 
 const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const parsedApiTimeoutMs = Number.parseInt(
+  process.env.NEXT_PUBLIC_API_TIMEOUT_MS ?? "",
+  10
+);
+const apiTimeoutMs = Number.isFinite(parsedApiTimeoutMs)
+  ? parsedApiTimeoutMs
+  : 5000;
 export const authStorageKey = "my-ecom-access-token";
 
 export function resolveMediaUrl(value?: string | null) {
@@ -1192,15 +1199,26 @@ export function resolveMediaUrl(value?: string | null) {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token =
     typeof window === "undefined" ? null : window.localStorage.getItem(authStorageKey);
-  const response = await fetch(`${apiBase}/api${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {})
-    },
-    cache: "no-store"
-  });
+  const controller = init?.signal ? null : new AbortController();
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), apiTimeoutMs)
+    : null;
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/api${path}`, {
+      ...init,
+      signal: init?.signal ?? controller?.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers ?? {})
+      },
+      cache: "no-store"
+    });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as
