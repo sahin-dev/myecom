@@ -232,6 +232,7 @@ model Product {
   supplierId         String?             @db.ObjectId
   supplier           Supplier?           @relation(fields: [supplierId], references: [id])
   tags               String[]
+  details            Json?
   images             ProductImage[]
   variants           ProductVariant[]
   reviews            Review[]

@@ -42,6 +42,7 @@ import {
   AdminConfirmDialog,
   AdminError,
   AdminLoading,
+  AdminPagination,
   AdminPageTitle,
   AdminSectionHeader,
   AdminToast,
@@ -66,6 +67,12 @@ const refundTransitions: Record<Refund["status"], Refund["status"][]> = {
   FAILED: ["PENDING"],
   COMPLETED: []
 };
+const returnPageSize = 8;
+const supplierPageSize = 6;
+const refundPageSize = 10;
+const paymentPageSize = 10;
+const purchaseOrderPageSize = 10;
+const movementPageSize = 15;
 
 export function AdminOperations() {
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
@@ -76,6 +83,7 @@ export function AdminOperations() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [paymentSearch, setPaymentSearch] = useState("");
   const [paymentStatusFilter, setPaymentStatusFilter] = useState("ALL");
+  const [paymentPage, setPaymentPage] = useState(1);
   const [recheckingPaymentId, setRecheckingPaymentId] = useState("");
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
@@ -84,6 +92,11 @@ export function AdminOperations() {
   const { message, kind, notify } = useAdminToast();
   const [removeSupplierTarget, setRemoveSupplierTarget] = useState<Supplier | null>(null);
   const [returnFilter, setReturnFilter] = useState("OPEN");
+  const [returnPage, setReturnPage] = useState(1);
+  const [supplierPage, setSupplierPage] = useState(1);
+  const [refundPage, setRefundPage] = useState(1);
+  const [purchaseOrderPage, setPurchaseOrderPage] = useState(1);
+  const [movementPage, setMovementPage] = useState(1);
   const [selectedReturnId, setSelectedReturnId] = useState("");
   const [returnResolution, setReturnResolution] = useState("");
   const [returnResolutionType, setReturnResolutionType] =
@@ -103,6 +116,8 @@ export function AdminOperations() {
     ),
     [returnFilter, returns]
   );
+  const returnPages = Math.max(1, Math.ceil(filteredReturns.length / returnPageSize));
+  const pagedReturns = filteredReturns.slice((returnPage - 1) * returnPageSize, returnPage * returnPageSize);
   const selectedReturn =
     filteredReturns.find((item) => item.id === selectedReturnId) ??
     filteredReturns[0] ??
@@ -331,6 +346,51 @@ export function AdminOperations() {
       item.method.toLowerCase().includes(search)
     );
   }), [payments, paymentStatusFilter, paymentSearch]);
+  const supplierPages = Math.max(1, Math.ceil(suppliers.length / supplierPageSize));
+  const pagedSuppliers = suppliers.slice((supplierPage - 1) * supplierPageSize, supplierPage * supplierPageSize);
+  const refundPages = Math.max(1, Math.ceil(refunds.length / refundPageSize));
+  const pagedRefunds = refunds.slice((refundPage - 1) * refundPageSize, refundPage * refundPageSize);
+  const paymentPages = Math.max(1, Math.ceil(filteredPayments.length / paymentPageSize));
+  const pagedPayments = filteredPayments.slice((paymentPage - 1) * paymentPageSize, paymentPage * paymentPageSize);
+  const purchaseOrderPages = Math.max(1, Math.ceil(purchaseOrders.length / purchaseOrderPageSize));
+  const pagedPurchaseOrders = purchaseOrders.slice(
+    (purchaseOrderPage - 1) * purchaseOrderPageSize,
+    purchaseOrderPage * purchaseOrderPageSize
+  );
+  const movementPages = Math.max(1, Math.ceil(movements.length / movementPageSize));
+  const pagedMovements = movements.slice((movementPage - 1) * movementPageSize, movementPage * movementPageSize);
+
+  useEffect(() => {
+    setReturnPage(1);
+  }, [returnFilter]);
+
+  useEffect(() => {
+    setPaymentPage(1);
+  }, [paymentSearch, paymentStatusFilter]);
+
+  useEffect(() => {
+    if (returnPage > returnPages) setReturnPage(returnPages);
+  }, [returnPage, returnPages]);
+
+  useEffect(() => {
+    if (supplierPage > supplierPages) setSupplierPage(supplierPages);
+  }, [supplierPage, supplierPages]);
+
+  useEffect(() => {
+    if (refundPage > refundPages) setRefundPage(refundPages);
+  }, [refundPage, refundPages]);
+
+  useEffect(() => {
+    if (paymentPage > paymentPages) setPaymentPage(paymentPages);
+  }, [paymentPage, paymentPages]);
+
+  useEffect(() => {
+    if (purchaseOrderPage > purchaseOrderPages) setPurchaseOrderPage(purchaseOrderPages);
+  }, [purchaseOrderPage, purchaseOrderPages]);
+
+  useEffect(() => {
+    if (movementPage > movementPages) setMovementPage(movementPages);
+  }, [movementPage, movementPages]);
 
   if (loading && !catalog) return <AdminLoading label="Loading fulfillment and supply operations..." />;
   if (error && !catalog) return <AdminError message={error} retry={() => void load()} />;
@@ -388,7 +448,7 @@ export function AdminOperations() {
         </div>
         <div className="admin-return-workspace">
           <div className="admin-return-queue">
-            {filteredReturns.length ? filteredReturns.map((item) => (
+            {filteredReturns.length ? pagedReturns.map((item) => (
               <button
                 className={selectedReturn?.id === item.id ? "is-selected" : ""}
                 type="button"
@@ -405,6 +465,13 @@ export function AdminOperations() {
                 </span>
               </button>
             )) : <p className="admin-empty-copy">No returns match this filter.</p>}
+            <AdminPagination
+              page={returnPage}
+              pages={returnPages}
+              total={filteredReturns.length}
+              pageSize={returnPageSize}
+              onPageChange={setReturnPage}
+            />
           </div>
           {selectedReturn ? (
             <aside className="admin-return-review">
@@ -558,7 +625,7 @@ export function AdminOperations() {
         <div className="admin-data-panel">
           <AdminSectionHeader title="Suppliers" description="Lead times feed future reorder planning" />
           <div className="admin-compact-list">
-            {suppliers.map((supplier) => (
+            {pagedSuppliers.map((supplier) => (
               <article key={supplier.id}>
                 <div><strong>{supplier.name}</strong><span>{supplier.contactName || supplier.email || "No contact"}</span></div>
                 <small>{supplier.leadTimeDays} day lead time</small>
@@ -568,6 +635,13 @@ export function AdminOperations() {
               </article>
             ))}
           </div>
+          <AdminPagination
+            page={supplierPage}
+            pages={supplierPages}
+            total={suppliers.length}
+            pageSize={supplierPageSize}
+            onPageChange={setSupplierPage}
+          />
           <form className="admin-inline-form" onSubmit={addSupplier} key={editingSupplier?.id ?? "new-supplier"}>
             <div className="form-grid">
               <label>Supplier name<input name="name" placeholder="Registered supplier name" defaultValue={editingSupplier?.name ?? ""} required /></label>
@@ -604,7 +678,7 @@ export function AdminOperations() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead><tr><th>Order</th><th>Return</th><th>Customer</th><th>Amount</th><th>Reason</th><th>Created</th><th>Status</th></tr></thead>
-            <tbody>{refunds.map((item) => (
+            <tbody>{pagedRefunds.map((item) => (
               <tr key={item.id}>
                 <td><strong>{item.order.orderNumber}</strong></td>
                 <td>{item.returnRequest?.returnNumber ?? "Order cancellation"}</td>
@@ -622,6 +696,13 @@ export function AdminOperations() {
           </table>
           {!refunds.length ? <p className="muted-copy">No refunds are waiting.</p> : null}
         </div>
+        <AdminPagination
+          page={refundPage}
+          pages={refundPages}
+          total={refunds.length}
+          pageSize={refundPageSize}
+          onPageChange={setRefundPage}
+        />
       </section>
 
       <section className="admin-data-panel" id="operations-payments">
@@ -647,7 +728,7 @@ export function AdminOperations() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead><tr><th>Order</th><th>Customer</th><th>User ID</th><th>Method</th><th>Transaction ID</th><th>Amount</th><th>Date</th><th>Status</th><th /></tr></thead>
-            <tbody>{filteredPayments.map((item) => (
+            <tbody>{pagedPayments.map((item) => (
               <tr key={item.id}>
                 <td><strong>{item.order.orderNumber}</strong></td>
                 <td>{item.order.customerName}<small>{item.order.email}</small></td>
@@ -671,6 +752,13 @@ export function AdminOperations() {
           </table>
           {!filteredPayments.length ? <p className="muted-copy">No payments match this filter.</p> : null}
         </div>
+        <AdminPagination
+          page={paymentPage}
+          pages={paymentPages}
+          total={filteredPayments.length}
+          pageSize={paymentPageSize}
+          onPageChange={setPaymentPage}
+        />
       </section>
 
       <section className="admin-data-panel" id="operations-orders">
@@ -678,7 +766,7 @@ export function AdminOperations() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead><tr><th>PO</th><th>Supplier</th><th>Items</th><th>Expected</th><th>Cost</th><th>Status</th><th /></tr></thead>
-            <tbody>{purchaseOrders.map((item) => (
+            <tbody>{pagedPurchaseOrders.map((item) => (
               <tr key={item.id}>
                 <td><strong>{item.poNumber}</strong></td><td>{item.supplier.name}</td><td>{item.items.reduce((sum, line) => sum + line.quantity, 0)}</td>
                 <td>{item.expectedAt ? new Date(item.expectedAt).toLocaleDateString("en-BD") : "Not set"}</td>
@@ -694,6 +782,13 @@ export function AdminOperations() {
             ))}</tbody>
           </table>
         </div>
+        <AdminPagination
+          page={purchaseOrderPage}
+          pages={purchaseOrderPages}
+          total={purchaseOrders.length}
+          pageSize={purchaseOrderPageSize}
+          onPageChange={setPurchaseOrderPage}
+        />
       </section>
 
       <section className="admin-data-panel" id="operations-ledger">
@@ -701,7 +796,7 @@ export function AdminOperations() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead><tr><th>Time</th><th>Product</th><th>Type</th><th>Quantity</th><th>Reason</th><th>Reference</th></tr></thead>
-            <tbody>{movements.map((movement) => (
+            <tbody>{pagedMovements.map((movement) => (
               <tr key={movement.id}>
                 <td>{new Date(movement.createdAt).toLocaleString("en-BD")}</td>
                 <td><strong>{movement.product.name}</strong>{movement.variant ? ` · ${movement.variant.name}` : ""}</td>
@@ -711,6 +806,13 @@ export function AdminOperations() {
             ))}</tbody>
           </table>
         </div>
+        <AdminPagination
+          page={movementPage}
+          pages={movementPages}
+          total={movements.length}
+          pageSize={movementPageSize}
+          onPageChange={setMovementPage}
+        />
       </section>
     </div>
   );

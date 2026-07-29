@@ -15,6 +15,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AdminCatalog,
   Product,
+  ProductDetailSection,
   UnitType,
   addProductImage,
   adjustInventory,
@@ -36,6 +37,7 @@ import {
   AdminError,
   AdminLoading,
   AdminMultiUploadField,
+  AdminPagination,
   AdminPageTitle,
   AdminSectionHeader,
   AdminToast,
@@ -45,12 +47,40 @@ import {
 } from "./AdminShared";
 
 const unitOptions: UnitType[] = ["kg", "g", "l", "ml", "ft", "in", "m", "pcs", "dozen", "pack"];
+const productPageSize = 15;
+const productDetailTypes = [
+  { value: "usage", label: "Usage instruction", placeholder: "How customers should use this product." },
+  { value: "storage", label: "Storage instruction", placeholder: "Where and how to store it after opening." },
+  { value: "nutrition", label: "Nutrition", placeholder: "Calories, macros, minerals, serving notes, or nutrition facts." },
+  { value: "ingredients", label: "Ingredients", placeholder: "Main ingredients, source, additives, or allergen notes." },
+  { value: "side_effects", label: "Side effects", placeholder: "Who should avoid it or use it carefully." },
+  { value: "warnings", label: "Warnings", placeholder: "Safety, allergy, medical, or age-related warnings." },
+  { value: "custom", label: "Custom detail", placeholder: "Any other useful product detail." }
+] as const;
 
 function composeVariantName(unitType: string, unitValue: string, customName: string) {
   if (!unitType) return customName.trim();
   const label = unitTypeLabels[unitType as UnitType] ?? unitType;
   const value = unitValue.trim();
   return value ? `${value} ${label}` : label;
+}
+
+function readProductDetails(form: FormData): ProductDetailSection[] {
+  const types = form.getAll("detailType").map(String);
+  const titles = form.getAll("detailTitle").map(String);
+  const contents = form.getAll("detailContent").map(String);
+  const customTypes = form.getAll("detailCustomType").map(String);
+  return types
+    .map((type, index) => {
+      const title = titles[index]?.trim() ?? "";
+      const content = contents[index]?.trim() ?? "";
+      const normalizedType =
+        type === "custom"
+          ? customTypes[index]?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "custom"
+          : type;
+      return { type: normalizedType, title, content };
+    })
+    .filter((detail) => detail.title && detail.content);
 }
 
 function parseCsv(text: string): string[][] {
@@ -151,11 +181,12 @@ export function AdminInventory() {
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [selected, setSelected] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
-  const [editorSection, setEditorSection] = useState<"general" | "stock" | "options" | "media">("general");
+  const [editorSection, setEditorSection] = useState<"general" | "details" | "stock" | "options" | "media">("general");
   const [productImages, setProductImages] = useState<string[]>([]);
   const [galleryImage, setGalleryImage] = useState("");
   const [search, setSearch] = useState("");
   const [stockFilter, setStockFilter] = useState("");
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { message, kind, notify } = useAdminToast();
@@ -216,6 +247,17 @@ export function AdminInventory() {
       return matchesSearch && matchesStock;
     });
   }, [catalog, search, stockFilter]);
+  const productPages = Math.max(1, Math.ceil(products.length / productPageSize));
+  const pagedProducts = products.slice((page - 1) * productPageSize, page * productPageSize);
+
+  useEffect(() => {
+    setPage(1);
+    setSelectedIds(new Set());
+  }, [search, stockFilter]);
+
+  useEffect(() => {
+    if (page > productPages) setPage(productPages);
+  }, [page, productPages]);
 
   const summary = useMemo(() => {
     const all = catalog?.products ?? [];
@@ -289,6 +331,29 @@ export function AdminInventory() {
     }
   }
 
+  async function saveProductDetails(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setSaving(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      const updated = await updateAdminProduct(selected.id, {
+        details: readProductDetails(form)
+      });
+      setCatalog((current) =>
+        current
+          ? { ...current, products: current.products.map((item) => item.id === updated.id ? updated : item) }
+          : current
+      );
+      setSelected(updated);
+      notify("Product details were updated.");
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Product details could not be updated.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function createProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -314,7 +379,8 @@ export function AdminInventory() {
         badge: String(form.get("badge") || ""),
         brandId: brandId || undefined,
         categoryId: categoryId || undefined,
-        tags: String(form.get("tags") || "").split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean)
+        tags: String(form.get("tags") || "").split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean),
+        details: readProductDetails(form)
       });
       setCatalog((current) => current ? { ...current, products: [product, ...current.products] } : current);
       notify(`${product.name} was created.`);
@@ -520,9 +586,14 @@ export function AdminInventory() {
   }
 
   function toggleSelectAllProducts() {
-    setSelectedIds((current) =>
-      current.size === products.length ? new Set() : new Set(products.map((product) => product.id))
-    );
+    const pageIds = pagedProducts.map((product) => product.id);
+    const pageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (pageSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
   }
 
   async function applyBulkFlag(flag: "isTrending" | "isNew" | "isBestSelling") {
@@ -730,11 +801,11 @@ export function AdminInventory() {
             <table className="admin-table admin-products-table">
               <thead><tr>
                 <th aria-label="Select all">
-                  <input type="checkbox" checked={Boolean(products.length) && selectedIds.size === products.length} onChange={toggleSelectAllProducts} />
+                  <input type="checkbox" checked={Boolean(pagedProducts.length) && pagedProducts.every((product) => selectedIds.has(product.id))} onChange={toggleSelectAllProducts} />
                 </th>
                 <th>Product</th><th>Status</th><th>Price</th><th>Cost</th><th>Stock</th><th /></tr></thead>
               <tbody>
-                {products.map((product) => (
+                {pagedProducts.map((product) => (
                   <tr
                     key={product.id}
                     className={selected?.id === product.id ? "selected" : ""}
@@ -766,6 +837,13 @@ export function AdminInventory() {
               </tbody>
             </table>
           </div>
+          <AdminPagination
+            page={page}
+            pages={productPages}
+            total={products.length}
+            pageSize={productPageSize}
+            onPageChange={setPage}
+          />
         </section>
 
         {selected ? (
@@ -776,6 +854,7 @@ export function AdminInventory() {
             </div>
             <nav className="admin-editor-nav" aria-label="Product editor sections">
               {canManageCatalog ? <button type="button" className={editorSection === "general" ? "active" : ""} onClick={() => setEditorSection("general")}>General</button> : null}
+              {canManageCatalog ? <button type="button" className={editorSection === "details" ? "active" : ""} onClick={() => setEditorSection("details")}>Details</button> : null}
               {canAdjustInventory ? <button type="button" className={editorSection === "stock" ? "active" : ""} onClick={() => setEditorSection("stock")}>Stock</button> : null}
               {canManageCatalog ? <button type="button" className={editorSection === "options" ? "active" : ""} onClick={() => setEditorSection("options")}>Options</button> : null}
               {canManageCatalog ? <button type="button" className={editorSection === "media" ? "active" : ""} onClick={() => setEditorSection("media")}>Media</button> : null}
@@ -817,6 +896,19 @@ export function AdminInventory() {
                 <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : "Save product"}</button>
               </div>
             </form> : null}
+
+            {canManageCatalog && editorSection === "details" ? (
+              <form className="admin-editor-form admin-product-detail-form" onSubmit={saveProductDetails} key={`${selected.id}-details-${selected.details?.length ?? 0}`}>
+                <AdminSectionHeader
+                  title="Product detail sections"
+                  description="Shown on the product details page only when content is provided."
+                />
+                <ProductDetailFields details={selected.details ?? []} />
+                <div className="admin-editor-sticky-actions">
+                  <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : "Save details"}</button>
+                </div>
+              </form>
+            ) : null}
 
             {canAdjustInventory && editorSection === "stock" ? <><div className="admin-editor-divider" id="product-editor-stock">
               <span>Inventory adjustment</span>
@@ -977,6 +1069,13 @@ export function AdminInventory() {
               <AdminMultiUploadField label="Product images" values={productImages} onChange={setProductImages} onMessage={notifyUpload} recommendedDimensions="1200 x 1200 px" />
               <label>Badge<input name="badge" /></label>
               <label>Tags<input name="tags" placeholder="honey, organic, gift" /></label>
+              <div className="admin-create-detail-block">
+                <AdminSectionHeader
+                  title="Optional product details"
+                  description="Add usage, storage, nutrition, ingredients, warnings, or side-effect notes when relevant."
+                />
+                <ProductDetailFields details={[]} compact />
+              </div>
               <div className="check-row two">
                 <label><input name="isNew" type="checkbox" defaultChecked /> Newly launched</label>
                 <label><input name="isTrending" type="checkbox" /> Trending</label>
@@ -991,6 +1090,72 @@ export function AdminInventory() {
           </aside>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function ProductDetailFields({
+  details,
+  compact = false
+}: {
+  details: ProductDetailSection[];
+  compact?: boolean;
+}) {
+  const knownTypes = new Set(productDetailTypes.map((type) => type.value));
+  const rows = [
+    ...productDetailTypes,
+    ...details
+      .filter((detail) => !knownTypes.has(detail.type as (typeof productDetailTypes)[number]["value"]))
+      .map((detail) => ({
+        value: "custom" as const,
+        label: detail.title || "Custom detail",
+        placeholder: "Any other useful product detail.",
+        existingType: detail.type
+      }))
+  ];
+
+  return (
+    <div className={`admin-product-detail-grid ${compact ? "compact" : ""}`}>
+      {rows.map((row, index) => {
+        const existing =
+          row.value === "custom" && "existingType" in row
+            ? details.find((detail) => detail.type === row.existingType)
+            : details.find((detail) => detail.type === row.value);
+        return (
+          <fieldset className="admin-product-detail-row" key={`${row.value}-${index}`}>
+            <legend>{row.label}</legend>
+            <input type="hidden" name="detailType" value={row.value} />
+            <label>
+              Section title
+              <input
+                name="detailTitle"
+                defaultValue={existing?.title ?? (row.value === "custom" ? "" : row.label)}
+                placeholder={row.label}
+              />
+            </label>
+            {row.value === "custom" ? (
+              <label>
+                Custom type
+                <input
+                  name="detailCustomType"
+                  defaultValue={"existingType" in row ? row.existingType : ""}
+                  placeholder="For example: sourcing, dosage, allergen"
+                />
+              </label>
+            ) : (
+              <input type="hidden" name="detailCustomType" value="" />
+            )}
+            <label className="admin-product-detail-content">
+              Details
+              <textarea
+                name="detailContent"
+                defaultValue={existing?.content ?? ""}
+                placeholder={row.placeholder}
+              />
+            </label>
+          </fieldset>
+        );
+      })}
     </div>
   );
 }

@@ -50,6 +50,7 @@ export type Product = {
   categoryId?: string | null;
   category?: Category | null;
   tags: string[];
+  details?: ProductDetailSection[] | null;
   images?: ProductImage[];
   variants?: ProductVariant[];
   reviews?: Review[];
@@ -408,6 +409,104 @@ export type AdminCustomer = {
   lastOrderAt?: string | null;
 };
 
+export type ProductDetailType =
+  | "usage"
+  | "storage"
+  | "nutrition"
+  | "side_effects"
+  | "ingredients"
+  | "warnings"
+  | "custom";
+
+export type ProductDetailSection = {
+  type: ProductDetailType | string;
+  title: string;
+  content: string;
+};
+
+export type AdminCustomerIntelligence = {
+  customer: Pick<AdminCustomer, "id" | "name" | "email" | "phone" | "isActive" | "createdAt"> & {
+    updatedAt: string;
+  };
+  summary: {
+    orders: number;
+    recognizedOrders: number;
+    lifetimeSpend: number;
+    averageOrderValue: number;
+    cartItems: number;
+    cartSubtotal: number;
+    wishlistItems: number;
+    reviews: number;
+    returns: number;
+    productViews: number;
+    lastOrderAt?: string | null;
+    lastSeenAt?: string | null;
+  };
+  segments: string[];
+  preferences?: NotificationPreferences | null;
+  addresses: Address[];
+  cart?: {
+    id: string;
+    updatedAt: string;
+    items: Array<{
+      id: string;
+      product: Product;
+      variant?: ProductVariant | null;
+      quantity: number;
+      unitPrice: number;
+      createdAt: string;
+    }>;
+  } | null;
+  wishlist: Array<{ product: Product; createdAt: string }>;
+  viewedProducts: Array<{
+    product: Product;
+    views: number;
+    carts: number;
+    purchased: boolean;
+    lastViewedAt: string;
+  }>;
+  viewedNotPurchased: Array<{
+    product: Product;
+    views: number;
+    carts: number;
+    purchased: boolean;
+    lastViewedAt: string;
+  }>;
+  orders: Order[];
+  reviews: Review[];
+  returns: ReturnRequest[];
+  stockAlerts: Array<{
+    id: string;
+    product: Pick<Product, "id" | "name" | "slug" | "imageUrl">;
+    variantId?: string | null;
+    notifiedAt?: string | null;
+    createdAt: string;
+  }>;
+  topInterests: Array<{ label: string; count: number }>;
+  recentActivity: Array<{
+    id: string;
+    type: string;
+    productId?: string | null;
+    product?: Product | null;
+    query?: string | null;
+    metadata?: Record<string, unknown> | null;
+    createdAt: string;
+  }>;
+  acquisition: Array<{
+    source?: string | null;
+    medium?: string | null;
+    campaign?: string | null;
+    landingPage?: string | null;
+    createdAt: string;
+    lastSeenAt: string;
+  }>;
+  recommendations: Array<{
+    title: string;
+    detail: string;
+    action: string;
+  }>;
+};
+
 export type Promotion = {
   id: string;
   name: string;
@@ -587,6 +686,18 @@ export type NotificationPreferences = {
   marketingEmail: boolean;
   backInStock: boolean;
   priceDrop: boolean;
+};
+
+export type StockAlertSubscription = {
+  subscribed: boolean;
+  alert?: {
+    id: string;
+    userId: string;
+    productId: string;
+    variantId?: string | null;
+    notifiedAt?: string | null;
+    createdAt: string;
+  } | null;
 };
 
 export type CustomerNotification = {
@@ -1340,6 +1451,15 @@ export async function trackAnalyticsEvent(input: {
   metadata?: Record<string, unknown>;
 }) {
   const params = new URLSearchParams(window.location.search);
+  if (input.type === "PRODUCT_VIEWED" && input.productId) {
+    const key = `my-ecom-product-viewed:${input.productId}`;
+    const now = Date.now();
+    const previous = Number(window.sessionStorage.getItem(key) ?? 0);
+    if (previous && now - previous < 60 * 1000) {
+      return { skipped: true };
+    }
+    window.sessionStorage.setItem(key, String(now));
+  }
   return request("/analytics/events", {
     method: "POST",
     body: JSON.stringify({
@@ -1515,6 +1635,13 @@ export async function subscribeStockAlert(productId: string, variantId?: string)
   });
 }
 
+export async function fetchStockAlertSubscription(productId: string, variantId?: string) {
+  const query = variantId ? `?variantId=${encodeURIComponent(variantId)}` : "";
+  return request<StockAlertSubscription>(
+    `/products/${encodeURIComponent(productId)}/stock-alert${query}`
+  );
+}
+
 export async function createAdminResource<T>(
   path:
     | "brands"
@@ -1641,6 +1768,7 @@ export async function updateAdminProduct(id: string, input: {
   brandId?: string;
   categoryId?: string;
   tags?: string[];
+  details?: ProductDetailSection[];
 }) {
   return request<Product>(`/admin/products/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -1663,6 +1791,7 @@ export type ComboDealInput = {
   status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
   badge?: string;
   tags?: string[];
+  details?: ProductDetailSection[];
 };
 
 export async function createAdminComboDeal(input: ComboDealInput) {
@@ -1707,6 +1836,12 @@ export async function updateAdminCustomer(
     method: "PATCH",
     body: JSON.stringify(input)
   });
+}
+
+export async function fetchAdminCustomerIntelligence(id: string) {
+  return request<AdminCustomerIntelligence>(
+    `/admin/customers/${encodeURIComponent(id)}/intelligence`
+  );
 }
 
 export async function fetchAdminCustomers(search?: string) {

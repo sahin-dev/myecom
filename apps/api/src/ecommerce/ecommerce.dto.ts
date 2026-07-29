@@ -145,6 +145,17 @@ export class CreateBannerDto {
   isActive?: boolean;
 }
 
+export class ProductDetailDto {
+  @IsString()
+  type!: string;
+
+  @IsString()
+  title!: string;
+
+  @IsString()
+  content!: string;
+}
+
 export class CreateProductDto {
   @IsString()
   name!: string;
@@ -242,6 +253,12 @@ export class CreateProductDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductDetailDto)
+  details?: ProductDetailDto[];
 }
 
 export class CheckoutItemDto {
@@ -444,6 +461,12 @@ export class AdminUpdateProductDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductDetailDto)
+  details?: ProductDetailDto[];
 }
 
 export class AdminUpdateBannerDto {

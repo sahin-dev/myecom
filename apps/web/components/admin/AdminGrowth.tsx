@@ -42,12 +42,16 @@ import {
   AdminConfirmDialog,
   AdminError,
   AdminLoading,
+  AdminPagination,
   AdminPageTitle,
   AdminSectionHeader,
   AdminToast,
   StatusBadge,
   useAdminToast
 } from "./AdminShared";
+
+const promotionPageSize = 6;
+const reviewPageSize = 8;
 
 const promotionScopes: Array<{
   value: Promotion["scope"];
@@ -90,6 +94,7 @@ export function AdminGrowth() {
   const [reviewReplies, setReviewReplies] = useState<Record<string, string>>({});
   const [reviewPriorities, setReviewPriorities] = useState<Record<string, number>>({});
   const [reviewFilter, setReviewFilter] = useState<"ALL" | Review["status"] | "HOMEPAGE">("PENDING");
+  const [reviewPage, setReviewPage] = useState(1);
   const [expandedReviewId, setExpandedReviewId] = useState<string | null>(null);
   const [editingPromotion, setEditingPromotion] = useState<Promotion | null>(null);
   const [promotionEditorOpen, setPromotionEditorOpen] = useState(false);
@@ -98,6 +103,7 @@ export function AdminGrowth() {
   const [promotionTargetIds, setPromotionTargetIds] = useState<string[]>([]);
   const [promotionFilter, setPromotionFilter] = useState<"ALL" | "ACTIVE" | "PAUSED" | "UPCOMING" | "ENDED">("ALL");
   const [promotionSearch, setPromotionSearch] = useState("");
+  const [promotionPage, setPromotionPage] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -276,6 +282,11 @@ export function AdminGrowth() {
     }),
     [promotionFilter, promotionSearch, promotions]
   );
+  const promotionPages = Math.max(1, Math.ceil(visiblePromotions.length / promotionPageSize));
+  const pagedPromotions = visiblePromotions.slice(
+    (promotionPage - 1) * promotionPageSize,
+    promotionPage * promotionPageSize
+  );
 
   const visibleReviews = useMemo(
     () => reviews.filter((review) =>
@@ -287,6 +298,28 @@ export function AdminGrowth() {
     ),
     [reviewFilter, reviews]
   );
+  const reviewPages = Math.max(1, Math.ceil(visibleReviews.length / reviewPageSize));
+  const pagedReviews = visibleReviews.slice(
+    (reviewPage - 1) * reviewPageSize,
+    reviewPage * reviewPageSize
+  );
+
+  useEffect(() => {
+    setPromotionPage(1);
+  }, [promotionFilter, promotionSearch]);
+
+  useEffect(() => {
+    if (promotionPage > promotionPages) setPromotionPage(promotionPages);
+  }, [promotionPage, promotionPages]);
+
+  useEffect(() => {
+    setReviewPage(1);
+    setExpandedReviewId(null);
+  }, [reviewFilter]);
+
+  useEffect(() => {
+    if (reviewPage > reviewPages) setReviewPage(reviewPages);
+  }, [reviewPage, reviewPages]);
 
   if (loading && !analytics) return <AdminLoading label="Connecting customer and revenue signals..." />;
   if (error && !analytics) return <AdminError message={error} retry={() => void load()} />;
@@ -427,7 +460,7 @@ export function AdminGrowth() {
 
         <div className={`promotion-management-layout ${promotionEditorOpen ? "has-editor" : ""}`}>
           <div className="promotion-campaign-list">
-            {visiblePromotions.length ? visiblePromotions.map((promotion) => {
+            {visiblePromotions.length ? pagedPromotions.map((promotion) => {
               const lifecycle = promotionLifecycle(promotion);
               const targets = promotion.targetIds
                 .map((id) => promotionTargetNames.get(id))
@@ -483,6 +516,13 @@ export function AdminGrowth() {
                 <p>Change the filters or create a new campaign.</p>
               </div>
             )}
+            <AdminPagination
+              page={promotionPage}
+              pages={promotionPages}
+              total={visiblePromotions.length}
+              pageSize={promotionPageSize}
+              onPageChange={setPromotionPage}
+            />
           </div>
 
           {promotionEditorOpen ? (
@@ -656,7 +696,7 @@ export function AdminGrowth() {
         </div>
 
         <div className="review-moderation-list">
-          {visibleReviews.length ? visibleReviews.map((review) => {
+          {visibleReviews.length ? pagedReviews.map((review) => {
             const expanded = expandedReviewId === review.id;
             return (
               <article className={`review-moderation-card ${expanded ? "is-expanded" : ""}`} key={review.id}>
@@ -755,6 +795,13 @@ export function AdminGrowth() {
               <p>Select another status to review previous decisions.</p>
             </div>
           )}
+          <AdminPagination
+            page={reviewPage}
+            pages={reviewPages}
+            total={visibleReviews.length}
+            pageSize={reviewPageSize}
+            onPageChange={setReviewPage}
+          />
         </div>
       </section>
     </div>

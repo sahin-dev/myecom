@@ -39,6 +39,7 @@ import {
   AdminConfirmDialog,
   AdminError,
   AdminLoading,
+  AdminPagination,
   AdminPageTitle,
   AdminSectionHeader,
   AdminToast,
@@ -46,6 +47,9 @@ import {
 } from "./AdminShared";
 
 type TeamView = "staff" | "roles" | "audit";
+const staffPageSize = 10;
+const rolePageSize = 8;
+const auditPageSize = 15;
 
 export function AdminTeam() {
   const { user } = useAuth();
@@ -64,6 +68,9 @@ export function AdminTeam() {
   const [roles, setRoles] = useState<AccessRole[]>([]);
   const [groups, setGroups] = useState<PermissionGroup[]>([]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [staffPage, setStaffPage] = useState(1);
+  const [rolePage, setRolePage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
   const [editingRole, setEditingRole] = useState<AccessRole | null>(null);
   const [roleName, setRoleName] = useState("");
   const [roleDescription, setRoleDescription] = useState("");
@@ -241,6 +248,24 @@ export function AdminTeam() {
   }
 
   const assignableRoles = roles.filter((role) => role.isActive && role.key !== "owner");
+  const staffPages = Math.max(1, Math.ceil(staff.length / staffPageSize));
+  const pagedStaff = staff.slice((staffPage - 1) * staffPageSize, staffPage * staffPageSize);
+  const rolePages = Math.max(1, Math.ceil(roles.length / rolePageSize));
+  const pagedRoles = roles.slice((rolePage - 1) * rolePageSize, rolePage * rolePageSize);
+  const auditPages = Math.max(1, Math.ceil(logs.length / auditPageSize));
+  const pagedLogs = logs.slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize);
+
+  useEffect(() => {
+    if (staffPage > staffPages) setStaffPage(staffPages);
+  }, [staffPage, staffPages]);
+
+  useEffect(() => {
+    if (rolePage > rolePages) setRolePage(rolePages);
+  }, [rolePage, rolePages]);
+
+  useEffect(() => {
+    if (auditPage > auditPages) setAuditPage(auditPages);
+  }, [auditPage, auditPages]);
   const editingProtectedSystem = editingRole?.isSystem === true;
 
   if (loading && !staff.length && !roles.length) return <AdminLoading label="Loading roles and staff access..." />;
@@ -309,7 +334,7 @@ export function AdminTeam() {
             <div className="admin-table-wrap">
               <table className="admin-table">
                 <thead><tr><th>Team member</th><th>Role</th><th>Permission scope</th><th>Status</th><th>Action</th></tr></thead>
-                <tbody>{staff.map((member) => {
+                <tbody>{pagedStaff.map((member) => {
                   const protectedAccount = member.role === "OWNER";
                   const assigned = roles.find((role) => role.id === member.accessRole?.id);
                   return (
@@ -344,6 +369,13 @@ export function AdminTeam() {
                 })}</tbody>
               </table>
             </div>
+            <AdminPagination
+              page={staffPage}
+              pages={staffPages}
+              total={staff.length}
+              pageSize={staffPageSize}
+              onPageChange={setStaffPage}
+            />
           </section>
         </>
       ) : null}
@@ -356,12 +388,19 @@ export function AdminTeam() {
               description="Presets are maintained by the platform. Duplicate one for a tailored role."
               action={can("roles.create") ? <button type="button" className="secondary-action" onClick={() => beginRole()}><Plus size={16} /> New role</button> : undefined}
             />
-            {roles.map((role) => (
+            {pagedRoles.map((role) => (
               <button type="button" className={editingRole?.id === role.id ? "active" : ""} key={role.id} onClick={() => beginRole(role)}>
                 <span><strong>{role.name}</strong><small>{role.description ?? "Custom access policy"}</small></span>
                 <span><b>{role.permissions.includes("*") ? "All" : role.permissions.length}</b><small>permissions · {role._count.users} staff</small></span>
               </button>
             ))}
+            <AdminPagination
+              page={rolePage}
+              pages={rolePages}
+              total={roles.length}
+              pageSize={rolePageSize}
+              onPageChange={setRolePage}
+            />
           </section>
 
           <form className="admin-data-panel admin-role-editor" onSubmit={saveRole}>
@@ -413,7 +452,7 @@ export function AdminTeam() {
         <section className="admin-data-panel">
           <AdminSectionHeader title="Audit history" description="Newest administrative changes appear first" />
           <div className="admin-audit-list">
-            {logs.map((log) => (
+            {pagedLogs.map((log) => (
               <article key={log.id}>
                 <span><ShieldCheck size={16} /></span>
                 <div><strong>{log.action.replace(/[._]/g, " ")}</strong><p>{log.actor?.name ?? "System"} · {log.entity}{log.entityId ? ` · ${log.entityId}` : ""}</p></div>
@@ -422,6 +461,13 @@ export function AdminTeam() {
             ))}
             {!logs.length ? <p>No administrative changes have been recorded yet.</p> : null}
           </div>
+          <AdminPagination
+            page={auditPage}
+            pages={auditPages}
+            total={logs.length}
+            pageSize={auditPageSize}
+            onPageChange={setAuditPage}
+          />
         </section>
       ) : null}
     </div>

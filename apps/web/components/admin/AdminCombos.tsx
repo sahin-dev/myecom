@@ -25,12 +25,15 @@ import {
   AdminError,
   AdminLoading,
   AdminMultiUploadField,
+  AdminPagination,
   AdminPageTitle,
   AdminSectionHeader,
   AdminToast,
   StatusBadge,
   useAdminToast
 } from "./AdminShared";
+
+const comboPageSize = 10;
 
 function imageUrls(product: Product) {
   const urls = product.images?.map((image) => image.url) ?? [];
@@ -45,6 +48,7 @@ export function AdminCombos() {
   const [images, setImages] = useState<string[]>([]);
   const [componentIds, setComponentIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [componentSearch, setComponentSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -78,6 +82,16 @@ export function AdminCombos() {
           product.description.toLowerCase().includes(query))
     );
   }, [catalog, search]);
+  const comboPages = Math.max(1, Math.ceil(combos.length / comboPageSize));
+  const pagedCombos = combos.slice((page - 1) * comboPageSize, page * comboPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (page > comboPages) setPage(comboPages);
+  }, [comboPages, page]);
 
   const availableProducts = useMemo(() => {
     const query = componentSearch.trim().toLowerCase();
@@ -311,7 +325,7 @@ export function AdminCombos() {
                 <tr><th>Combo</th><th>Status</th><th>Products</th><th>Price</th><th>Homepage</th><th /></tr>
               </thead>
               <tbody>
-                {combos.map((combo) => (
+                {pagedCombos.map((combo) => (
                   <tr
                     key={combo.id}
                     className={selected?.id === combo.id ? "selected" : ""}
@@ -344,6 +358,13 @@ export function AdminCombos() {
               </tbody>
             </table>
           </div>
+          <AdminPagination
+            page={page}
+            pages={comboPages}
+            total={combos.length}
+            pageSize={comboPageSize}
+            onPageChange={setPage}
+          />
         </section>
 
         {selected || creating ? (

@@ -1,19 +1,113 @@
 "use client";
 
-import { Download, Mail, RefreshCw, Search, UserRoundCheck, UsersRound } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  Bell,
+  Download,
+  Eye,
+  Heart,
+  Mail,
+  MapPin,
+  PackageCheck,
+  RefreshCw,
+  Search,
+  ShoppingBag,
+  Sparkles,
+  Star,
+  Target,
+  UsersRound
+} from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { AdminCustomer, fetchAdminCustomers, formatMoney, updateAdminCustomer } from "../../lib/catalog";
+import {
+  AdminCustomer,
+  AdminCustomerIntelligence,
+  fetchAdminCustomerIntelligence,
+  fetchAdminCustomers,
+  formatMoney,
+  updateAdminCustomer
+} from "../../lib/catalog";
 import {
   AdminError,
   AdminLoading,
+  AdminPagination,
   AdminPageTitle,
-  AdminSectionHeader
+  AdminSectionHeader,
+  StatusBadge,
+  formatStatus
 } from "./AdminShared";
+
+type CustomerSegment = "all" | "high-value" | "loyal" | "returning" | "first-time" | "registered";
+
+const segmentFilters: Array<{ id: CustomerSegment; label: string }> = [
+  { id: "all", label: "All customers" },
+  { id: "high-value", label: "High value" },
+  { id: "loyal", label: "Loyal" },
+  { id: "returning", label: "Returning" },
+  { id: "first-time", label: "First-time" },
+  { id: "registered", label: "No order yet" }
+];
+const customerPageSize = 12;
+
+const dateFormatter = new Intl.DateTimeFormat("en-BD", {
+  month: "short",
+  day: "numeric",
+  year: "numeric"
+});
+const dateTimeFormatter = new Intl.DateTimeFormat("en-BD", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit"
+});
+
+function formatDate(value?: string | null) {
+  if (!value) return "Not yet";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not yet" : dateFormatter.format(date);
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Not yet";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not yet" : dateTimeFormatter.format(date);
+}
+
+function segmentFor(customer: AdminCustomer) {
+  if (customer.orders > 3) return "Loyal";
+  if (customer.orders > 1) return "Returning";
+  if (customer.orders === 1) return "First-time";
+  return "Registered";
+}
+
+function matchesSegment(customer: AdminCustomer, segment: CustomerSegment) {
+  if (segment === "all") return true;
+  if (segment === "high-value") return customer.lifetimeSpend >= 10000;
+  if (segment === "loyal") return customer.orders > 3;
+  if (segment === "returning") return customer.orders > 1 && customer.orders <= 3;
+  if (segment === "first-time") return customer.orders === 1;
+  return customer.orders === 0;
+}
+
+function productImage(product: { imageUrl?: string | null; images?: Array<{ url: string }> }) {
+  return product.imageUrl || product.images?.[0]?.url || "";
+}
+
+function productInitial(name: string) {
+  return name.slice(0, 1).toUpperCase();
+}
 
 export function AdminCustomers() {
   const [customers, setCustomers] = useState<AdminCustomer[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<AdminCustomerIntelligence | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
+  const [segment, setSegment] = useState<CustomerSegment>("all");
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -21,7 +115,13 @@ export function AdminCustomers() {
     setLoading(true);
     setError("");
     try {
-      setCustomers(await fetchAdminCustomers(search));
+      const nextCustomers = await fetchAdminCustomers(search);
+      setCustomers(nextCustomers);
+      setSelectedCustomerId((current) =>
+        current && nextCustomers.some((customer) => customer.id === current)
+          ? current
+          : nextCustomers[0]?.id ?? null
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Customers are unavailable.");
     } finally {
@@ -29,19 +129,56 @@ export function AdminCustomers() {
     }
   }, [search]);
 
+  const loadDetail = useCallback(async (id: string) => {
+    setDetailLoading(true);
+    setDetailError("");
+    try {
+      setDetail(await fetchAdminCustomerIntelligence(id));
+    } catch (caught) {
+      setDetailError(caught instanceof Error ? caught.message : "Customer profile is unavailable.");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!selectedCustomerId) {
+      setDetail(null);
+      return;
+    }
+    void loadDetail(selectedCustomerId);
+  }, [loadDetail, selectedCustomerId]);
+
+  const filteredCustomers = useMemo(
+    () => customers.filter((customer) => matchesSegment(customer, segment)),
+    [customers, segment]
+  );
+  const customerPages = Math.max(1, Math.ceil(filteredCustomers.length / customerPageSize));
+  const pagedCustomers = filteredCustomers.slice((page - 1) * customerPageSize, page * customerPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, segment]);
+
+  useEffect(() => {
+    if (page > customerPages) setPage(customerPages);
+  }, [customerPages, page]);
+
   const summary = useMemo(() => {
     const buyers = customers.filter((customer) => customer.orders > 0);
     const repeat = customers.filter((customer) => customer.orders > 1);
+    const highValue = customers.filter((customer) => customer.lifetimeSpend >= 10000);
     const spend = customers.reduce((sum, customer) => sum + customer.lifetimeSpend, 0);
     return {
       registered: customers.length,
       buyers: buyers.length,
       repeat: repeat.length,
-      repeatRate: buyers.length ? (repeat.length / buyers.length) * 100 : 0,
+      highValue: highValue.length,
       averageValue: buyers.length ? spend / buyers.length : 0
     };
   }, [customers]);
@@ -54,7 +191,7 @@ export function AdminCustomers() {
   function exportCustomers() {
     if (!customers.length) return;
     const rows = [
-      ["Name", "Email", "Phone", "Joined", "Orders", "Lifetime spend", "Last order"],
+      ["Name", "Email", "Phone", "Joined", "Orders", "Lifetime spend", "Last order", "Segment"],
       ...customers.map((customer) => [
         customer.name,
         customer.email,
@@ -62,7 +199,8 @@ export function AdminCustomers() {
         customer.createdAt,
         customer.orders,
         customer.lifetimeSpend,
-        customer.lastOrderAt ?? ""
+        customer.lastOrderAt ?? "",
+        segmentFor(customer)
       ])
     ];
     const csv = rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, "\"\"")}"`).join(",")).join("\r\n");
@@ -78,6 +216,7 @@ export function AdminCustomers() {
     try {
       const updated = await updateAdminCustomer(customer.id, { isActive: !customer.isActive });
       setCustomers((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+      if (detail?.customer.id === customer.id) void loadDetail(customer.id);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Customer access could not be changed.");
     }
@@ -87,11 +226,11 @@ export function AdminCustomers() {
   if (error && !customers.length) return <AdminError message={error} retry={() => void load()} />;
 
   return (
-    <div className="admin-page">
+    <div className="admin-page admin-customer-workspace">
       <AdminPageTitle
         eyebrow="Customer intelligence"
         title="Customers"
-        description="Understand value, purchase frequency, and retention opportunities."
+        description="Understand account value, intent signals, cart contents, product views, and marketing opportunities."
         actions={
           <>
             <button className="secondary-action" type="button" onClick={exportCustomers}><Download size={17} /> Export</button>
@@ -104,64 +243,327 @@ export function AdminCustomers() {
         <div><small>Registered</small><strong>{summary.registered}</strong></div>
         <div><small>Customers with orders</small><strong>{summary.buyers}</strong></div>
         <div><small>Repeat buyers</small><strong>{summary.repeat}</strong></div>
-        <div><small>Repeat rate</small><strong>{summary.repeatRate.toFixed(1)}%</strong></div>
+        <div><small>High value</small><strong>{summary.highValue}</strong></div>
         <div><small>Average lifetime value</small><strong>{formatMoney(summary.averageValue)}</strong></div>
       </section>
 
-      <form className="admin-filterbar customer-search" onSubmit={applySearch}>
-        <label className="admin-search"><Search size={17} /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search name, email, or phone" /></label>
-        <button className="primary-action" type="submit">Search</button>
-      </form>
+      <div className="customer-intelligence-layout">
+        <section className="customer-directory-panel">
+          <AdminSectionHeader
+            title="Customer directory"
+            description="Search, segment, and open a customer profile."
+          />
 
-      <section>
-        <AdminSectionHeader
-          title={`${customers.length} customer records`}
-          description="Lifetime values exclude cancelled orders"
+          <form className="admin-filterbar customer-search" onSubmit={applySearch}>
+            <label className="admin-search"><Search size={17} /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search name, email, or phone" /></label>
+            <button className="primary-action" type="submit">Search</button>
+          </form>
+
+          <div className="customer-segment-tabs" role="tablist" aria-label="Customer segments">
+            {segmentFilters.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className={segment === item.id ? "active" : ""}
+                onClick={() => setSegment(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="customer-record-list">
+            {pagedCustomers.map((customer) => {
+              const customerSegment = segmentFor(customer);
+              return (
+                <button
+                  type="button"
+                  key={customer.id}
+                  className={selectedCustomerId === customer.id ? "active" : ""}
+                  onClick={() => setSelectedCustomerId(customer.id)}
+                >
+                  <span className="customer-avatar">{customer.name.slice(0, 1).toUpperCase()}</span>
+                  <span>
+                    <strong>{customer.name}</strong>
+                    <small>{customer.email}</small>
+                  </span>
+                  <b className={`admin-customer-segment ${customerSegment.toLowerCase()}`}>{customerSegment}</b>
+                  <span className="customer-record-metrics">
+                    <small>{customer.orders} orders</small>
+                    <strong>{formatMoney(customer.lifetimeSpend)}</strong>
+                  </span>
+                  <ArrowRight size={16} />
+                </button>
+              );
+            })}
+            {!filteredCustomers.length ? (
+              <div className="admin-empty"><UsersRound size={30} /><strong>No customers found</strong><p>Try a different search or segment.</p></div>
+            ) : null}
+          </div>
+          <AdminPagination
+            page={page}
+            pages={customerPages}
+            total={filteredCustomers.length}
+            pageSize={customerPageSize}
+            onPageChange={setPage}
+          />
+        </section>
+
+        <CustomerIntelligencePanel
+          detail={detail}
+          loading={detailLoading}
+          error={detailError}
+          onRefresh={() => selectedCustomerId ? void loadDetail(selectedCustomerId) : undefined}
+          onToggle={() => {
+            const customer = customers.find((item) => item.id === selectedCustomerId);
+            if (customer) void toggleCustomer(customer);
+          }}
         />
-        <div className="admin-table-wrap">
-          <table className="admin-table admin-customers-table">
-            <thead><tr><th>Customer</th><th>Joined</th><th>Orders</th><th>Lifetime value</th><th>Last order</th><th>Segment</th><th /></tr></thead>
-            <tbody>
-              {customers.map((customer) => {
-                const segment =
-                  customer.orders > 2 ? "Loyal" :
-                  customer.orders > 1 ? "Returning" :
-                  customer.orders === 1 ? "First-time" : "Registered";
-                return (
-                  <tr key={customer.id}>
-                    <td>
-                      <div className="admin-customer-cell">
-                        <span>{customer.name.slice(0, 1).toUpperCase()}</span>
-                        <div><strong>{customer.name}</strong><small>{customer.email}{customer.phone ? ` · ${customer.phone}` : ""}</small></div>
-                      </div>
-                    </td>
-                    <td>{new Date(customer.createdAt).toLocaleDateString("en-BD")}</td>
-                    <td>{customer.orders}</td>
-                    <td><strong>{formatMoney(customer.lifetimeSpend)}</strong></td>
-                    <td>{customer.lastOrderAt ? new Date(customer.lastOrderAt).toLocaleDateString("en-BD") : "No order"}</td>
-                    <td><span className={`admin-customer-segment ${segment.toLowerCase()}`}>{segment}</span></td>
-                    <td>
-                      <a href={`mailto:${customer.email}`} title={`Email ${customer.name}`}><Mail size={16} /></a>
-                      <button type="button" onClick={() => void toggleCustomer(customer)}>{customer.isActive ? "Deactivate" : "Reactivate"}</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {!customers.length ? (
-            <div className="admin-empty"><UsersRound size={30} /><strong>No customers found</strong><p>Try a different search.</p></div>
-          ) : null}
-        </div>
-      </section>
+      </div>
 
-      <section className="admin-retention-note">
-        <UserRoundCheck size={22} />
+      {error ? <p className="admin-message is-error">{error}</p> : null}
+    </div>
+  );
+}
+
+function CustomerIntelligencePanel({
+  detail,
+  loading,
+  error,
+  onRefresh,
+  onToggle
+}: {
+  detail: AdminCustomerIntelligence | null;
+  loading: boolean;
+  error: string;
+  onRefresh: () => void;
+  onToggle: () => void;
+}) {
+  if (loading && !detail) return <AdminLoading label="Loading customer profile..." />;
+  if (error && !detail) return <AdminError message={error} retry={onRefresh} />;
+  if (!detail) {
+    return (
+      <section className="customer-intelligence-panel empty">
+        <UsersRound size={34} />
+        <strong>Select a customer</strong>
+        <p>Open a profile to see cart items, product views, wishlist intent, orders, and marketing suggestions.</p>
+      </section>
+    );
+  }
+
+  const { customer, summary } = detail;
+
+  return (
+    <section className="customer-intelligence-panel">
+      <header className="customer-profile-head">
         <div>
-          <strong>Retention is a growth lever</strong>
-          <p>Use first-time and registered segments for onboarding, and reward returning customers with relevant bundles rather than broad discounts.</p>
+          <span className="customer-avatar large">{customer.name.slice(0, 1).toUpperCase()}</span>
+          <div>
+            <p className="eyebrow">Customer profile</p>
+            <h2>{customer.name}</h2>
+            <small>{customer.email}{customer.phone ? ` / ${customer.phone}` : ""}</small>
+          </div>
+        </div>
+        <div>
+          <a className="secondary-action" href={`mailto:${customer.email}`}><Mail size={16} /> Email</a>
+          <button className="secondary-action" type="button" onClick={onToggle}>{customer.isActive ? "Deactivate" : "Reactivate"}</button>
+          <button className="admin-icon-button" type="button" onClick={onRefresh} title="Refresh profile"><RefreshCw size={16} /></button>
+        </div>
+      </header>
+
+      <div className="customer-signal-grid">
+        <SignalCard icon={PackageCheck} label="Lifetime spend" value={formatMoney(summary.lifetimeSpend)} />
+        <SignalCard icon={ShoppingBag} label="Current cart" value={formatMoney(summary.cartSubtotal)} helper={`${summary.cartItems} item${summary.cartItems === 1 ? "" : "s"}`} />
+        <SignalCard icon={Eye} label="Product views" value={String(summary.productViews)} helper={`Last seen ${formatDate(summary.lastSeenAt)}`} />
+        <SignalCard icon={Heart} label="Wishlist" value={String(summary.wishlistItems)} />
+        <SignalCard icon={Star} label="Reviews" value={String(summary.reviews)} />
+        <SignalCard icon={Activity} label="AOV" value={formatMoney(summary.averageOrderValue)} helper={`${summary.recognizedOrders} paid/delivered`} />
+      </div>
+
+      <div className="customer-intel-block">
+        <h3><Target size={16} /> Marketing segments</h3>
+        <div className="customer-intel-chips">
+          {detail.segments.map((item) => <span key={item}>{item}</span>)}
+        </div>
+      </div>
+
+      {detail.recommendations.length ? (
+        <div className="customer-intel-block">
+          <h3><Sparkles size={16} /> Recommended actions</h3>
+          <div className="customer-recommendation-list">
+            {detail.recommendations.map((item) => (
+              <article key={item.title}>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+                <small>{item.action}</small>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="customer-intel-columns">
+        <CustomerProductList
+          title="Products in cart"
+          icon={ShoppingBag}
+          empty="No active account cart."
+          items={(detail.cart?.items ?? []).map((item) => ({
+            id: item.id,
+            product: item.product,
+            meta: `${item.quantity} x ${formatMoney(item.unitPrice)}${item.variant ? ` / ${item.variant.name}` : ""}`,
+            stat: formatMoney(item.quantity * item.unitPrice)
+          }))}
+        />
+        <CustomerProductList
+          title="Viewed, not bought"
+          icon={Eye}
+          empty="No viewed product gap yet."
+          items={detail.viewedNotPurchased.map((item) => ({
+            id: item.product.id,
+            product: item.product,
+            meta: `${item.views} view${item.views === 1 ? "" : "s"} / last ${formatDate(item.lastViewedAt)}`,
+            stat: item.carts ? `${item.carts} cart` : "No cart"
+          }))}
+        />
+      </div>
+
+      <div className="customer-intel-columns">
+        <CustomerProductList
+          title="Wishlist"
+          icon={Heart}
+          empty="No wishlist items."
+          items={detail.wishlist.map((item) => ({
+            id: item.product.id,
+            product: item.product,
+            meta: item.product.category?.name ?? "Saved product",
+            stat: formatMoney(item.product.price)
+          }))}
+        />
+        <CustomerProductList
+          title="Back-in-stock leads"
+          icon={Bell}
+          empty="No stock alert requests."
+          items={detail.stockAlerts.map((item) => ({
+            id: item.id,
+            product: item.product,
+            meta: item.notifiedAt ? `Notified ${formatDate(item.notifiedAt)}` : `Requested ${formatDate(item.createdAt)}`,
+            stat: item.notifiedAt ? "Sent" : "Waiting"
+          }))}
+        />
+      </div>
+
+      <div className="customer-intel-columns">
+        <section className="customer-intel-block">
+          <h3><PackageCheck size={16} /> Recent orders</h3>
+          <div className="customer-order-mini-list">
+            {detail.orders.slice(0, 6).map((order) => (
+              <article key={order.id}>
+                <span>
+                  <strong>{order.orderNumber}</strong>
+                  <small>{formatDate(order.createdAt)} / {order.items.length} item{order.items.length === 1 ? "" : "s"}</small>
+                </span>
+                <span>
+                  <StatusBadge value={order.status} />
+                  <b>{formatMoney(order.total)}</b>
+                </span>
+              </article>
+            ))}
+            {!detail.orders.length ? <p className="customer-intel-empty">No orders yet.</p> : null}
+          </div>
+        </section>
+
+        <section className="customer-intel-block">
+          <h3><MapPin size={16} /> Profile context</h3>
+          <dl className="customer-context-list">
+            <div><dt>Joined</dt><dd>{formatDate(customer.createdAt)}</dd></div>
+            <div><dt>Last order</dt><dd>{formatDate(summary.lastOrderAt)}</dd></div>
+            <div><dt>Marketing email</dt><dd>{detail.preferences?.marketingEmail ? "Opted in" : "Not opted in"}</dd></div>
+            <div><dt>Default city</dt><dd>{detail.addresses[0]?.city ?? "Not saved"}</dd></div>
+          </dl>
+          {detail.topInterests.length ? (
+            <div className="customer-interest-list">
+              {detail.topInterests.map((item) => <span key={item.label}>{item.label}</span>)}
+            </div>
+          ) : null}
+        </section>
+      </div>
+
+      <section className="customer-intel-block">
+        <h3><Activity size={16} /> Recent activity</h3>
+        <div className="customer-activity-list">
+          {detail.recentActivity.slice(0, 10).map((activity) => (
+            <article key={activity.id}>
+              <span>{formatStatus(activity.type)}</span>
+              <strong>{activity.product?.name ?? activity.query ?? "Store activity"}</strong>
+              <small>{formatDateTime(activity.createdAt)}</small>
+            </article>
+          ))}
+          {!detail.recentActivity.length ? <p className="customer-intel-empty">No tracked activity for this account yet.</p> : null}
         </div>
       </section>
-    </div>
+    </section>
+  );
+}
+
+function SignalCard({
+  icon: Icon,
+  label,
+  value,
+  helper
+}: {
+  icon: typeof Activity;
+  label: string;
+  value: string;
+  helper?: string;
+}) {
+  return (
+    <article className="customer-signal-card">
+      <Icon size={17} />
+      <small>{label}</small>
+      <strong>{value}</strong>
+      {helper ? <span>{helper}</span> : null}
+    </article>
+  );
+}
+
+function CustomerProductList({
+  title,
+  icon: Icon,
+  empty,
+  items
+}: {
+  title: string;
+  icon: typeof ShoppingBag;
+  empty: string;
+  items: Array<{
+    id: string;
+    product: { name: string; slug?: string; imageUrl?: string | null; images?: Array<{ url: string }> };
+    meta: string;
+    stat: string;
+  }>;
+}) {
+  return (
+    <section className="customer-intel-block">
+      <h3><Icon size={16} /> {title}</h3>
+      <div className="customer-product-signal-list">
+        {items.slice(0, 6).map((item) => (
+          <article key={item.id}>
+            <span>
+              {productImage(item.product) ? (
+                <img src={productImage(item.product)} alt="" />
+              ) : (
+                productInitial(item.product.name)
+              )}
+            </span>
+            <div>
+              {item.product.slug ? <a href={`/products/${item.product.slug}`}>{item.product.name}</a> : <strong>{item.product.name}</strong>}
+              <small>{item.meta}</small>
+            </div>
+            <b>{item.stat}</b>
+          </article>
+        ))}
+        {!items.length ? <p className="customer-intel-empty">{empty}</p> : null}
+      </div>
+    </section>
   );
 }

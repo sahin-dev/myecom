@@ -143,6 +143,16 @@ export class ExperienceController {
     return this.experience.deleteReview(request.user.id, productId);
   }
 
+  @Get("products/:productId/stock-alert")
+  @UseGuards(JwtAuthGuard)
+  stockAlert(
+    @Param("productId") productId: string,
+    @Query("variantId") variantId: string | undefined,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.experience.stockAlert(request.user.id, productId, variantId);
+  }
+
   @Post("products/:productId/stock-alert")
   @UseGuards(JwtAuthGuard)
   subscribeStockAlert(

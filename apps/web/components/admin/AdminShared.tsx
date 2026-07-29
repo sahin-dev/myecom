@@ -1,6 +1,6 @@
 "use client";
 
-import { ImagePlus, Images, Plus, Trash2, UploadCloud, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ImagePlus, Images, Plus, Trash2, UploadCloud, X } from "lucide-react";
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { uploadAdminImage } from "../../lib/catalog";
 
@@ -335,6 +335,53 @@ export function AdminError({ message, retry }: { message: string; retry?: () => 
       <strong>Data could not be loaded</strong>
       <p>{message}</p>
       {retry ? <button onClick={retry}>Try again</button> : null}
+    </div>
+  );
+}
+
+export function AdminPagination({
+  page,
+  pages,
+  total,
+  pageSize,
+  onPageChange
+}: {
+  page: number;
+  pages: number;
+  total: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (total <= pageSize) return null;
+  const safePages = Math.max(1, pages);
+  const safePage = Math.min(Math.max(1, page), safePages);
+  const start = (safePage - 1) * pageSize + 1;
+  const end = Math.min(total, safePage * pageSize);
+
+  return (
+    <div className="admin-pagination" aria-label="Pagination">
+      <span>Showing {start}-{end} of {total}</span>
+      <div>
+        <button
+          type="button"
+          disabled={safePage <= 1}
+          onClick={() => onPageChange(safePage - 1)}
+          aria-label="Previous page"
+          title="Previous page"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <span>Page {safePage} of {safePages}</span>
+        <button
+          type="button"
+          disabled={safePage >= safePages}
+          onClick={() => onPageChange(safePage + 1)}
+          aria-label="Next page"
+          title="Next page"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
     </div>
   );
 }

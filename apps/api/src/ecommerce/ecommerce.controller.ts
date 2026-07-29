@@ -321,6 +321,13 @@ export class EcommerceController {
     return this.ecommerce.adminCustomers(search);
   }
 
+  @Get("admin/customers/:id/intelligence")
+  @UseGuards(AdminGuard)
+  @RequirePermission("customers.read")
+  adminCustomerIntelligence(@Param("id") id: string) {
+    return this.ecommerce.adminCustomerIntelligence(id);
+  }
+
   @Patch("admin/customers/:id")
   @UseGuards(AdminGuard)
   @RequirePermission("customers.write")

@@ -4,6 +4,8 @@ import {
   Bell,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -72,6 +74,8 @@ function addressText(address: Address) {
 
 const standardReturnStages = ["REQUESTED", "APPROVED", "RECEIVED", "RESOLVED"];
 const refundReturnStages = ["REQUESTED", "APPROVED", "RECEIVED", "REFUND_PENDING", "REFUNDED"];
+const accountOrderPageSize = 5;
+const accountReturnPageSize = 4;
 
 const returnStatusCopy: Record<string, string> = {
   REQUESTED: "Waiting for our team to review your request.",
@@ -89,9 +93,11 @@ export function AccountPage() {
   const { settings } = useSiteSettings();
   const [orders, setOrders] = useState<Order[]>([]);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [orderPage, setOrderPage] = useState(1);
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
+  const [returnPage, setReturnPage] = useState(1);
   const [recommendations, setRecommendations] = useState<Product[]>([]);
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [notifications, setNotifications] = useState<CustomerNotification[]>([]);
@@ -146,10 +152,22 @@ export function AccountPage() {
     () => eligibleOrders.find((order) => order.id === returnOrderId),
     [eligibleOrders, returnOrderId]
   );
+  const orderPages = Math.max(1, Math.ceil(orders.length / accountOrderPageSize));
+  const pagedOrders = orders.slice((orderPage - 1) * accountOrderPageSize, orderPage * accountOrderPageSize);
+  const returnPages = Math.max(1, Math.ceil(returns.length / accountReturnPageSize));
+  const pagedReturns = returns.slice((returnPage - 1) * accountReturnPageSize, returnPage * accountReturnPageSize);
   const unreadNotificationCount = notifications.filter((item) => !item.isRead).length;
   const activeReturnCount = returns.filter(
     (item) => !["RESOLVED", "REFUNDED", "REJECTED", "CANCELLED"].includes(item.status)
   ).length;
+
+  useEffect(() => {
+    if (orderPage > orderPages) setOrderPage(orderPages);
+  }, [orderPage, orderPages]);
+
+  useEffect(() => {
+    if (returnPage > returnPages) setReturnPage(returnPages);
+  }, [returnPage, returnPages]);
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -493,7 +511,7 @@ export function AccountPage() {
           </div>
           {orders.length ? (
             <div className="account-orders">
-              {orders.map((order) => {
+              {pagedOrders.map((order) => {
                 const expanded = expandedOrderId === order.id;
                 return (
                   <article key={order.id} className={expanded ? "expanded" : ""}>
@@ -555,6 +573,13 @@ export function AccountPage() {
                   </article>
                 );
               })}
+              <AccountPagination
+                page={orderPage}
+                pages={orderPages}
+                total={orders.length}
+                pageSize={accountOrderPageSize}
+                onPageChange={setOrderPage}
+              />
             </div>
           ) : (
             <div className="account-empty">
@@ -749,7 +774,7 @@ export function AccountPage() {
           ) : <p className="muted-copy">Orders delivered within the 48-hour return window will appear here.</p>}
           {returnMessage ? <p className="detail-notice">{returnMessage}</p> : null}
           <div className="return-list">
-            {returns.map((item) => {
+            {pagedReturns.map((item) => {
               const returnStages =
                 item.resolutionType === "REFUND" ||
                 item.status === "REFUND_PENDING" ||
@@ -815,6 +840,13 @@ export function AccountPage() {
                 </article>
               );
             })}
+            <AccountPagination
+              page={returnPage}
+              pages={returnPages}
+              total={returns.length}
+              pageSize={accountReturnPageSize}
+              onPageChange={setReturnPage}
+            />
           </div>
         </div>
       </section>
@@ -912,6 +944,50 @@ function ReturnItemPicker({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function AccountPagination({
+  page,
+  pages,
+  total,
+  pageSize,
+  onPageChange
+}: {
+  page: number;
+  pages: number;
+  total: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (total <= pageSize) return null;
+  const safePage = Math.min(Math.max(1, page), pages);
+  const start = (safePage - 1) * pageSize + 1;
+  const end = Math.min(total, safePage * pageSize);
+
+  return (
+    <div className="account-pagination">
+      <span>Showing {start}-{end} of {total}</span>
+      <div>
+        <button
+          type="button"
+          disabled={safePage <= 1}
+          onClick={() => onPageChange(safePage - 1)}
+          aria-label="Previous page"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <small>Page {safePage} of {pages}</small>
+        <button
+          type="button"
+          disabled={safePage >= pages}
+          onClick={() => onPageChange(safePage + 1)}
+          aria-label="Next page"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
     </div>
   );
 }

@@ -117,6 +117,7 @@ const DEFAULT_INFO_PAGES: Record<string, { eyebrow: string; title: string; intro
 };
 
 const money = (value: number) => Number(value.toFixed(2));
+const ANALYTICS_DEDUPE_MS = 60 * 1000;
 
 export type PromotionLine = {
   productId: string;
@@ -244,6 +245,27 @@ export class ExperienceService {
         landingPage: dto.landingPage
       }
     });
+
+    if (dto.type === AnalyticsEventType.PRODUCT_VIEWED && dto.productId) {
+      const duplicate = await this.prisma.analyticsEvent.findFirst({
+        where: {
+          type: dto.type,
+          sessionId: session.id,
+          productId: dto.productId,
+          createdAt: { gte: new Date(Date.now() - ANALYTICS_DEDUPE_MS) }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+      if (duplicate) {
+        return userId && !duplicate.userId
+          ? this.prisma.analyticsEvent.update({
+              where: { id: duplicate.id },
+              data: { userId }
+            })
+          : duplicate;
+      }
+    }
+
     return this.prisma.analyticsEvent.create({
       data: {
         type: dto.type,
@@ -1318,6 +1340,14 @@ export class ExperienceService {
     if (!product) throw new NotFoundException("Product not found.");
 
     const normalizedVariantId = variantId ?? null;
+    if (normalizedVariantId) {
+      const variant = await this.prisma.productVariant.findFirst({
+        where: { id: normalizedVariantId, productId, isActive: true },
+        select: { id: true }
+      });
+      if (!variant) throw new NotFoundException("Product option not found.");
+    }
+
     const existingAlert = await this.prisma.stockAlert.findFirst({
       where: { userId, productId, variantId: normalizedVariantId }
     });
@@ -1331,6 +1361,32 @@ export class ExperienceService {
     return this.prisma.stockAlert.create({
       data: { userId, productId, variantId: normalizedVariantId }
     });
+  }
+
+  async stockAlert(userId: string, productId: string, variantId?: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true }
+    });
+    if (!product) throw new NotFoundException("Product not found.");
+
+    const normalizedVariantId = variantId ?? null;
+    if (normalizedVariantId) {
+      const variant = await this.prisma.productVariant.findFirst({
+        where: { id: normalizedVariantId, productId, isActive: true },
+        select: { id: true }
+      });
+      if (!variant) throw new NotFoundException("Product option not found.");
+    }
+
+    const alert = await this.prisma.stockAlert.findFirst({
+      where: { userId, productId, variantId: normalizedVariantId }
+    });
+
+    return {
+      subscribed: Boolean(alert && !alert.notifiedAt),
+      alert
+    };
   }
 
   private async notifyStockAlerts(productId: string, variantId: string | undefined, productName: string) {

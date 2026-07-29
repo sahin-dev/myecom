@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Gift, PackageCheck, ShoppingBag } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Gift, PackageCheck, ShoppingBag } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Catalog,
@@ -17,9 +17,12 @@ import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
 import { QuickVariantAdd } from "./QuickVariantAdd";
 
+const comboDealsPageSize = 8;
+
 export function ComboDealsPage() {
   const [catalog, setCatalog] = useState<Catalog>(fallbackCatalog);
   const [combos, setCombos] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,6 +36,12 @@ export function ComboDealsPage() {
       })
       .finally(() => setLoading(false));
   }, []);
+  const pages = Math.max(1, Math.ceil(combos.length / comboDealsPageSize));
+  const pagedCombos = combos.slice((page - 1) * comboDealsPageSize, page * comboDealsPageSize);
+
+  useEffect(() => {
+    if (page > pages) setPage(pages);
+  }, [page, pages]);
 
   return (
     <main className="combo-deals-page">
@@ -49,9 +58,16 @@ export function ComboDealsPage() {
       <section className="combo-deals-content" aria-live="polite">
         {loading ? <div className="shop-loading">Loading combo deals...</div> : null}
         {!loading && combos.length ? (
-          <div className="combo-deals-grid">
-            {combos.map((combo) => <ComboDealCard combo={combo} key={combo.id} />)}
-          </div>
+          <>
+            <div className="combo-deals-grid">
+              {pagedCombos.map((combo) => <ComboDealCard combo={combo} key={combo.id} />)}
+            </div>
+            <div className="shop-pagination">
+              <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={17} /> Previous</button>
+              <span>Page {page} of {pages}</span>
+              <button type="button" disabled={page >= pages} onClick={() => setPage((current) => Math.min(pages, current + 1))}>Next <ChevronRight size={17} /></button>
+            </div>
+          </>
         ) : null}
         {!loading && !combos.length ? (
           <div className="combo-deals-empty">

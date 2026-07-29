@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import {
+  AnalyticsEventType,
   CheckoutMethodType,
   OrderStatus,
   PaymentStatus,
@@ -43,8 +44,39 @@ const percentageChange = (current: number, previous: number) => {
 };
 
 const roundMoney = (value: number) => Number(value.toFixed(2));
+const ANALYTICS_ACTIVITY_DEDUPE_MS = 60 * 1000;
+const normalizeProductDetails = (
+  details?: Array<{ type: string; title: string; content: string }>
+) =>
+  details
+    ?.map((detail) => ({
+      type: detail.type.trim(),
+      title: detail.title.trim(),
+      content: detail.content.trim()
+    }))
+    .filter((detail) => detail.type && detail.title && detail.content) ?? [];
 const isRecognizedSale = (order: { paymentStatus?: PaymentStatus | null; status: OrderStatus }) =>
   order.paymentStatus === PaymentStatus.PAID || order.status === OrderStatus.DELIVERED;
+const dedupeCustomerAnalyticsEvents = <
+  T extends {
+    type: AnalyticsEventType;
+    productId?: string | null;
+    sessionId?: string | null;
+    createdAt: Date;
+  }
+>(events: T[]) => {
+  const lastProductViewByKey = new Map<string, Date>();
+  return events.filter((event) => {
+    if (event.type !== AnalyticsEventType.PRODUCT_VIEWED || !event.productId) return true;
+    const key = `${event.sessionId ?? "anonymous"}:${event.productId}`;
+    const previous = lastProductViewByKey.get(key);
+    if (previous && Math.abs(previous.getTime() - event.createdAt.getTime()) < ANALYTICS_ACTIVITY_DEDUPE_MS) {
+      return false;
+    }
+    lastProductViewByKey.set(key, event.createdAt);
+    return true;
+  });
+};
 const orderTransitions: Record<OrderStatus, OrderStatus[]> = {
   PLACED: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
   CONFIRMED: [OrderStatus.PACKED, OrderStatus.CANCELLED],
@@ -433,6 +465,7 @@ export class EcommerceService {
     const imageUrls = Array.from(
       new Set([dto.imageUrl, ...(dto.imageUrls ?? [])].filter(Boolean) as string[])
     );
+    const details = normalizeProductDetails(dto.details);
 
     return this.prisma.product.create({
       data: {
@@ -461,6 +494,7 @@ export class EcommerceService {
         brandId: dto.brandId || undefined,
         categoryId: dto.categoryId || undefined,
         tags: dto.tags ?? [],
+        details: details.length ? details : undefined,
         status: dto.status ?? ProductStatus.ACTIVE,
         images: imageUrls.length
           ? {
@@ -1638,6 +1672,7 @@ export class EcommerceService {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found.");
     const { imageUrls, ...productUpdate } = dto;
+    const details = dto.details === undefined ? undefined : normalizeProductDetails(dto.details);
     const willBeCombo = dto.isCombo ?? product.isCombo;
     const comboProductIds = dto.comboProductIds ?? product.comboProductIds;
     if (willBeCombo && dto.comboProductIds) {
@@ -1676,6 +1711,7 @@ export class EcommerceService {
         badge: dto.badge === undefined ? undefined : dto.badge.trim() || null,
         brandId: dto.brandId === undefined ? undefined : dto.brandId || null,
         categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null,
+        details: details === undefined ? undefined : details.length ? details : null,
         images:
           imageUrls === undefined
             ? undefined
@@ -1771,6 +1807,295 @@ export class EcommerceService {
         )[0]?.createdAt ?? null
       };
     });
+  }
+
+  async adminCustomerIntelligence(id: string) {
+    const customer = await this.prisma.user.findFirst({
+      where: { id, role: "CUSTOMER" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+    if (!customer) throw new NotFoundException("Customer not found.");
+
+    const [
+      orders,
+      cart,
+      wishlist,
+      addresses,
+      events,
+      reviews,
+      returns,
+      preferences,
+      stockAlerts,
+      sessions
+    ] = await Promise.all([
+      this.prisma.order.findMany({
+        where: {
+          OR: [
+            { userId: customer.id },
+            { email: { equals: customer.email, mode: "insensitive" } }
+          ]
+        },
+        include: {
+          items: true,
+          promotion: { select: { code: true, name: true } }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 25
+      }),
+      this.prisma.cart.findFirst({
+        where: { userId: customer.id },
+        include: {
+          items: {
+            include: {
+              product: {
+                include: {
+                  brand: true,
+                  category: true,
+                  images: { orderBy: { position: "asc" } },
+                  variants: { where: { isActive: true }, orderBy: { createdAt: "asc" } }
+                }
+              },
+              variant: true
+            }
+          }
+        }
+      }),
+      this.prisma.wishlistItem.findMany({
+        where: { userId: customer.id },
+        include: {
+          product: {
+            include: {
+              brand: true,
+              category: true,
+              images: { orderBy: { position: "asc" } },
+              variants: { where: { isActive: true }, orderBy: { createdAt: "asc" } }
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 20
+      }),
+      this.prisma.address.findMany({
+        where: { userId: customer.id },
+        orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
+      }),
+      this.prisma.analyticsEvent.findMany({
+        where: { userId: customer.id },
+        include: {
+          product: {
+            include: {
+              brand: true,
+              category: true,
+              images: { orderBy: { position: "asc" } },
+              variants: { where: { isActive: true }, orderBy: { createdAt: "asc" } }
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 150
+      }),
+      this.prisma.review.findMany({
+        where: { userId: customer.id },
+        include: { product: { select: { id: true, name: true, slug: true, imageUrl: true } } },
+        orderBy: { updatedAt: "desc" },
+        take: 20
+      }),
+      this.prisma.returnRequest.findMany({
+        where: { userId: customer.id },
+        include: {
+          order: { select: { orderNumber: true, total: true } },
+          items: { include: { orderItem: true } }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10
+      }),
+      this.prisma.notificationPreference.findUnique({ where: { userId: customer.id } }),
+      this.prisma.stockAlert.findMany({
+        where: { userId: customer.id },
+        include: { product: { select: { id: true, name: true, slug: true, imageUrl: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 10
+      }),
+      this.prisma.analyticsSession.findMany({
+        where: { userId: customer.id },
+        orderBy: { lastSeenAt: "desc" },
+        take: 6
+      })
+    ]);
+
+    const recognizedOrders = orders.filter(isRecognizedSale);
+    const purchasedProductIds = new Set(
+      recognizedOrders.flatMap((order) => order.items.map((item) => item.productId))
+    );
+    const lifetimeSpend = roundMoney(
+      recognizedOrders.reduce((sum, order) => sum + order.total, 0)
+    );
+    const cartSubtotal = roundMoney(
+      (cart?.items ?? []).reduce(
+        (sum, item) => sum + item.quantity * item.unitPrice,
+        0
+      )
+    );
+    const lastOrderAt = orders[0]?.createdAt ?? null;
+    const lastSeenAt = sessions[0]?.lastSeenAt ?? events[0]?.createdAt ?? null;
+    const customerEvents = dedupeCustomerAnalyticsEvents(events);
+
+    const viewed = new Map<
+      string,
+      {
+        product: NonNullable<(typeof events)[number]["product"]>;
+        views: number;
+        carts: number;
+        lastViewedAt: Date;
+      }
+    >();
+    for (const event of customerEvents) {
+      if (!event.product) continue;
+      const current = viewed.get(event.product.id) ?? {
+        product: event.product,
+        views: 0,
+        carts: 0,
+        lastViewedAt: event.createdAt
+      };
+      if (event.type === AnalyticsEventType.PRODUCT_VIEWED) {
+        current.views += 1;
+        if (event.createdAt > current.lastViewedAt) current.lastViewedAt = event.createdAt;
+      }
+      if (event.type === AnalyticsEventType.ADDED_TO_CART) current.carts += 1;
+      viewed.set(event.product.id, current);
+    }
+
+    const viewedProducts = [...viewed.values()]
+      .filter((item) => item.views > 0)
+      .sort((a, b) => b.lastViewedAt.getTime() - a.lastViewedAt.getTime())
+      .slice(0, 12)
+      .map((item) => ({
+        product: item.product,
+        views: item.views,
+        carts: item.carts,
+        purchased: purchasedProductIds.has(item.product.id),
+        lastViewedAt: item.lastViewedAt
+      }));
+
+    const interestScores = new Map<string, { label: string; count: number }>();
+    const addInterest = (key?: string | null, label?: string | null, weight = 1) => {
+      if (!key || !label) return;
+      const current = interestScores.get(key) ?? { label, count: 0 };
+      current.count += weight;
+      interestScores.set(key, current);
+    };
+    for (const item of viewedProducts) {
+      addInterest(item.product.categoryId, item.product.category?.name, item.views);
+      addInterest(item.product.brandId, item.product.brand?.name, item.carts + 1);
+    }
+    for (const item of cart?.items ?? []) {
+      addInterest(item.product.categoryId, item.product.category?.name, item.quantity * 2);
+      addInterest(item.product.brandId, item.product.brand?.name, item.quantity * 2);
+    }
+    for (const order of recognizedOrders) {
+      for (const item of order.items) addInterest(item.productId, item.productName, item.quantity);
+    }
+
+    const segments = new Set<string>();
+    if (orders.length === 0) segments.add("Registered, no purchase");
+    else if (orders.length === 1) segments.add("First-time buyer");
+    else if (orders.length > 3) segments.add("Loyal buyer");
+    else segments.add("Returning buyer");
+    if (lifetimeSpend >= 10000) segments.add("High value");
+    if ((cart?.items.length ?? 0) > 0) segments.add("Active cart");
+    if (wishlist.length > 0) segments.add("Wishlist intent");
+    if (viewedProducts.some((item) => !item.purchased)) segments.add("Browsing intent");
+    if (stockAlerts.length > 0) segments.add("Back-in-stock lead");
+    if (preferences?.marketingEmail) segments.add("Marketing opted in");
+
+    const recommendations = [
+      ...(cart?.items.length
+        ? [{
+            title: "Recover active cart",
+            detail: `Customer has ${cart.items.length} item${cart.items.length === 1 ? "" : "s"} worth ${roundMoney(cartSubtotal)} waiting in cart.`,
+            action: "Send a cart reminder with the strongest cart item and a short expiry offer."
+          }]
+        : []),
+      ...(viewedProducts.some((item) => !item.purchased)
+        ? [{
+            title: "Target viewed-not-bought products",
+            detail: "Recent browsing includes products that have not appeared in a completed order.",
+            action: "Build a product-specific email or retargeting audience from these viewed products."
+          }]
+        : []),
+      ...(wishlist.length
+        ? [{
+            title: "Use wishlist intent",
+            detail: `${wishlist.length} wishlist item${wishlist.length === 1 ? "" : "s"} signal saved preference.`,
+            action: "Send a wishlist reminder, price-drop message, or bundle suggestion."
+          }]
+        : []),
+      ...(orders.length > 1
+        ? [{
+            title: "Reward repeat behavior",
+            detail: "This customer has ordered more than once.",
+            action: "Offer category bundles or early access instead of broad discounts."
+          }]
+        : [])
+    ].slice(0, 4);
+
+    return {
+      customer,
+      summary: {
+        orders: orders.length,
+        recognizedOrders: recognizedOrders.length,
+        lifetimeSpend,
+        averageOrderValue: recognizedOrders.length
+          ? roundMoney(lifetimeSpend / recognizedOrders.length)
+          : 0,
+        cartItems: cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0,
+        cartSubtotal,
+        wishlistItems: wishlist.length,
+        reviews: reviews.length,
+        returns: returns.length,
+        productViews: customerEvents.filter((event) => event.type === AnalyticsEventType.PRODUCT_VIEWED).length,
+        lastOrderAt,
+        lastSeenAt
+      },
+      segments: [...segments],
+      preferences,
+      addresses,
+      cart: cart
+        ? {
+            id: cart.id,
+            updatedAt: cart.updatedAt,
+            items: cart.items
+          }
+        : null,
+      wishlist,
+      viewedProducts,
+      viewedNotPurchased: viewedProducts.filter((item) => !item.purchased).slice(0, 8),
+      orders,
+      reviews,
+      returns,
+      stockAlerts,
+      topInterests: [...interestScores.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8),
+      recentActivity: customerEvents.slice(0, 30),
+      acquisition: sessions.map((session) => ({
+        source: session.source,
+        medium: session.medium,
+        campaign: session.campaign,
+        landingPage: session.landingPage,
+        createdAt: session.createdAt,
+        lastSeenAt: session.lastSeenAt
+      })),
+      recommendations
+    };
   }
 
   async adminUpdateCustomer(id: string, dto: UpdateCustomerDto) {

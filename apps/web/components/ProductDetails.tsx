@@ -27,6 +27,7 @@ import {
   fallbackProducts,
   fetchMyProductReview,
   fetchProductReviews,
+  fetchStockAlertSubscription,
   isBaseProductEnabled,
   submitProductReview,
   subscribeStockAlert,
@@ -52,6 +53,48 @@ function formatReviewDate(value: string) {
 
 function reviewerInitial(name?: string) {
   return (name?.trim().charAt(0) || "C").toUpperCase();
+}
+
+function productDetailKey(detail: { type: string; title: string }) {
+  return `${detail.type}:${detail.title}`;
+}
+
+function productDetailLabel(type: string) {
+  const labels: Record<string, string> = {
+    usage: "Usage",
+    storage: "Storage",
+    nutrition: "Nutrition",
+    ingredients: "Ingredients",
+    side_effects: "Side effects",
+    warnings: "Warnings"
+  };
+  return labels[type] ?? type.replace(/_/g, " ");
+}
+
+function ProductDetailIcon({ type }: { type: string }) {
+  if (type === "usage") return <PackageCheck size={18} />;
+  if (type === "storage") return <ShieldCheck size={18} />;
+  if (type === "nutrition") return <BadgeCheck size={18} />;
+  if (type === "ingredients") return <Star size={18} />;
+  if (type === "warnings" || type === "side_effects") return <Bell size={18} />;
+  return <PackageCheck size={18} />;
+}
+
+function ProductDetailContent({ content }: { content: string }) {
+  const lines = content
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length > 1) {
+    return (
+      <ul>
+        {lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    );
+  }
+  return <p>{content}</p>;
 }
 
 function preferredVariant(product: Product, requestedId?: string) {
@@ -94,7 +137,9 @@ export function ProductDetails({
   const [notice, setNotice] = useState("");
   const [noticeTone, setNoticeTone] = useState<"info" | "success" | "error">("info");
   const [stockAlertRequested, setStockAlertRequested] = useState(false);
+  const [stockAlertChecking, setStockAlertChecking] = useState(false);
   const [stockAlertLoading, setStockAlertLoading] = useState(false);
+  const [activeProductDetailKey, setActiveProductDetailKey] = useState("");
   const [reviews, setReviews] = useState<Review[]>(initialProduct.reviews ?? []);
   const [myReview, setMyReview] = useState<Review | null>(null);
   const [reviewNotice, setReviewNotice] = useState("");
@@ -111,6 +156,7 @@ export function ProductDetails({
     setNotice("");
     setNoticeTone("info");
     setStockAlertRequested(false);
+    setStockAlertChecking(false);
     setReviews(initialProduct.reviews ?? []);
   }, [initialProduct, initialQuantity, initialVariantId, slug]);
 
@@ -157,6 +203,64 @@ export function ProductDetails({
     availableInventory > 0 && (!requiresVariant || Boolean(selectedVariant));
   const unitPrice = selectedVariant?.price ?? product.price;
   const compareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
+  const productSummary = useMemo(() => {
+    const description = product.description.replace(/\s+/g, " ").trim();
+    if (description.length <= 170) return description;
+    const firstSentence = description.match(/^(.+?[.!?])\s/)?.[1];
+    if (firstSentence && firstSentence.length <= 180) return firstSentence;
+    return `${description.slice(0, 165).trim()}...`;
+  }, [product.description]);
+  const productDetailSections = useMemo(
+    () =>
+      (product.details ?? [])
+        .map((detail) => ({
+          type: String(detail.type ?? "").trim(),
+          title: String(detail.title ?? "").trim(),
+          content: String(detail.content ?? "").trim()
+        }))
+        .filter((detail) => detail.type && detail.title && detail.content),
+    [product.details]
+  );
+  const activeProductDetail =
+    productDetailSections.find((detail) => productDetailKey(detail) === activeProductDetailKey)
+    ?? productDetailSections[0];
+
+  useEffect(() => {
+    if (!productDetailSections.length) {
+      setActiveProductDetailKey("");
+      return;
+    }
+    if (!productDetailSections.some((detail) => productDetailKey(detail) === activeProductDetailKey)) {
+      setActiveProductDetailKey(productDetailKey(productDetailSections[0]));
+    }
+  }, [activeProductDetailKey, productDetailSections]);
+
+  useEffect(() => {
+    if (!user || availableInventory > 0) {
+      setStockAlertRequested(false);
+      setStockAlertChecking(false);
+      return;
+    }
+
+    let active = true;
+    setStockAlertRequested(false);
+    setStockAlertChecking(true);
+    void fetchStockAlertSubscription(product.id, selectedVariant?.id)
+      .then((result) => {
+        if (active) setStockAlertRequested(result.subscribed);
+      })
+      .catch(() => {
+        if (active) setStockAlertRequested(false);
+      })
+      .finally(() => {
+        if (active) setStockAlertChecking(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [availableInventory, product.id, selectedVariant?.id, user?.id]);
+
   const galleryImages = useMemo(
     () =>
       [
@@ -225,6 +329,11 @@ export function ProductDetails({
   }
 
   async function notifyStock() {
+    if (stockAlertRequested) {
+      setNotice("Your restock alert is already active for this option.");
+      setNoticeTone("success");
+      return;
+    }
     if (!user) {
       setNotice("Sign in to get notified when this is back in stock.");
       setNoticeTone("info");
@@ -326,11 +435,13 @@ export function ProductDetails({
             )}
           </div>
           <div className="main-product-art">
-            {activeImage ? (
-              <img src={activeImage} alt={product.name} />
-            ) : (
-              <ProductArt product={product} />
-            )}
+            <div className="main-product-image-frame" key={activeImage ?? "generated-art"}>
+              {activeImage ? (
+                <img src={activeImage} alt={product.name} />
+              ) : (
+                <ProductArt product={product} />
+              )}
+            </div>
             {galleryImages.length > 1 ? (
               <>
                 <button
@@ -389,7 +500,7 @@ export function ProductDetails({
             <strong>{money(unitPrice)}</strong>
             {compareAt ? <small>{money(compareAt)}</small> : null}
           </div>
-          <p className="product-description">{product.description}</p>
+          <p className="product-description">{productSummary}</p>
 
           {product.variants?.length ? (
             <div className="variant-picker">
@@ -438,25 +549,31 @@ export function ProductDetails({
             </span>
           </div>
           {availableInventory < 1 ? (
-            <div className="stock-alert-panel">
+            <div className={`stock-alert-panel ${stockAlertRequested ? "active" : ""}`}>
               <div className="stock-alert-copy">
                 <span><Bell size={19} /></span>
                 <div>
-                  <strong>Get a restock alert</strong>
-                  <p>We will email you as soon as this option is available again.</p>
+                  <strong>{stockAlertRequested ? "Restock alert is active" : "Get a restock alert"}</strong>
+                  <p>
+                    {stockAlertRequested
+                      ? "You are on the list. We will email you when this option is available again."
+                      : "We will email you as soon as this option is available again."}
+                  </p>
                 </div>
               </div>
               <button
                 className="secondary-action"
                 type="button"
-                disabled={stockAlertRequested || stockAlertLoading}
+                disabled={stockAlertRequested || stockAlertLoading || stockAlertChecking}
                 onClick={() => void notifyStock()}
               >
                 <Bell size={18} />
-                {stockAlertLoading
+                {stockAlertChecking
+                  ? "Checking alert..."
+                  : stockAlertLoading
                   ? "Setting up alert..."
                   : stockAlertRequested
-                    ? "Alert is active"
+                    ? "You are on the list"
                     : "Notify me when available"}
               </button>
             </div>
@@ -520,9 +637,15 @@ export function ProductDetails({
       <section className="detail-info-band">
         <div>
           <p className="eyebrow">Product details</p>
-          <h2>Thoughtfully packed for your pantry</h2>
+          <h2>About {product.name}</h2>
         </div>
-        <p>{product.description} Store in a cool, dry place and keep the package sealed after opening.</p>
+        <div className="detail-info-copy">
+          <p>{product.description}</p>
+          <div className="detail-care-notes">
+            <span><ShieldCheck size={16} /> Quality checked before dispatch</span>
+            <span><PackageCheck size={16} /> Store sealed in a cool, dry place</span>
+          </div>
+        </div>
         <div className="tag-list">
           {product.tags.map((tag) => (
             <span key={tag}>{tag}</span>
@@ -542,6 +665,51 @@ export function ProductDetails({
           </div>
         ) : null}
       </section>
+
+      {productDetailSections.length ? (
+        <section className="product-extra-details" aria-labelledby="product-guidance-title">
+          <header className="product-guidance-head">
+            <div>
+              <p className="eyebrow">Product guidance</p>
+              <h2 id="product-guidance-title">Use, care, and product facts</h2>
+              <p>Clear instructions and safety notes from the product team.</p>
+            </div>
+            <span>{productDetailSections.length} detail{productDetailSections.length === 1 ? "" : "s"}</span>
+          </header>
+          <div className="product-guidance-panel">
+            <nav className="product-detail-index" aria-label="Product detail sections">
+              {productDetailSections.map((detail) => (
+                <button
+                  className={activeProductDetail && productDetailKey(activeProductDetail) === productDetailKey(detail) ? "active" : ""}
+                  type="button"
+                  onClick={() => setActiveProductDetailKey(productDetailKey(detail))}
+                  key={`index-${detail.type}-${detail.title}`}
+                >
+                  <ProductDetailIcon type={detail.type} />
+                  <span>{productDetailLabel(detail.type)}</span>
+                </button>
+              ))}
+            </nav>
+            {activeProductDetail ? (
+              <div className="product-detail-card-grid">
+                <article
+                  className={`product-detail-card detail-${activeProductDetail.type}`}
+                  key={productDetailKey(activeProductDetail)}
+                >
+                  <header>
+                    <span><ProductDetailIcon type={activeProductDetail.type} /></span>
+                    <div>
+                      <small>{productDetailLabel(activeProductDetail.type)}</small>
+                      <h3>{activeProductDetail.title}</h3>
+                    </div>
+                  </header>
+                  <ProductDetailContent content={activeProductDetail.content} />
+                </article>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="product-review-section" id="customer-reviews">
         <header className="review-section-heading">
@@ -719,7 +887,7 @@ export function ProductDetails({
         <button
           className="primary-action"
           type="button"
-          disabled={availableInventory < 1 ? stockAlertRequested || stockAlertLoading : !canPurchase}
+          disabled={availableInventory < 1 ? stockAlertRequested || stockAlertLoading || stockAlertChecking : !canPurchase}
           onClick={() => {
             if (availableInventory < 1) {
               void notifyStock();
@@ -739,10 +907,12 @@ export function ProductDetails({
         >
           {availableInventory < 1 ? <Bell size={17} /> : <ShoppingBag size={17} />}
           {availableInventory < 1
-            ? stockAlertLoading
+            ? stockAlertChecking
+              ? "Checking..."
+              : stockAlertLoading
               ? "Setting alert..."
               : stockAlertRequested
-                ? "We'll email you"
+                ? "Alert active"
                 : "Notify me"
             : requiresVariant && !selectedVariant
               ? "Choose option"

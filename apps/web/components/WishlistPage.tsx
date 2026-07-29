@@ -1,6 +1,6 @@
 "use client";
 
-import { Heart, ShoppingBag } from "lucide-react";
+import { ChevronLeft, ChevronRight, Heart, ShoppingBag } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Catalog,
@@ -19,9 +19,12 @@ import { ProductArt } from "./ProductArt";
 import { QuickVariantAdd } from "./QuickVariantAdd";
 import { useWishlist } from "./WishlistContext";
 
+const wishlistPageSize = 12;
+
 export function WishlistPage() {
   const [catalog, setCatalog] = useState<Catalog>(fallbackCatalog);
   const [products, setProducts] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
   const { user } = useAuth();
   const { slugs, toggle } = useWishlist();
   const { addItem } = useCart();
@@ -43,6 +46,16 @@ export function WishlistPage() {
         );
     request.then(setProducts).catch(() => setProducts([]));
   }, [slugs, user]);
+  const pages = Math.max(1, Math.ceil(products.length / wishlistPageSize));
+  const pagedProducts = products.slice((page - 1) * wishlistPageSize, page * wishlistPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [slugs.length, user?.id]);
+
+  useEffect(() => {
+    if (page > pages) setPage(pages);
+  }, [page, pages]);
 
   return (
     <main>
@@ -54,16 +67,23 @@ export function WishlistPage() {
       </section>
       <section className="wishlist-content">
         {products.length ? (
-          <div className="product-grid">
-            {products.map((product) => (
-              <WishlistProductCard
-                key={product.id}
-                product={product}
-                onRemove={() => toggle(product)}
-                onAdd={() => addItem(product)}
-              />
-            ))}
-          </div>
+          <>
+            <div className="product-grid">
+              {pagedProducts.map((product) => (
+                <WishlistProductCard
+                  key={product.id}
+                  product={product}
+                  onRemove={() => toggle(product)}
+                  onAdd={() => addItem(product)}
+                />
+              ))}
+            </div>
+            <div className="shop-pagination">
+              <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={17} /> Previous</button>
+              <span>Page {page} of {pages}</span>
+              <button type="button" disabled={page >= pages} onClick={() => setPage((current) => Math.min(pages, current + 1))}>Next <ChevronRight size={17} /></button>
+            </div>
+          </>
         ) : (
           <div className="wishlist-empty">
             <Heart size={40} strokeWidth={1.4} />

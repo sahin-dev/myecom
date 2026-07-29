@@ -45,6 +45,7 @@ import {
   AdminError,
   AdminForm,
   AdminLoading,
+  AdminPagination,
   AdminPageTitle,
   AdminSectionHeader,
   AdminToast,
@@ -55,6 +56,7 @@ import {
 
 type ContentMode = "identity" | "homepage" | "banners" | "brands" | "categories" | "testimonials" | "checkout" | "pages";
 type Editable = HomeSection | (Banner & { isActive: boolean }) | Brand | Category | Testimonial | CheckoutMethod;
+const contentPageSize = 8;
 
 const modes: Array<{ id: ContentMode; label: string; icon: React.ReactNode }> = [
   { id: "identity", label: "Site identity", icon: <PanelTop size={17} /> },
@@ -702,6 +704,14 @@ function ContentLayout<T extends { id: string }>({
   onCreate: () => void;
   onClose: () => void;
 }) {
+  const [page, setPage] = useState(1);
+  const pages = Math.max(1, Math.ceil(items.length / contentPageSize));
+  const pagedItems = items.slice((page - 1) * contentPageSize, page * contentPageSize);
+
+  useEffect(() => {
+    if (page > pages) setPage(pages);
+  }, [page, pages]);
+
   return (
     <div className={`admin-content-grid ${editorOpen ? "editor-open" : "editor-closed"}`}>
       <section>
@@ -715,9 +725,18 @@ function ContentLayout<T extends { id: string }>({
           }
         />
         <div className="admin-content-list">
-          {items.map((item, index) => <article key={item.id}>{render(item, index)}</article>)}
+          {pagedItems.map((item, index) => (
+            <article key={item.id}>{render(item, (page - 1) * contentPageSize + index)}</article>
+          ))}
           {!items.length ? <p className="muted-copy">Nothing has been added yet.</p> : null}
         </div>
+        <AdminPagination
+          page={page}
+          pages={pages}
+          total={items.length}
+          pageSize={contentPageSize}
+          onPageChange={setPage}
+        />
       </section>
       {editorOpen ? (
         <aside className="admin-content-editor" id="admin-content-editor">
