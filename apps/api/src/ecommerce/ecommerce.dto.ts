@@ -25,6 +25,98 @@ import {
   ProductStatus
 } from "@prisma/client";
 
+export class AddressInfoDto {
+  @IsString()
+  recipient!: string;
+
+  @IsString()
+  phone!: string;
+
+  @IsOptional()
+  @IsEmail()
+  @Transform(({ value }) => value ? String(value).trim().toLowerCase() : undefined)
+  email?: string;
+
+  @IsString()
+  line1!: string;
+
+  @IsOptional()
+  @IsString()
+  line2?: string;
+
+  @IsOptional()
+  @IsString()
+  area?: string;
+
+  @IsString()
+  city!: string;
+
+  @IsOptional()
+  @IsString()
+  postalCode?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class CheckoutPolicyDto {
+  @IsOptional()
+  @IsBoolean()
+  inheritPayment?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allowedPaymentCodes?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  requiredPaymentPercent?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  onlineOnly?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  inheritDelivery?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allowedZoneCodes?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  blockedZoneCodes?: string[];
+}
+
+export class PlatformCheckoutPolicyDto {
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allowedPaymentCodes?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  requiredPaymentPercent?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  deliverableZoneCodes?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  requireKnownDeliveryArea?: boolean;
+}
+
 export class CreateBrandDto {
   @IsString()
   name!: string;
@@ -71,6 +163,10 @@ export class CreateCategoryDto {
   @IsOptional()
   @IsInt()
   priority?: number;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }
 
 export class UpdateCategoryDto {
@@ -259,6 +355,12 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductDetailDto)
   details?: ProductDetailDto[];
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CheckoutPolicyDto)
+  checkoutPolicy?: CheckoutPolicyDto;
 }
 
 export class CheckoutItemDto {
@@ -289,6 +391,22 @@ export class CheckoutDto {
   shippingAddress!: string;
 
   @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => AddressInfoDto)
+  shippingInfo?: AddressInfoDto;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => AddressInfoDto)
+  billingInfo?: AddressInfoDto;
+
+  @IsOptional()
+  @IsBoolean()
+  billingSameAsShipping?: boolean;
+
+  @IsOptional()
   @IsString()
   addressId?: string;
 
@@ -306,6 +424,10 @@ export class CheckoutDto {
 
   @IsOptional()
   @IsString()
+  deliveryZoneCode?: string;
+
+  @IsOptional()
+  @IsString()
   sessionKey?: string;
 
   @IsOptional()
@@ -316,6 +438,64 @@ export class CheckoutDto {
   @ValidateNested({ each: true })
   @Type(() => CheckoutItemDto)
   items!: CheckoutItemDto[];
+}
+
+export class CheckoutQuoteDto {
+  @IsOptional()
+  @IsString()
+  promotionCode?: string;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
+
+  @IsOptional()
+  @IsString()
+  deliveryMethodCode?: string;
+
+  @IsOptional()
+  @IsString()
+  deliveryZoneCode?: string;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => AddressInfoDto)
+  shippingInfo?: AddressInfoDto;
+
+  @IsOptional()
+  @IsEmail()
+  @Transform(({ value }) => value ? String(value).trim().toLowerCase() : undefined)
+  email?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CheckoutItemDto)
+  items!: CheckoutItemDto[];
+}
+
+export class ProductEligibilityDto {
+  @IsString()
+  productId!: string;
+
+  @IsOptional()
+  @IsString()
+  variantId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  quantity?: number;
+
+  @IsOptional()
+  @IsString()
+  deliveryZoneCode?: string;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => AddressInfoDto)
+  shippingInfo?: AddressInfoDto;
 }
 
 export class UpdateOrderStatusDto {
@@ -467,6 +647,12 @@ export class AdminUpdateProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductDetailDto)
   details?: ProductDetailDto[];
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CheckoutPolicyDto)
+  checkoutPolicy?: CheckoutPolicyDto;
 }
 
 export class AdminUpdateBannerDto {
@@ -521,6 +707,10 @@ export class AdminUpdateBannerDto {
   @IsOptional()
   @IsInt()
   priority?: number;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }
 
 export class UpdateSiteSettingsDto {
@@ -567,6 +757,12 @@ export class UpdateSiteSettingsDto {
   @IsOptional()
   @IsString()
   whatsappUrl?: string;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PlatformCheckoutPolicyDto)
+  checkoutPolicy?: PlatformCheckoutPolicyDto;
 }
 
 export class CreateHomeSectionDto {
@@ -702,6 +898,10 @@ export class CreateTestimonialDto {
   @IsOptional()
   @IsInt()
   priority?: number;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }
 
 export class UpdateTestimonialDto {
@@ -725,6 +925,166 @@ export class UpdateTestimonialDto {
   @IsOptional()
   @IsString()
   avatarUrl?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
+}
+
+export class CreateDeliveryZoneDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  code!: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  areas?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  postalCodes?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
+}
+
+export class UpdateDeliveryZoneDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  areas?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  postalCodes?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
+}
+
+export class CreateDeliveryRateDto {
+  @IsString()
+  zoneId!: string;
+
+  @IsString()
+  deliveryMethodId!: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  baseFee?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  freeThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  minOrder?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxOrder?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minDeliveryDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxDeliveryDays?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
+}
+
+export class UpdateDeliveryRateDto {
+  @IsOptional()
+  @IsString()
+  zoneId?: string;
+
+  @IsOptional()
+  @IsString()
+  deliveryMethodId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  baseFee?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  freeThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  minOrder?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxOrder?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minDeliveryDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxDeliveryDays?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -776,6 +1136,10 @@ export class CreateCheckoutMethodDto {
   @IsOptional()
   @IsInt()
   priority?: number;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }
 
 export class UpdateCheckoutMethodDto {
@@ -822,4 +1186,8 @@ export class UpdateCheckoutMethodDto {
   @IsOptional()
   @IsInt()
   priority?: number;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }

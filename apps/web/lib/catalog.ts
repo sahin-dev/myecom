@@ -51,6 +51,7 @@ export type Product = {
   category?: Category | null;
   tags: string[];
   details?: ProductDetailSection[] | null;
+  checkoutPolicy?: CheckoutPolicy | null;
   images?: ProductImage[];
   variants?: ProductVariant[];
   reviews?: Review[];
@@ -158,7 +159,50 @@ export type SiteSettings = {
   instagramUrl?: string | null;
   youtubeUrl?: string | null;
   whatsappUrl?: string | null;
+  checkoutPolicy?: PlatformCheckoutPolicy | null;
 };
+
+export type CheckoutPolicy = {
+  inheritPayment?: boolean;
+  allowedPaymentCodes?: string[];
+  requiredPaymentPercent?: number;
+  onlineOnly?: boolean;
+  inheritDelivery?: boolean;
+  allowedZoneCodes?: string[];
+  blockedZoneCodes?: string[];
+};
+
+export type PlatformCheckoutPolicy = {
+  allowedPaymentCodes?: string[];
+  requiredPaymentPercent?: number;
+  deliverableZoneCodes?: string[];
+  requireKnownDeliveryArea?: boolean;
+};
+
+function clampPercent(value?: number) {
+  return Math.min(100, Math.max(0, Number(value ?? 0) || 0));
+}
+
+export function productAdvancePaymentPercent(
+  product: Pick<Product, "checkoutPolicy">,
+  platformPolicy?: PlatformCheckoutPolicy | null
+) {
+  const policy = product.checkoutPolicy;
+  const platformPercent = clampPercent(platformPolicy?.requiredPaymentPercent);
+  const productPercent =
+    policy?.onlineOnly && policy.requiredPaymentPercent === undefined
+      ? 100
+      : clampPercent(policy?.requiredPaymentPercent);
+  return Math.max(platformPercent, productPercent);
+}
+
+export function productAdvancePaymentLabel(
+  product: Pick<Product, "checkoutPolicy">,
+  platformPolicy?: PlatformCheckoutPolicy | null
+) {
+  const percent = productAdvancePaymentPercent(product, platformPolicy);
+  return percent > 0 ? `${percent}% advance payment required` : "";
+}
 
 export type HomeSection = {
   id: string;
@@ -201,8 +245,49 @@ export type CheckoutMethod = {
   freeThreshold?: number | null;
   minDeliveryDays?: number | null;
   maxDeliveryDays?: number | null;
+  metadata?: Record<string, unknown> | null;
   isActive: boolean;
   priority: number;
+};
+
+export type DeliveryZone = {
+  id: string;
+  name: string;
+  code: string;
+  city?: string | null;
+  areas: string[];
+  postalCodes: string[];
+  isActive: boolean;
+  priority: number;
+  rates?: DeliveryRate[];
+};
+
+export type DeliveryRate = {
+  id: string;
+  zoneId: string;
+  deliveryMethodId: string;
+  baseFee: number;
+  freeThreshold?: number | null;
+  minOrder: number;
+  maxOrder?: number | null;
+  minDeliveryDays?: number | null;
+  maxDeliveryDays?: number | null;
+  isActive: boolean;
+  priority: number;
+  zone?: DeliveryZone;
+  deliveryMethod?: CheckoutMethod;
+};
+
+export type AddressInfo = {
+  recipient: string;
+  phone: string;
+  email?: string;
+  line1: string;
+  line2?: string;
+  area?: string;
+  city: string;
+  postalCode?: string;
+  note?: string;
 };
 
 export type InfoPageContent = {
@@ -235,6 +320,7 @@ export type Catalog = {
   homeSections: HomeSection[];
   testimonials: Testimonial[];
   checkoutMethods: CheckoutMethod[];
+  deliveryZones: DeliveryZone[];
 };
 
 export type CartLine = {
@@ -250,17 +336,25 @@ export type Order = {
   email: string;
   phone: string;
   shippingAddress: string;
+  shippingInfo?: AddressInfo | null;
+  billingInfo?: AddressInfo | null;
+  billingSameAsShipping?: boolean;
   status: string;
   paymentStatus?: string | null;
   paymentMethod?: string | null;
   deliveryMethodCode?: string | null;
   deliveryMethodName?: string | null;
+  deliveryZoneCode?: string | null;
+  deliveryZoneName?: string | null;
   trackingCode?: string | null;
   courierName?: string | null;
   adminNote?: string | null;
   subtotal: number;
   shippingFee: number;
   total: number;
+  amountDueNow?: number;
+  amountDueOnDelivery?: number;
+  requiredPaymentPercent?: number;
   discount?: number;
   promotion?: { code: string; name: string } | null;
   createdAt: string;
@@ -274,6 +368,8 @@ export type Order = {
     quantity: number;
     unitPrice: number;
     unitCost?: number | null;
+    advancePaymentPercent?: number;
+    advancePaymentAmount?: number;
   }>;
   payments?: Array<{
     id: string;
@@ -394,6 +490,8 @@ export type AdminCatalog = {
   homeSections: HomeSection[];
   testimonials: Testimonial[];
   checkoutMethods: CheckoutMethod[];
+  deliveryZones: DeliveryZone[];
+  deliveryRates: DeliveryRate[];
   siteSettings: SiteSettings;
 };
 
@@ -1305,6 +1403,18 @@ export const fallbackCatalog: Catalog = {
       isActive: true,
       priority: 1
     }
+  ],
+  deliveryZones: [
+    {
+      id: "zone-dhaka",
+      name: "Dhaka city",
+      code: "DHAKA",
+      city: "Dhaka",
+      areas: ["Dhanmondi", "Gulshan", "Banani", "Mirpur", "Uttara"],
+      postalCodes: [],
+      isActive: true,
+      priority: 1
+    }
   ]
 };
 
@@ -1409,11 +1519,15 @@ export async function createCheckout(input: {
   email: string;
   phone: string;
   shippingAddress: string;
+  shippingInfo?: AddressInfo;
+  billingInfo?: AddressInfo;
+  billingSameAsShipping?: boolean;
   items: Array<{ productId: string; variantId?: string; quantity: number }>;
   addressId?: string;
   promotionCode?: string;
   paymentMethod?: string;
   deliveryMethodCode?: string;
+  deliveryZoneCode?: string;
   sessionKey?: string;
   idempotencyKey?: string;
 }) {
@@ -1635,6 +1749,73 @@ export async function subscribeStockAlert(productId: string, variantId?: string)
   });
 }
 
+export type CheckoutQuote = {
+  subtotal: number;
+  discount: number;
+  shippingFee: number;
+  total: number;
+  requiredPaymentPercent: number;
+  amountDueNow: number;
+  amountDueOnDelivery: number;
+  advancePaymentSubtotal?: number;
+  advancePaymentItems?: Array<{
+    productId: string;
+    variantId?: string;
+    productName: string;
+    quantity: number;
+    lineTotal: number;
+    discountedLineTotal: number;
+    advancePaymentPercent: number;
+    advancePaymentAmount: number;
+  }>;
+  invalidItems: Array<{ productId: string; variantId?: string; reason: string }>;
+  deliveryZone?: { id: string; code: string; name: string; city?: string | null } | null;
+  paymentMethods: CheckoutMethod[];
+  deliveryMethods: Array<CheckoutMethod & {
+    baseFee?: number;
+    rateId?: string;
+  }>;
+  selectedPaymentMethod?: CheckoutMethod | null;
+  selectedDeliveryMethod?: CheckoutMethod | null;
+  promotion?: { id: string; code: string; name: string; type: string } | null;
+};
+
+export async function fetchCheckoutQuote(input: {
+  items: Array<{ productId: string; variantId?: string; quantity: number }>;
+  email?: string;
+  promotionCode?: string;
+  paymentMethod?: string;
+  deliveryMethodCode?: string;
+  deliveryZoneCode?: string;
+  shippingInfo?: AddressInfo;
+}) {
+  return request<CheckoutQuote>("/checkout/quote", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fetchProductEligibility(input: {
+  productId: string;
+  variantId?: string;
+  quantity?: number;
+  deliveryZoneCode?: string;
+  shippingInfo?: AddressInfo;
+}) {
+  return request<{
+    canAddToCart: boolean;
+    reason?: string | null;
+    deliveryZone?: { id: string; code: string; name: string; city?: string | null } | null;
+    paymentMethods: CheckoutMethod[];
+    deliveryMethods: CheckoutMethod[];
+    requiredPaymentPercent: number;
+    amountDueNow: number;
+  }>("/checkout/eligibility", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export async function fetchStockAlertSubscription(productId: string, variantId?: string) {
   const query = variantId ? `?variantId=${encodeURIComponent(variantId)}` : "";
   return request<StockAlertSubscription>(
@@ -1650,7 +1831,9 @@ export async function createAdminResource<T>(
     | "products"
     | "home-sections"
     | "testimonials"
-    | "checkout-methods",
+    | "checkout-methods"
+    | "delivery-zones"
+    | "delivery-rates",
   input: unknown
 ) {
   return request<T>(`/admin/${path}`, {
@@ -1769,6 +1952,7 @@ export async function updateAdminProduct(id: string, input: {
   categoryId?: string;
   tags?: string[];
   details?: ProductDetailSection[];
+  checkoutPolicy?: CheckoutPolicy;
 }) {
   return request<Product>(`/admin/products/${encodeURIComponent(id)}`, {
     method: "PATCH",

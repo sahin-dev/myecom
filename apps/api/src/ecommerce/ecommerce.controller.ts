@@ -26,16 +26,22 @@ import {
   AdminUpdateOrderDto,
   AdminUpdateProductDto,
   CheckoutDto,
+  CheckoutQuoteDto,
   CreateBannerDto,
   CreateBrandDto,
   CreateCategoryDto,
   CreateCheckoutMethodDto,
+  CreateDeliveryRateDto,
+  CreateDeliveryZoneDto,
   CreateHomeSectionDto,
   CreateProductDto,
   CreateTestimonialDto,
+  ProductEligibilityDto,
   UpdateBrandDto,
   UpdateCategoryDto,
   UpdateCheckoutMethodDto,
+  UpdateDeliveryRateDto,
+  UpdateDeliveryZoneDto,
   UpdateHomeSectionDto,
   UpdateOrderStatusDto,
   UpdateSiteSettingsDto,
@@ -75,6 +81,23 @@ export class EcommerceController {
   @Get("checkout/methods")
   checkoutMethods() {
     return this.ecommerce.checkoutMethods();
+  }
+
+  @Get("checkout/delivery-zones")
+  deliveryZones() {
+    return this.ecommerce.deliveryZones();
+  }
+
+  @Post("checkout/quote")
+  @UseGuards(OptionalJwtAuthGuard)
+  checkoutQuote(@Body() dto: CheckoutQuoteDto) {
+    return this.ecommerce.checkoutQuote(dto);
+  }
+
+  @Post("checkout/eligibility")
+  @UseGuards(OptionalJwtAuthGuard)
+  checkoutEligibility(@Body() dto: ProductEligibilityDto) {
+    return this.ecommerce.productEligibility(dto);
   }
 
   @Post("admin/brands")
@@ -312,6 +335,48 @@ export class EcommerceController {
   @RequirePermission("checkout.write")
   deleteCheckoutMethod(@Param("id") id: string) {
     return this.ecommerce.deleteCheckoutMethod(id);
+  }
+
+  @Post("admin/delivery-zones")
+  @UseGuards(AdminGuard)
+  @RequirePermission("checkout.write")
+  createDeliveryZone(@Body() dto: CreateDeliveryZoneDto) {
+    return this.ecommerce.createDeliveryZone(dto);
+  }
+
+  @Patch("admin/delivery-zones/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("checkout.write")
+  updateDeliveryZone(@Param("id") id: string, @Body() dto: UpdateDeliveryZoneDto) {
+    return this.ecommerce.updateDeliveryZone(id, dto);
+  }
+
+  @Delete("admin/delivery-zones/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("checkout.write")
+  deleteDeliveryZone(@Param("id") id: string) {
+    return this.ecommerce.deleteDeliveryZone(id);
+  }
+
+  @Post("admin/delivery-rates")
+  @UseGuards(AdminGuard)
+  @RequirePermission("checkout.write")
+  createDeliveryRate(@Body() dto: CreateDeliveryRateDto) {
+    return this.ecommerce.createDeliveryRate(dto);
+  }
+
+  @Patch("admin/delivery-rates/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("checkout.write")
+  updateDeliveryRate(@Param("id") id: string, @Body() dto: UpdateDeliveryRateDto) {
+    return this.ecommerce.updateDeliveryRate(id, dto);
+  }
+
+  @Delete("admin/delivery-rates/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("checkout.write")
+  deleteDeliveryRate(@Param("id") id: string) {
+    return this.ecommerce.deleteDeliveryRate(id);
   }
 
   @Get("admin/customers")

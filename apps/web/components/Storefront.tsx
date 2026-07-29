@@ -8,6 +8,7 @@ import {
   BadgeCheck,
   Boxes,
   ChevronRight,
+  CreditCard,
   Clock3,
   Coffee,
   Droplets,
@@ -32,6 +33,7 @@ import {
   fallbackCatalog,
   fetchAccountOrders,
   formatMoney,
+  productAdvancePaymentLabel,
   selectableProductInventory,
   resolveMediaUrl
 } from "../lib/catalog";
@@ -347,7 +349,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
           </div>
           <div className="modern-product-grid" aria-label="Products from recent orders">
             {buyAgainProducts.map((product) => (
-              <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
+              <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} onAdd={() => addItem(product)} />
             ))}
           </div>
         </section>
@@ -362,7 +364,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
         />
         <div className="modern-product-grid" aria-label="Best selling products">
           {popularProducts.slice(0, Math.min(Math.max(popularSection.productLimit || 8, 6), 8)).map((product) => (
-            <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
+            <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} onAdd={() => addItem(product)} />
           ))}
         </div>
       </section> : null}
@@ -407,7 +409,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
         </div>
         <div className="modern-product-grid" key={shelf} aria-label={shelf === "new" ? "New products" : "Trending products"}>
           {discoveryProducts.slice(0, Math.min(Math.max(discoverSection.productLimit || 8, 4), 8)).map((product) => (
-            <ProductCard key={product.id} product={product} onAdd={() => addItem(product)} />
+            <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} onAdd={() => addItem(product)} />
           ))}
         </div>
       </section> : null}
@@ -563,9 +565,11 @@ function SectionHeading({
 
 function ProductCard({
   product,
+  platformPolicy,
   onAdd
 }: {
   product: Product;
+  platformPolicy?: Catalog["siteSettings"]["checkoutPolicy"];
   onAdd: () => void;
 }) {
   const { isSaved, toggle } = useWishlist();
@@ -579,6 +583,7 @@ function ProductCard({
   const savings = displayCompareAt && displayCompareAt > displayPrice
     ? Math.round(((displayCompareAt - displayPrice) / displayCompareAt) * 100)
     : 0;
+  const advanceLabel = productAdvancePaymentLabel(product, platformPolicy);
 
   return (
     <article className="modern-product-card">
@@ -605,6 +610,11 @@ function ProductCard({
           </span>
         </div>
       </div>
+      {advanceLabel ? (
+        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
+          <CreditCard size={14} />
+        </span>
+      ) : null}
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (

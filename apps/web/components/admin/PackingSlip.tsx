@@ -1,7 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
-import { Order, SiteSettings, formatMoney, resolveMediaUrl } from "../../lib/catalog";
+import { AddressInfo, Order, SiteSettings, formatMoney, resolveMediaUrl } from "../../lib/catalog";
+
+function addressLines(info?: AddressInfo | null, fallback?: string) {
+  if (!info) return fallback ? [fallback] : [];
+  return [
+    info.recipient,
+    info.phone,
+    info.email,
+    info.line1,
+    info.line2,
+    info.area,
+    info.city,
+    info.postalCode
+  ].filter(Boolean) as string[];
+}
 
 export function PackingSlip({
   order,
@@ -24,6 +38,9 @@ export function PackingSlip({
 
   const logo = resolveMediaUrl(settings.logoUrl);
   const generatedAt = new Date().toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" });
+  const amountDueNow = order.amountDueNow ?? 0;
+  const amountDueOnDelivery = order.amountDueOnDelivery ?? Math.max(order.total - amountDueNow, 0);
+  const shippingLines = addressLines(order.shippingInfo, order.shippingAddress);
 
   return (
     <div className="packing-slip-overlay">
@@ -47,9 +64,8 @@ export function PackingSlip({
         <section className="packing-slip-parties">
           <div>
             <span className="eyebrow">Ship to</span>
-            <strong>{order.customerName}</strong>
-            <p>{order.shippingAddress}</p>
-            <p>{order.phone}</p>
+            <strong>{shippingLines[0] ?? order.customerName}</strong>
+            {shippingLines.slice(1).map((line) => <p key={line}>{line}</p>)}
           </div>
           <div>
             <span className="eyebrow">Order info</span>
@@ -73,6 +89,9 @@ export function PackingSlip({
                 <td>
                   <strong>{item.productName}</strong>
                   {item.variantName ? <span> — {item.variantName}</span> : null}
+                  {item.advancePaymentAmount ? (
+                    <small>Advance {item.advancePaymentPercent ?? 0}%: {formatMoney(item.advancePaymentAmount)}</small>
+                  ) : null}
                 </td>
                 <td>{item.quantity}</td>
                 <td>{formatMoney(item.unitPrice)}</td>
@@ -92,6 +111,12 @@ export function PackingSlip({
           ) : null}
           <div><span>Delivery</span><strong>{formatMoney(order.shippingFee)}</strong></div>
           <div className="packing-slip-grand-total"><span>Total due</span><strong>{formatMoney(order.total)}</strong></div>
+          {amountDueNow > 0 ? (
+            <>
+              <div><span>Advance payment</span><strong>{formatMoney(amountDueNow)}</strong></div>
+              <div><span>Due on delivery</span><strong>{formatMoney(amountDueOnDelivery)}</strong></div>
+            </>
+          ) : null}
         </div>
 
         {order.adminNote ? (

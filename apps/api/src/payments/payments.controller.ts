@@ -7,7 +7,7 @@ import {
   Req,
   UseGuards
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { PaymentStatus, Prisma } from "@prisma/client";
 import { OptionalJwtAuthGuard } from "../auth/auth.guards";
 import type { OptionalAuthenticatedRequest } from "../auth/auth.types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -41,7 +41,7 @@ export class PaymentsController {
 
     const created = await this.bkash.createPayment({
       orderNumber: order.orderNumber,
-      amount: order.total
+      amount: payment.amount
     });
 
     await this.prisma.payment.update({
@@ -58,7 +58,8 @@ export class PaymentsController {
   @Post("execute")
   async execute(@Body() dto: ExecuteBkashDto) {
     const payment = await this.prisma.payment.findFirst({
-      where: { gatewayReference: dto.paymentID }
+      where: { gatewayReference: dto.paymentID },
+      include: { order: true }
     });
     if (!payment) throw new NotFoundException("Payment not found for this bKash payment ID.");
 
@@ -85,7 +86,12 @@ export class PaymentsController {
       });
       await this.prisma.order.update({
         where: { id: payment.orderId },
-        data: { paymentStatus: "PAID" }
+        data: {
+          paymentStatus:
+            payment.amount + 0.01 >= payment.order.total
+              ? PaymentStatus.PAID
+              : PaymentStatus.PARTIALLY_PAID
+        }
       });
     } catch (error) {
       await this.prisma.payment.update({

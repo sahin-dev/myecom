@@ -28,6 +28,8 @@ import {
   Brand,
   Category,
   CheckoutMethod,
+  DeliveryRate,
+  DeliveryZone,
   HomeSection,
   InfoPageContent,
   Testimonial,
@@ -93,6 +95,44 @@ function localDate(value?: string | null) {
   return local.toISOString().slice(0, 16);
 }
 
+function cleanMethodCode(value?: string | null) {
+  return (value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+
+function checkoutMethodMetadata(method?: CheckoutMethod | null) {
+  return method?.metadata && typeof method.metadata === "object" ? method.metadata : {};
+}
+
+function paymentProviderValue(method?: CheckoutMethod | null) {
+  const metadata = checkoutMethodMetadata(method);
+  const provider = String(metadata.provider ?? "").trim().toLowerCase();
+  const code = cleanMethodCode(method?.code);
+  const name = cleanMethodCode(method?.name);
+  if (provider) return provider;
+  if (code.includes("BKASH") || name.includes("BKASH")) return "bkash";
+  if (code.includes("NAGAD") || name.includes("NAGAD")) return "nagad";
+  if (code.includes("CARD") || name.includes("CARD")) return "card";
+  if (code.includes("ONLINE_PAYMENT")) return "online";
+  if (code.includes("CASH") || code.includes("COD")) return "cash";
+  return "other";
+}
+
+function paymentKindValue(method?: CheckoutMethod | null) {
+  const metadata = checkoutMethodMetadata(method);
+  const kind = String(metadata.paymentKind ?? "").trim();
+  if (kind) return kind;
+  const code = cleanMethodCode(method?.code);
+  if (code.includes("CASH") || code.includes("COD")) return "cash";
+  if (code === "ONLINE_PAYMENT") return "online_group";
+  return "gateway";
+}
+
+function scrollToAdminEditor(id: string) {
+  window.requestAnimationFrame(() => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+}
+
 export function AdminContent() {
   const { setSettings } = useSiteSettings();
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
@@ -112,6 +152,10 @@ export function AdminContent() {
   const [infoPages, setInfoPages] = useState<InfoPageContent[]>([]);
   const [editingPage, setEditingPage] = useState<InfoPageContent | null>(null);
   const [savingPage, setSavingPage] = useState(false);
+  const [editingZone, setEditingZone] = useState<DeliveryZone | null>(null);
+  const [editingRate, setEditingRate] = useState<DeliveryRate | null>(null);
+  const [editingPaymentMethod, setEditingPaymentMethod] = useState<CheckoutMethod | null>(null);
+  const [editingDeliveryMethod, setEditingDeliveryMethod] = useState<CheckoutMethod | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,12 +190,11 @@ export function AdminContent() {
     setCreating(false);
     setImage("");
     setEditingPage(null);
+    setEditingZone(null);
+    setEditingRate(null);
+    setEditingPaymentMethod(null);
+    setEditingDeliveryMethod(null);
   }, [mode]);
-
-  useEffect(() => {
-    if (!editing && !creating && !editingPage) return;
-    document.getElementById("admin-content-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [editing, creating, editingPage]);
 
   const notifyUpload = useCallback(
     (text: string) => notify(text, /could not|failed|unavailable/i.test(text) ? "error" : "success"),
@@ -168,6 +211,7 @@ export function AdminContent() {
       "logoUrl" in item ? item.logoUrl ?? "" :
       "avatarUrl" in item ? item.avatarUrl ?? "" : ""
     );
+    scrollToAdminEditor("admin-content-editor");
   }
 
   function changeMode(next: ContentMode) {
@@ -182,6 +226,27 @@ export function AdminContent() {
     setEditing(null);
     setCreating(true);
     setImage("");
+    scrollToAdminEditor("admin-content-editor");
+  }
+
+  function editDeliveryZone(zone: DeliveryZone) {
+    setEditingZone(zone);
+    scrollToAdminEditor("admin-delivery-zone-editor");
+  }
+
+  function editDeliveryRate(rate: DeliveryRate) {
+    setEditingRate(rate);
+    scrollToAdminEditor("admin-delivery-zone-editor");
+  }
+
+  function editPaymentMethod(method: CheckoutMethod) {
+    setEditingPaymentMethod(method);
+    scrollToAdminEditor("admin-payment-method-editor");
+  }
+
+  function editDeliveryMethod(method: CheckoutMethod) {
+    setEditingDeliveryMethod(method);
+    scrollToAdminEditor("admin-delivery-method-editor");
   }
 
   function closeEditor() {
@@ -200,6 +265,10 @@ export function AdminContent() {
     try {
       await deleteAdminResource(path, id);
       setEditing(null);
+      setEditingPaymentMethod(null);
+      setEditingDeliveryMethod(null);
+      setEditingZone(null);
+      setEditingRate(null);
       notify(`${label} was removed.`);
       await load();
     } catch (caught) {
@@ -382,25 +451,160 @@ export function AdminContent() {
     }
   }
 
-  async function saveCheckoutMethod(event: FormEvent<HTMLFormElement>) {
+  async function savePaymentMethod(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const paymentKind = value(form, "paymentKind");
+    const provider = value(form, "provider");
+    const payload = {
+      type: "PAYMENT",
+      code: cleanMethodCode(value(form, "code")),
+      name: value(form, "name"),
+      description: value(form, "description"),
+      fee: 0,
+      freeThreshold: undefined,
+      minDeliveryDays: undefined,
+      maxDeliveryDays: undefined,
+      priority: Number(form.get("priority") || 0),
+      isActive: form.get("isActive") === "on",
+      metadata: {
+        paymentKind,
+        provider,
+        settlement: paymentKind === "cash" ? "collect_on_delivery" : "gateway"
+      }
+    };
     try {
-      await save("checkout-methods", {
-        type: value(form, "type"),
-        code: value(form, "code").toUpperCase().replace(/\s+/g, "_"),
-        name: value(form, "name"),
-        description: value(form, "description"),
-        fee: Number(form.get("fee") || 0),
-        freeThreshold: Number(form.get("freeThreshold") || 0) || undefined,
-        minDeliveryDays: Number(form.get("minDeliveryDays") || 0) || undefined,
-        maxDeliveryDays: Number(form.get("maxDeliveryDays") || 0) || undefined,
-        priority: Number(form.get("priority") || 0),
-        isActive: form.get("isActive") === "on"
-      });
-      notify("Checkout method saved.");
+      if (editingPaymentMethod) await updateAdminResource("checkout-methods", editingPaymentMethod.id, payload);
+      else await createAdminResource("checkout-methods", payload);
+      notify(editingPaymentMethod ? "Payment method updated." : "Payment method saved.");
+      setEditingPaymentMethod(null);
+      await load();
+      event.currentTarget.reset();
     } catch (caught) {
-      notify(caught instanceof Error ? caught.message : "Checkout method could not be saved.", "error");
+      notify(caught instanceof Error ? caught.message : "Payment method could not be saved.", "error");
+    }
+  }
+
+  async function saveDeliveryMethod(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      type: "DELIVERY",
+      code: cleanMethodCode(value(form, "code")),
+      name: value(form, "name"),
+      description: value(form, "description"),
+      fee: Number(form.get("fee") || 0),
+      freeThreshold: Number(form.get("freeThreshold") || 0) || undefined,
+      minDeliveryDays: Number(form.get("minDeliveryDays") || 0) || undefined,
+      maxDeliveryDays: Number(form.get("maxDeliveryDays") || 0) || undefined,
+      priority: Number(form.get("priority") || 0),
+      isActive: form.get("isActive") === "on",
+      metadata: {
+        deliveryKind: value(form, "deliveryKind") || "local_delivery"
+      }
+    };
+    try {
+      if (editingDeliveryMethod) await updateAdminResource("checkout-methods", editingDeliveryMethod.id, payload);
+      else await createAdminResource("checkout-methods", payload);
+      notify(editingDeliveryMethod ? "Delivery method updated." : "Delivery method saved.");
+      setEditingDeliveryMethod(null);
+      await load();
+      event.currentTarget.reset();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Delivery method could not be saved.", "error");
+    }
+  }
+
+  async function savePlatformCheckoutPolicy(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!catalog) return;
+    const form = new FormData(event.currentTarget);
+    try {
+      const updated = await updateSiteSettings({
+        checkoutPolicy: {
+          allowedPaymentCodes: form.getAll("allowedPaymentCodes").map(String),
+          requiredPaymentPercent: Number(form.get("requiredPaymentPercent") || 0),
+          deliverableZoneCodes: form.getAll("deliverableZoneCodes").map(String),
+          requireKnownDeliveryArea: form.get("requireKnownDeliveryArea") === "on"
+        }
+      });
+      setCatalog({ ...catalog, siteSettings: updated });
+      notify("Platform checkout policy saved.");
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Platform checkout policy could not be saved.", "error");
+    }
+  }
+
+  async function saveDeliveryZone(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!catalog) return;
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      name: value(form, "name"),
+      code: value(form, "code"),
+      city: value(form, "city"),
+      areas: value(form, "areas").split("\n").map((item) => item.trim()).filter(Boolean),
+      postalCodes: value(form, "postalCodes").split("\n").map((item) => item.trim()).filter(Boolean),
+      priority: Number(form.get("priority") || 0),
+      isActive: form.get("isActive") === "on"
+    };
+    try {
+      if (editingZone) await updateAdminResource("delivery-zones", editingZone.id, payload);
+      else await createAdminResource("delivery-zones", payload);
+      notify(editingZone ? "Delivery zone updated." : "Delivery zone saved.");
+      setEditingZone(null);
+      await load();
+      event.currentTarget.reset();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Delivery zone could not be saved.", "error");
+    }
+  }
+
+  async function saveDeliveryRate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!catalog) return;
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      zoneId: value(form, "zoneId"),
+      deliveryMethodId: value(form, "deliveryMethodId"),
+      baseFee: Number(form.get("baseFee") || 0),
+      freeThreshold: Number(form.get("freeThreshold") || 0) || undefined,
+      minOrder: Number(form.get("minOrder") || 0),
+      maxOrder: Number(form.get("maxOrder") || 0) || undefined,
+      minDeliveryDays: Number(form.get("minDeliveryDays") || 0) || undefined,
+      maxDeliveryDays: Number(form.get("maxDeliveryDays") || 0) || undefined,
+      priority: Number(form.get("priority") || 0),
+      isActive: form.get("isActive") === "on"
+    };
+    try {
+      if (editingRate) await updateAdminResource("delivery-rates", editingRate.id, payload);
+      else await createAdminResource("delivery-rates", payload);
+      notify(editingRate ? "Delivery rate updated." : "Delivery rate saved.");
+      setEditingRate(null);
+      await load();
+      event.currentTarget.reset();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Delivery rate could not be saved.", "error");
+    }
+  }
+
+  async function toggleDeliveryZone(zone: DeliveryZone) {
+    try {
+      await updateAdminResource("delivery-zones", zone.id, { isActive: !zone.isActive });
+      notify(`${zone.name} updated.`);
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Delivery zone could not be updated.", "error");
+    }
+  }
+
+  async function toggleDeliveryRate(rate: DeliveryRate) {
+    try {
+      await updateAdminResource("delivery-rates", rate.id, { isActive: !rate.isActive });
+      notify("Delivery rate updated.");
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Delivery rate could not be updated.", "error");
     }
   }
 
@@ -435,6 +639,12 @@ export function AdminContent() {
   if (error && !catalog) return <AdminError message={error} retry={() => void load()} />;
   if (!catalog) return null;
 
+  const paymentCheckoutMethods = catalog.checkoutMethods.filter((method) => method.type === "PAYMENT");
+  const deliveryCheckoutMethods = catalog.checkoutMethods.filter((method) => method.type === "DELIVERY");
+  const paymentProviderRows = paymentCheckoutMethods.filter((method) => paymentKindValue(method) !== "online_group");
+  const onlineGatewayRows = paymentProviderRows.filter((method) => paymentKindValue(method) === "gateway");
+  const cashRows = paymentProviderRows.filter((method) => paymentKindValue(method) === "cash");
+
   const countFor = (id: ContentMode) =>
     id === "identity" ? 1 :
     id === "homepage" ? catalog.homeSections.length :
@@ -443,7 +653,7 @@ export function AdminContent() {
     id === "categories" ? catalog.categories.length :
     id === "testimonials" ? catalog.testimonials.length :
     id === "pages" ? infoPages.length :
-    catalog.checkoutMethods.length;
+    paymentCheckoutMethods.length + deliveryCheckoutMethods.length + catalog.deliveryZones.length;
 
   return (
     <div className="admin-page">
@@ -565,8 +775,8 @@ export function AdminContent() {
               <div className="form-grid"><label>Button label<input name="ctaLabel" defaultValue={selected && "ctaLabel" in selected ? selected.ctaLabel ?? "" : ""} /></label><label>Button link<input name="ctaHref" defaultValue={selected && "ctaHref" in selected ? selected.ctaHref ?? "" : ""} /></label></div>
               <div className="form-grid"><label>Collection<select name="collection" defaultValue={selected && "collection" in selected ? selected.collection ?? "" : ""}><option value="">None</option><option>topSellingProducts</option><option>newlyLaunched</option><option>trendingProducts</option><option>comboDeals</option><option>certifiedProducts</option><option>justForYou</option><option>categoryShowcase</option></select></label><label>Product limit<input name="productLimit" type="number" min="0" defaultValue={selected && "productLimit" in selected ? selected.productLimit : 8} /></label></div>
               <div className="form-grid"><label>Priority<input name="priority" type="number" defaultValue={selected && "priority" in selected ? selected.priority : 0} /></label><label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive : true} /> Published</label></div>
-              <label>Announcement<input name="announcement" defaultValue={selected && "metadata" in selected ? selected.metadata?.announcement ?? "" : ""} /></label>
-              <label>Trust benefits<textarea name="benefits" placeholder={"Carefully selected | Trusted suppliers\nFlexible delivery | Choose what fits your day"} defaultValue={selected && "metadata" in selected ? selected.metadata?.items?.map((item) => `${item.title} | ${item.detail}`).join("\n") ?? "" : ""} /></label>
+              <label>Announcement<input name="announcement" defaultValue={selected && "metadata" in selected ? (selected as HomeSection).metadata?.announcement ?? "" : ""} /></label>
+              <label>Trust benefits<textarea name="benefits" placeholder={"Carefully selected | Trusted suppliers\nFlexible delivery | Choose what fits your day"} defaultValue={selected && "metadata" in selected ? (selected as HomeSection).metadata?.items?.map((item) => `${item.title} | ${item.detail}`).join("\n") ?? "" : ""} /></label>
               <AdminUploadField label="Section image" value={image} onChange={setImage} onMessage={notifyUpload} recommendedDimensions="1600 x 700 px" />
             </AdminForm>
           }
@@ -614,11 +824,255 @@ export function AdminContent() {
       ) : null}
 
       {mode === "checkout" ? (
-        <ContentLayout title="Payment and delivery methods" description="Disabled methods disappear from checkout immediately. Online payment stays disabled until a gateway is connected." items={catalog.checkoutMethods} editorOpen={creating || Boolean(editing)} createLabel="Add method" onCreate={startCreate} onClose={closeEditor} render={(item, index) => (
+        <>
+          <section className="admin-data-panel checkout-policy-panel">
+            <AdminSectionHeader title="Platform checkout policy" description="Defaults inherited by every product unless a product has its own checkout rules." />
+            <form className="admin-editor-form" onSubmit={savePlatformCheckoutPolicy}>
+              <label>Allowed payment methods
+                <select name="allowedPaymentCodes" multiple defaultValue={catalog.siteSettings.checkoutPolicy?.allowedPaymentCodes ?? []}>
+                  {catalog.checkoutMethods.filter((method) => method.type === "PAYMENT").map((method) => <option key={method.id} value={method.code}>{method.name}</option>)}
+                </select>
+              </label>
+              <div className="form-grid">
+                <label>Required upfront payment
+                  <select name="requiredPaymentPercent" defaultValue={catalog.siteSettings.checkoutPolicy?.requiredPaymentPercent ?? 0}>
+                    <option value="0">No upfront payment</option>
+                    <option value="20">20% upfront</option>
+                    <option value="50">50% upfront</option>
+                    <option value="100">100% upfront</option>
+                  </select>
+                </label>
+                <label className="check-row"><input name="requireKnownDeliveryArea" type="checkbox" defaultChecked={Boolean(catalog.siteSettings.checkoutPolicy?.requireKnownDeliveryArea)} /> Require delivery area before checkout</label>
+              </div>
+              <label>Platform deliverable zones
+                <select name="deliverableZoneCodes" multiple defaultValue={catalog.siteSettings.checkoutPolicy?.deliverableZoneCodes ?? []}>
+                  {catalog.deliveryZones.map((zone) => <option key={zone.id} value={zone.code}>{zone.name}</option>)}
+                </select>
+              </label>
+              <button className="primary-action" type="submit">Save platform rules</button>
+            </form>
+          </section>
+
+          <section className="admin-data-panel checkout-zone-panel" id="admin-delivery-zone-editor">
+            <AdminSectionHeader
+              title="Delivery zones and fees"
+              description="Manage service areas, delivery coverage, and zone-specific pricing without creating duplicate rows."
+            />
+            <div className="delivery-zone-admin-grid">
+              <form className="admin-editor-form" onSubmit={saveDeliveryZone} key={editingZone?.id ?? "new-zone"}>
+                <h3>{editingZone ? `Edit ${editingZone.name}` : "Add delivery zone"}</h3>
+                <label>Zone name<input name="name" placeholder="Dhaka city" defaultValue={editingZone?.name ?? ""} required /></label>
+                <div className="form-grid">
+                  <label>Code<input name="code" placeholder="DHAKA" defaultValue={editingZone?.code ?? ""} required /></label>
+                  <label>City<input name="city" placeholder="Dhaka" defaultValue={editingZone?.city ?? ""} /></label>
+                </div>
+                <label>Areas<textarea name="areas" placeholder={"Dhanmondi\nGulshan\nBanani"} defaultValue={editingZone?.areas.join("\n") ?? ""} /></label>
+                <label>Postal codes<textarea name="postalCodes" placeholder={"1209\n1212"} defaultValue={editingZone?.postalCodes.join("\n") ?? ""} /></label>
+                <div className="form-grid">
+                  <label>Priority<input name="priority" type="number" defaultValue={editingZone?.priority ?? 0} /></label>
+                  <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={editingZone?.isActive ?? true} /> Active</label>
+                </div>
+                <div className="admin-inline-actions">
+                  {editingZone ? <button className="secondary-action" type="button" onClick={() => setEditingZone(null)}>Cancel edit</button> : null}
+                  <button className="primary-action" type="submit">{editingZone ? "Update zone" : "Save zone"}</button>
+                </div>
+              </form>
+              <form className="admin-editor-form" onSubmit={saveDeliveryRate} key={editingRate?.id ?? "new-rate"}>
+                <h3>{editingRate ? "Edit zone rate" : "Add zone rate"}</h3>
+                <label>Zone<select name="zoneId" required defaultValue={editingRate?.zoneId ?? catalog.deliveryZones[0]?.id ?? ""}>{catalog.deliveryZones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label>
+                <label>Delivery method<select name="deliveryMethodId" required defaultValue={editingRate?.deliveryMethodId ?? ""}>{catalog.checkoutMethods.filter((method) => method.type === "DELIVERY").map((method) => <option key={method.id} value={method.id}>{method.name}</option>)}</select></label>
+                <div className="form-grid">
+                  <label>Fee<input name="baseFee" type="number" min="0" step="0.01" defaultValue={editingRate?.baseFee ?? 80} /></label>
+                  <label>Free above<input name="freeThreshold" type="number" min="0" step="0.01" defaultValue={editingRate?.freeThreshold ?? ""} /></label>
+                </div>
+                <div className="form-grid">
+                  <label>Min days<input name="minDeliveryDays" type="number" min="0" defaultValue={editingRate?.minDeliveryDays ?? ""} /></label>
+                  <label>Max days<input name="maxDeliveryDays" type="number" min="0" defaultValue={editingRate?.maxDeliveryDays ?? ""} /></label>
+                </div>
+                <div className="form-grid">
+                  <label>Priority<input name="priority" type="number" defaultValue={editingRate?.priority ?? 0} /></label>
+                  <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={editingRate?.isActive ?? true} /> Active</label>
+                </div>
+                <div className="admin-inline-actions">
+                  {editingRate ? <button className="secondary-action" type="button" onClick={() => setEditingRate(null)}>Cancel edit</button> : null}
+                  <button className="primary-action" type="submit">{editingRate ? "Update rate" : "Save rate"}</button>
+                </div>
+              </form>
+            </div>
+            <div className="delivery-zone-list">
+              {catalog.deliveryZones.map((zone) => {
+                const zoneRates = catalog.deliveryRates.filter((rate) => rate.zoneId === zone.id);
+                return (
+                  <article key={zone.id} className="delivery-zone-card">
+                    <header>
+                      <div className="admin-content-image"><Truck size={20} /></div>
+                      <div>
+                        <strong>{zone.name}</strong>
+                        <p>{zone.city || zone.code} / {zone.areas.length} areas / {zone.postalCodes.length} postal codes</p>
+                        <small>{zone.code} / Priority {zone.priority}</small>
+                      </div>
+                      <StatusBadge value={zone.isActive ? "Active" : "Archived"} />
+                      <div className="admin-inline-actions">
+                        <button type="button" onClick={() => editDeliveryZone(zone)} title={`Edit ${zone.name}`}><Pencil size={15} /></button>
+                        <button type="button" onClick={() => void toggleDeliveryZone(zone)}>{zone.isActive ? "Disable" : "Enable"}</button>
+                        <button type="button" onClick={() => remove("delivery-zones", zone.id, zone.name)} title={`Delete ${zone.name}`}><Trash2 size={15} /></button>
+                      </div>
+                    </header>
+                    <div className="delivery-zone-meta">
+                      <span><strong>Areas</strong>{zone.areas.length ? zone.areas.join(", ") : "No areas listed"}</span>
+                      <span><strong>Postal codes</strong>{zone.postalCodes.length ? zone.postalCodes.join(", ") : "No postal codes listed"}</span>
+                    </div>
+                    <div className="delivery-rate-list">
+                      {zoneRates.length ? zoneRates.map((rate) => (
+                        <div key={rate.id}>
+                          <span>
+                            <strong>{rate.deliveryMethod?.name ?? "Delivery method"}</strong>
+                            <small>
+                              Fee {rate.baseFee} / Free above {rate.freeThreshold ?? "none"} / {rate.minDeliveryDays ?? 0}-{rate.maxDeliveryDays ?? rate.minDeliveryDays ?? 0} days
+                            </small>
+                          </span>
+                          <StatusBadge value={rate.isActive ? "Active" : "Archived"} />
+                          <button type="button" onClick={() => editDeliveryRate(rate)} title="Edit rate"><Pencil size={14} /></button>
+                          <button type="button" onClick={() => void toggleDeliveryRate(rate)}>{rate.isActive ? "Disable" : "Enable"}</button>
+                          <button type="button" onClick={() => remove("delivery-rates", rate.id, `${zone.name} rate`)} title="Delete rate"><Trash2 size={14} /></button>
+                        </div>
+                      )) : <p className="muted-copy">No rates configured for this zone yet.</p>}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+          <section className="admin-data-panel checkout-method-panel" id="admin-payment-method-editor">
+            <AdminSectionHeader
+              title="Payment methods"
+              description="Manage cash collection, the online payment group, and gateway providers separately."
+            />
+            <div className="checkout-method-admin-grid">
+              <form className="admin-editor-form" onSubmit={savePaymentMethod} key={editingPaymentMethod?.id ?? "new-payment-method"}>
+                <h3>{editingPaymentMethod ? `Edit ${editingPaymentMethod.name}` : "Add payment method"}</h3>
+                <div className="form-grid">
+                  <label>Payment role
+                    <select name="paymentKind" defaultValue={paymentKindValue(editingPaymentMethod)}>
+                      <option value="cash">Cash on delivery</option>
+                      <option value="online_group">Online payment group</option>
+                      <option value="gateway">Gateway provider</option>
+                    </select>
+                  </label>
+                  <label>Provider
+                    <select name="provider" defaultValue={paymentProviderValue(editingPaymentMethod)}>
+                      <option value="cash">Cash / manual collection</option>
+                      <option value="online">Online payment</option>
+                      <option value="bkash">bKash</option>
+                      <option value="nagad">Nagad</option>
+                      <option value="card">Card</option>
+                      <option value="other">Other gateway</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="form-grid">
+                  <label>Code<input name="code" placeholder="BKASH" defaultValue={editingPaymentMethod?.code ?? ""} required /></label>
+                  <label>Display name<input name="name" placeholder="bKash" defaultValue={editingPaymentMethod?.name ?? ""} required /></label>
+                </div>
+                <label>Customer note<textarea name="description" placeholder="Pay securely after order confirmation." defaultValue={editingPaymentMethod?.description ?? ""} /></label>
+                <div className="form-grid">
+                  <label>Priority<input name="priority" type="number" defaultValue={editingPaymentMethod?.priority ?? 0} /></label>
+                  <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={editingPaymentMethod?.isActive ?? true} /> Available at checkout</label>
+                </div>
+                <div className="admin-inline-actions">
+                  {editingPaymentMethod ? <button className="secondary-action" type="button" onClick={() => setEditingPaymentMethod(null)}>Cancel edit</button> : null}
+                  <button className="primary-action" type="submit">{editingPaymentMethod ? "Update payment method" : "Save payment method"}</button>
+                </div>
+              </form>
+              <div className="checkout-method-list">
+                <div className="checkout-method-summary">
+                  <article><strong>{cashRows.length}</strong><span>Cash methods</span></article>
+                  <article><strong>{onlineGatewayRows.length}</strong><span>Online gateways</span></article>
+                  <article><strong>{paymentCheckoutMethods.filter((method) => method.isActive).length}</strong><span>Active payments</span></article>
+                </div>
+                {paymentCheckoutMethods.map((method, index) => (
+                  <article key={method.id} className="checkout-method-card">
+                    <div className="admin-content-image"><CreditCard size={20} /></div>
+                    <div>
+                      <strong>{method.name}</strong>
+                      <p>{method.description || method.code}</p>
+                      <small>{paymentKindValue(method).replace("_", " ")} / {paymentProviderValue(method)} / Priority {method.priority}</small>
+                    </div>
+                    <StatusBadge value={method.isActive ? "Active" : "Archived"} />
+                    <div className="admin-inline-actions">
+                      <button type="button" onClick={() => editPaymentMethod(method)} title={`Edit ${method.name}`}><Pencil size={15} /></button>
+                      <button type="button" onClick={() => void toggle("checkout-methods", method)}>{method.isActive ? "Disable" : "Enable"}</button>
+                      <button type="button" onClick={() => void move("checkout-methods", paymentCheckoutMethods, index, -1)} disabled={index === 0} title="Move up"><ChevronUp size={15} /></button>
+                      <button type="button" onClick={() => void move("checkout-methods", paymentCheckoutMethods, index, 1)} disabled={index === paymentCheckoutMethods.length - 1} title="Move down"><ChevronDown size={15} /></button>
+                      <button type="button" onClick={() => remove("checkout-methods", method.id, method.name)} title={`Delete ${method.name}`}><Trash2 size={15} /></button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="admin-data-panel checkout-method-panel" id="admin-delivery-method-editor">
+            <AdminSectionHeader
+              title="Delivery methods"
+              description="Define delivery service types here. Zone fees and area coverage stay in Delivery zones and fees."
+            />
+            <div className="checkout-method-admin-grid">
+              <form className="admin-editor-form" onSubmit={saveDeliveryMethod} key={editingDeliveryMethod?.id ?? "new-delivery-method"}>
+                <h3>{editingDeliveryMethod ? `Edit ${editingDeliveryMethod.name}` : "Add delivery method"}</h3>
+                <div className="form-grid">
+                  <label>Code<input name="code" placeholder="INSIDE_DHAKA" defaultValue={editingDeliveryMethod?.code ?? ""} required /></label>
+                  <label>Name<input name="name" placeholder="Inside Dhaka city" defaultValue={editingDeliveryMethod?.name ?? ""} required /></label>
+                </div>
+                <label>Description<textarea name="description" placeholder="Delivered by our local courier team." defaultValue={editingDeliveryMethod?.description ?? ""} /></label>
+                <input type="hidden" name="deliveryKind" value="local_delivery" />
+                <div className="form-grid">
+                  <label>Base fee<input name="fee" type="number" min="0" step="0.01" defaultValue={editingDeliveryMethod?.fee ?? 0} /></label>
+                  <label>Free above<input name="freeThreshold" type="number" min="0" step="0.01" defaultValue={editingDeliveryMethod?.freeThreshold ?? ""} /></label>
+                </div>
+                <div className="form-grid">
+                  <label>Min days<input name="minDeliveryDays" type="number" min="0" defaultValue={editingDeliveryMethod?.minDeliveryDays ?? ""} /></label>
+                  <label>Max days<input name="maxDeliveryDays" type="number" min="0" defaultValue={editingDeliveryMethod?.maxDeliveryDays ?? ""} /></label>
+                </div>
+                <div className="form-grid">
+                  <label>Priority<input name="priority" type="number" defaultValue={editingDeliveryMethod?.priority ?? 0} /></label>
+                  <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={editingDeliveryMethod?.isActive ?? true} /> Available for delivery zones</label>
+                </div>
+                <div className="admin-inline-actions">
+                  {editingDeliveryMethod ? <button className="secondary-action" type="button" onClick={() => setEditingDeliveryMethod(null)}>Cancel edit</button> : null}
+                  <button className="primary-action" type="submit">{editingDeliveryMethod ? "Update delivery method" : "Save delivery method"}</button>
+                </div>
+              </form>
+              <div className="checkout-method-list">
+                {deliveryCheckoutMethods.map((method, index) => (
+                  <article key={method.id} className="checkout-method-card">
+                    <div className="admin-content-image"><Truck size={20} /></div>
+                    <div>
+                      <strong>{method.name}</strong>
+                      <p>{method.description || method.code}</p>
+                      <small>Base fee {method.fee} / Free above {method.freeThreshold ?? "none"} / Priority {method.priority}</small>
+                    </div>
+                    <StatusBadge value={method.isActive ? "Active" : "Archived"} />
+                    <div className="admin-inline-actions">
+                      <button type="button" onClick={() => editDeliveryMethod(method)} title={`Edit ${method.name}`}><Pencil size={15} /></button>
+                      <button type="button" onClick={() => void toggle("checkout-methods", method)}>{method.isActive ? "Disable" : "Enable"}</button>
+                      <button type="button" onClick={() => void move("checkout-methods", deliveryCheckoutMethods, index, -1)} disabled={index === 0} title="Move up"><ChevronUp size={15} /></button>
+                      <button type="button" onClick={() => void move("checkout-methods", deliveryCheckoutMethods, index, 1)} disabled={index === deliveryCheckoutMethods.length - 1} title="Move down"><ChevronDown size={15} /></button>
+                      <button type="button" onClick={() => remove("checkout-methods", method.id, method.name)} title={`Delete ${method.name}`}><Trash2 size={15} /></button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        {null}
+        {/*
           <><div className="admin-content-image">{item.type === "PAYMENT" ? <CreditCard size={20} /> : <Truck size={20} />}</div><div><strong>{item.name}</strong><p>{item.description || item.code}</p><small>{item.type} · Fee {item.fee} · Priority {item.priority}</small></div><ContentActions item={item} edit={() => startEdit(item)} toggle={() => void toggle("checkout-methods", item)} remove={() => void remove("checkout-methods", item.id, item.name)} moveUp={index > 0 ? () => void move("checkout-methods", catalog.checkoutMethods, index, -1) : undefined} moveDown={index < catalog.checkoutMethods.length - 1 ? () => void move("checkout-methods", catalog.checkoutMethods, index, 1) : undefined} /></>
         )} form={
           <AdminForm key={editing?.id ?? "new-method"} title={editing ? "Edit checkout method" : "Add checkout method"} onSubmit={saveCheckoutMethod} submitLabel="Save method"><div className="form-grid"><label>Type<select name="type" defaultValue={selected && "type" in selected ? selected.type : "DELIVERY"}><option>DELIVERY</option><option>PAYMENT</option></select></label><label>Code<input name="code" defaultValue={selected && "code" in selected ? selected.code : ""} required /></label></div><label>Name<input name="name" defaultValue={selected && "name" in selected ? selected.name : ""} required /></label><label>Description<textarea name="description" defaultValue={selected && "description" in selected ? selected.description ?? "" : ""} /></label><div className="form-grid"><label>Fee<input name="fee" type="number" min="0" step="0.01" defaultValue={selected && "fee" in selected ? selected.fee : 0} /></label><label>Free above<input name="freeThreshold" type="number" min="0" step="0.01" defaultValue={selected && "freeThreshold" in selected ? selected.freeThreshold ?? "" : ""} /></label></div><div className="form-grid"><label>Minimum days<input name="minDeliveryDays" type="number" min="0" defaultValue={selected && "minDeliveryDays" in selected ? selected.minDeliveryDays ?? "" : ""} /></label><label>Maximum days<input name="maxDeliveryDays" type="number" min="0" defaultValue={selected && "maxDeliveryDays" in selected ? selected.maxDeliveryDays ?? "" : ""} /></label></div><label>Priority<input name="priority" type="number" defaultValue={selected && "priority" in selected ? selected.priority : 0} /></label><label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive : true} /> Enabled at checkout</label></AdminForm>
-        } />
+        } /> : null}
+        */}
+        </>
       ) : null}
 
       {mode === "pages" ? (

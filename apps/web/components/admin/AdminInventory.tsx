@@ -181,7 +181,7 @@ export function AdminInventory() {
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [selected, setSelected] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
-  const [editorSection, setEditorSection] = useState<"general" | "details" | "stock" | "options" | "media">("general");
+  const [editorSection, setEditorSection] = useState<"general" | "details" | "checkout" | "stock" | "options" | "media">("general");
   const [productImages, setProductImages] = useState<string[]>([]);
   const [galleryImage, setGalleryImage] = useState("");
   const [search, setSearch] = useState("");
@@ -349,6 +349,36 @@ export function AdminInventory() {
       notify("Product details were updated.");
     } catch (caught) {
       notify(caught instanceof Error ? caught.message : "Product details could not be updated.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveProductCheckoutPolicy(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    try {
+      const updated = await updateAdminProduct(selected.id, {
+        checkoutPolicy: {
+          inheritPayment: form.get("inheritPayment") === "on",
+          onlineOnly: form.get("onlineOnly") === "on",
+          requiredPaymentPercent: Number(form.get("requiredPaymentPercent") || 0),
+          allowedPaymentCodes: form.getAll("allowedPaymentCodes").map(String),
+          inheritDelivery: form.get("inheritDelivery") === "on",
+          allowedZoneCodes: form.getAll("allowedZoneCodes").map(String),
+          blockedZoneCodes: form.getAll("blockedZoneCodes").map(String)
+        }
+      });
+      setSelected(updated);
+      setCatalog((current) => current ? {
+        ...current,
+        products: current.products.map((item) => item.id === updated.id ? updated : item)
+      } : current);
+      notify("Product checkout rules were updated.");
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Checkout rules could not be updated.", "error");
     } finally {
       setSaving(false);
     }
@@ -855,6 +885,7 @@ export function AdminInventory() {
             <nav className="admin-editor-nav" aria-label="Product editor sections">
               {canManageCatalog ? <button type="button" className={editorSection === "general" ? "active" : ""} onClick={() => setEditorSection("general")}>General</button> : null}
               {canManageCatalog ? <button type="button" className={editorSection === "details" ? "active" : ""} onClick={() => setEditorSection("details")}>Details</button> : null}
+              {canManageCatalog ? <button type="button" className={editorSection === "checkout" ? "active" : ""} onClick={() => setEditorSection("checkout")}>Checkout</button> : null}
               {canAdjustInventory ? <button type="button" className={editorSection === "stock" ? "active" : ""} onClick={() => setEditorSection("stock")}>Stock</button> : null}
               {canManageCatalog ? <button type="button" className={editorSection === "options" ? "active" : ""} onClick={() => setEditorSection("options")}>Options</button> : null}
               {canManageCatalog ? <button type="button" className={editorSection === "media" ? "active" : ""} onClick={() => setEditorSection("media")}>Media</button> : null}
@@ -906,6 +937,59 @@ export function AdminInventory() {
                 <ProductDetailFields details={selected.details ?? []} />
                 <div className="admin-editor-sticky-actions">
                   <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : "Save details"}</button>
+                </div>
+              </form>
+            ) : null}
+
+            {canManageCatalog && editorSection === "checkout" ? (
+              <form className="admin-editor-form admin-product-checkout-form" onSubmit={saveProductCheckoutPolicy} key={`${selected.id}-checkout-${JSON.stringify(selected.checkoutPolicy ?? {})}`}>
+                <AdminSectionHeader
+                  title="Checkout rules"
+                  description="Override platform payment and delivery rules for products that need deposits, online-only payment, or restricted delivery areas."
+                />
+                <label className="check-row">
+                  <input name="inheritPayment" type="checkbox" defaultChecked={selected.checkoutPolicy?.inheritPayment !== false} />
+                  Inherit platform payment rules
+                </label>
+                <label className="check-row">
+                  <input name="onlineOnly" type="checkbox" defaultChecked={Boolean(selected.checkoutPolicy?.onlineOnly)} />
+                  Online payment only
+                </label>
+                <label>Required payment before order
+                  <select name="requiredPaymentPercent" defaultValue={selected.checkoutPolicy?.requiredPaymentPercent ?? 0}>
+                    <option value="0">No upfront payment</option>
+                    <option value="20">20% upfront</option>
+                    <option value="50">50% upfront</option>
+                    <option value="100">100% upfront</option>
+                  </select>
+                </label>
+                <label>Allowed payment methods
+                  <select name="allowedPaymentCodes" multiple defaultValue={selected.checkoutPolicy?.allowedPaymentCodes ?? []}>
+                    {catalog.checkoutMethods.filter((method) => method.type === "PAYMENT").map((method) => (
+                      <option key={method.id} value={method.code}>{method.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="check-row">
+                  <input name="inheritDelivery" type="checkbox" defaultChecked={selected.checkoutPolicy?.inheritDelivery !== false} />
+                  Inherit platform delivery areas
+                </label>
+                <label>Deliver only in these zones
+                  <select name="allowedZoneCodes" multiple defaultValue={selected.checkoutPolicy?.allowedZoneCodes ?? []}>
+                    {catalog.deliveryZones.map((zone) => (
+                      <option key={zone.id} value={zone.code}>{zone.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>Block these zones
+                  <select name="blockedZoneCodes" multiple defaultValue={selected.checkoutPolicy?.blockedZoneCodes ?? []}>
+                    {catalog.deliveryZones.map((zone) => (
+                      <option key={zone.id} value={zone.code}>{zone.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="admin-editor-sticky-actions">
+                  <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : "Save checkout rules"}</button>
                 </div>
               </form>
             ) : null}

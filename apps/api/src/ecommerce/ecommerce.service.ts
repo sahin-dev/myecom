@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import {
   AnalyticsEventType,
   CheckoutMethodType,
+  PromotionType,
   OrderStatus,
   PaymentStatus,
   Prisma,
@@ -12,16 +13,22 @@ import {
   AdminUpdateOrderDto,
   AdminUpdateProductDto,
   CheckoutDto,
+  CheckoutQuoteDto,
   CreateBannerDto,
   CreateBrandDto,
   CreateCategoryDto,
   CreateCheckoutMethodDto,
+  CreateDeliveryRateDto,
+  CreateDeliveryZoneDto,
   CreateHomeSectionDto,
   CreateProductDto,
   CreateTestimonialDto,
+  ProductEligibilityDto,
   UpdateBrandDto,
   UpdateCategoryDto,
   UpdateCheckoutMethodDto,
+  UpdateDeliveryRateDto,
+  UpdateDeliveryZoneDto,
   UpdateHomeSectionDto,
   UpdateOrderStatusDto,
   UpdateSiteSettingsDto,
@@ -57,6 +64,65 @@ const normalizeProductDetails = (
     .filter((detail) => detail.type && detail.title && detail.content) ?? [];
 const isRecognizedSale = (order: { paymentStatus?: PaymentStatus | null; status: OrderStatus }) =>
   order.paymentStatus === PaymentStatus.PAID || order.status === OrderStatus.DELIVERED;
+const cleanCode = (value?: string | null) =>
+  (value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
+const compactStrings = (values?: string[]) =>
+  Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean)));
+const compactCodes = (values?: string[]) => compactStrings(values).map(cleanCode).filter(Boolean);
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const normalizePlatformPolicy = (value: unknown) => {
+  const raw = asRecord(value);
+  return {
+    allowedPaymentCodes: compactCodes(raw.allowedPaymentCodes as string[] | undefined),
+    requiredPaymentPercent: Math.min(100, Math.max(0, Number(raw.requiredPaymentPercent ?? 0) || 0)),
+    deliverableZoneCodes: compactCodes(raw.deliverableZoneCodes as string[] | undefined),
+    requireKnownDeliveryArea: Boolean(raw.requireKnownDeliveryArea)
+  };
+};
+const normalizeProductPolicy = (value: unknown) => {
+  const raw = asRecord(value);
+  return {
+    inheritPayment: raw.inheritPayment !== false,
+    allowedPaymentCodes: compactCodes(raw.allowedPaymentCodes as string[] | undefined),
+    requiredPaymentPercent:
+      raw.requiredPaymentPercent === undefined
+        ? undefined
+        : Math.min(100, Math.max(0, Number(raw.requiredPaymentPercent) || 0)),
+    onlineOnly: Boolean(raw.onlineOnly),
+    inheritDelivery: raw.inheritDelivery !== false,
+    allowedZoneCodes: compactCodes(raw.allowedZoneCodes as string[] | undefined),
+    blockedZoneCodes: compactCodes(raw.blockedZoneCodes as string[] | undefined)
+  };
+};
+const formatAddressInfo = (info?: {
+  recipient?: string;
+  phone?: string;
+  line1?: string;
+  line2?: string;
+  area?: string;
+  city?: string;
+  postalCode?: string;
+}) =>
+  [
+    info?.recipient,
+    info?.phone,
+    info?.line1,
+    info?.line2,
+    info?.area,
+    info?.city,
+    info?.postalCode
+  ].map((part) => part?.trim()).filter(Boolean).join(", ");
+const intersects = (left: string[], right: string[]) => left.filter((item) => right.includes(item));
+type CheckoutAdvanceLine = {
+  productId: string;
+  variantId?: string;
+  productName: string;
+  quantity: number;
+  lineTotal: number;
+  advancePaymentPercent: number;
+  advancePaymentAmount: number;
+};
 const dedupeCustomerAnalyticsEvents = <
   T extends {
     type: AnalyticsEventType;
@@ -111,7 +177,8 @@ export class EcommerceService {
       featuredReviews,
       homeSections,
       testimonials,
-      checkoutMethods
+      checkoutMethods,
+      deliveryZones
     ] = await Promise.all([
       this.prisma.banner.findMany({
         where: {
@@ -192,7 +259,8 @@ export class EcommerceService {
         where: { isActive: true },
         orderBy: [{ priority: "asc" }, { createdAt: "desc" }]
       }),
-      this.checkoutMethods()
+      this.checkoutMethods(),
+      this.deliveryZones()
     ]);
 
     return {
@@ -219,7 +287,8 @@ export class EcommerceService {
       featuredReviews,
       homeSections,
       testimonials,
-      checkoutMethods
+      checkoutMethods,
+      deliveryZones
     };
   }
 
@@ -308,6 +377,20 @@ export class EcommerceService {
     return this.prisma.checkoutMethod.findMany({
       where: { isActive: true },
       orderBy: [{ type: "asc" }, { priority: "asc" }, { name: "asc" }]
+    });
+  }
+
+  deliveryZones() {
+    return this.prisma.deliveryZone.findMany({
+      where: { isActive: true },
+      include: {
+        rates: {
+          where: { isActive: true },
+          include: { deliveryMethod: true },
+          orderBy: [{ priority: "asc" }, { baseFee: "asc" }]
+        }
+      },
+      orderBy: [{ priority: "asc" }, { name: "asc" }]
     });
   }
 
@@ -428,6 +511,11 @@ export class EcommerceService {
           dto.youtubeUrl === undefined ? undefined : dto.youtubeUrl.trim() || null,
         whatsappUrl:
           dto.whatsappUrl === undefined ? undefined : dto.whatsappUrl.trim() || null
+        ,
+        checkoutPolicy:
+          dto.checkoutPolicy === undefined
+            ? undefined
+            : normalizePlatformPolicy(dto.checkoutPolicy) as Prisma.InputJsonValue
       },
       create: {
         key: "default",
@@ -440,7 +528,8 @@ export class EcommerceService {
         facebookUrl: dto.facebookUrl?.trim() || null,
         instagramUrl: dto.instagramUrl?.trim() || null,
         youtubeUrl: dto.youtubeUrl?.trim() || null,
-        whatsappUrl: dto.whatsappUrl?.trim() || null
+        whatsappUrl: dto.whatsappUrl?.trim() || null,
+        checkoutPolicy: normalizePlatformPolicy(dto.checkoutPolicy) as Prisma.InputJsonValue
       }
     });
   }
@@ -495,6 +584,10 @@ export class EcommerceService {
         categoryId: dto.categoryId || undefined,
         tags: dto.tags ?? [],
         details: details.length ? details : undefined,
+        checkoutPolicy:
+          dto.checkoutPolicy === undefined
+            ? undefined
+            : normalizeProductPolicy(dto.checkoutPolicy) as Prisma.InputJsonValue,
         status: dto.status ?? ProductStatus.ACTIVE,
         images: imageUrls.length
           ? {
@@ -609,6 +702,7 @@ export class EcommerceService {
         ...dto,
         code: dto.code.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_"),
         fee: dto.fee ?? 0,
+        metadata: dto.metadata as Prisma.InputJsonValue | undefined,
         priority: dto.priority ?? 0,
         isActive: dto.isActive ?? true
       }
@@ -622,14 +716,389 @@ export class EcommerceService {
         ...dto,
         code: dto.code
           ? dto.code.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_")
-          : undefined
+          : undefined,
+        metadata: dto.metadata as Prisma.InputJsonValue | undefined
       }
     });
   }
 
   async deleteCheckoutMethod(id: string) {
+    await this.prisma.deliveryRate.deleteMany({ where: { deliveryMethodId: id } });
     await this.prisma.checkoutMethod.delete({ where: { id } });
     return { deleted: true };
+  }
+
+  async createDeliveryZone(dto: CreateDeliveryZoneDto) {
+    return this.prisma.deliveryZone.create({
+      data: {
+        name: dto.name.trim(),
+        code: cleanCode(dto.code || dto.name),
+        city: dto.city?.trim() || null,
+        areas: compactStrings(dto.areas),
+        postalCodes: compactStrings(dto.postalCodes),
+        isActive: dto.isActive ?? true,
+        priority: dto.priority ?? 0
+      },
+      include: { rates: { include: { deliveryMethod: true } } }
+    });
+  }
+
+  async updateDeliveryZone(id: string, dto: UpdateDeliveryZoneDto) {
+    return this.prisma.deliveryZone.update({
+      where: { id },
+      data: {
+        name: dto.name?.trim(),
+        code: dto.code === undefined ? undefined : cleanCode(dto.code),
+        city: dto.city === undefined ? undefined : dto.city.trim() || null,
+        areas: dto.areas === undefined ? undefined : compactStrings(dto.areas),
+        postalCodes: dto.postalCodes === undefined ? undefined : compactStrings(dto.postalCodes),
+        isActive: dto.isActive,
+        priority: dto.priority
+      },
+      include: { rates: { include: { deliveryMethod: true } } }
+    });
+  }
+
+  async deleteDeliveryZone(id: string) {
+    await this.prisma.deliveryRate.deleteMany({ where: { zoneId: id } });
+    await this.prisma.deliveryZone.delete({ where: { id } });
+    return { deleted: true };
+  }
+
+  async createDeliveryRate(dto: CreateDeliveryRateDto) {
+    return this.prisma.deliveryRate.create({
+      data: {
+        zoneId: dto.zoneId,
+        deliveryMethodId: dto.deliveryMethodId,
+        baseFee: dto.baseFee ?? 0,
+        freeThreshold: dto.freeThreshold,
+        minOrder: dto.minOrder ?? 0,
+        maxOrder: dto.maxOrder,
+        minDeliveryDays: dto.minDeliveryDays,
+        maxDeliveryDays: dto.maxDeliveryDays,
+        isActive: dto.isActive ?? true,
+        priority: dto.priority ?? 0
+      },
+      include: { zone: true, deliveryMethod: true }
+    });
+  }
+
+  async updateDeliveryRate(id: string, dto: UpdateDeliveryRateDto) {
+    return this.prisma.deliveryRate.update({
+      where: { id },
+      data: {
+        zoneId: dto.zoneId,
+        deliveryMethodId: dto.deliveryMethodId,
+        baseFee: dto.baseFee,
+        freeThreshold: dto.freeThreshold,
+        minOrder: dto.minOrder,
+        maxOrder: dto.maxOrder,
+        minDeliveryDays: dto.minDeliveryDays,
+        maxDeliveryDays: dto.maxDeliveryDays,
+        isActive: dto.isActive,
+        priority: dto.priority
+      },
+      include: { zone: true, deliveryMethod: true }
+    });
+  }
+
+  async deleteDeliveryRate(id: string) {
+    await this.prisma.deliveryRate.delete({ where: { id } });
+    return { deleted: true };
+  }
+
+  private isCashPayment(code?: string | null, name?: string | null) {
+    const value = `${cleanCode(code)} ${cleanCode(name)}`;
+    return value.includes("COD") || value.includes("CASH_ON_DELIVERY") || value.includes("CASH");
+  }
+
+  private paymentProviderFor(code?: string | null, name?: string | null, metadata?: unknown) {
+    if (this.isCashPayment(code, name)) return "cash";
+    const provider =
+      metadata && typeof metadata === "object" && "provider" in metadata
+        ? String((metadata as { provider?: unknown }).provider ?? "")
+        : "";
+    const value = `${cleanCode(code)} ${cleanCode(name)} ${cleanCode(provider)}`;
+    if (value.includes("BKASH") || value.includes("ONLINE_PAYMENT")) return "bkash";
+    if (value.includes("NAGAD")) return "nagad";
+    if (value.includes("CARD")) return "card";
+    return "pending-gateway";
+  }
+
+  private resolveDeliveryZone<T extends { code: string; city?: string | null; areas: string[]; postalCodes: string[] }>(
+    zones: T[],
+    input: { deliveryZoneCode?: string; shippingInfo?: { area?: string; city?: string; postalCode?: string } }
+  ): T | null {
+    const requestedCode = cleanCode(input.deliveryZoneCode);
+    if (requestedCode) return zones.find((zone) => cleanCode(zone.code) === requestedCode) ?? null;
+    const area = input.shippingInfo?.area?.trim().toLowerCase();
+    const city = input.shippingInfo?.city?.trim().toLowerCase();
+    const postal = input.shippingInfo?.postalCode?.trim().toLowerCase();
+    return zones.find((zone) => {
+      const zoneCity = zone.city?.trim().toLowerCase();
+      return (
+        Boolean(postal && zone.postalCodes.some((item) => item.trim().toLowerCase() === postal)) ||
+        Boolean(area && zone.areas.some((item) => item.trim().toLowerCase() === area)) ||
+        Boolean(city && zoneCity && zoneCity === city)
+      );
+    }) ?? null;
+  }
+
+  async checkoutQuote(dto: CheckoutQuoteDto) {
+    if (!dto.items.length) {
+      throw new BadRequestException("Add at least one item before checkout.");
+    }
+    const productIds = [...new Set(dto.items.map((item) => item.productId))];
+    const variantIds = dto.items.flatMap((item) => item.variantId ? [item.variantId] : []);
+    const [products, variants, configuredMethods, siteSettings, zones] = await Promise.all([
+      this.prisma.product.findMany({
+        where: { id: { in: productIds }, status: "ACTIVE" },
+        include: {
+          variants: { where: { isActive: true }, select: { id: true } },
+          brand: true,
+          category: true
+        }
+      }),
+      this.prisma.productVariant.findMany({
+        where: { id: { in: variantIds }, isActive: true }
+      }),
+      this.checkoutMethods(),
+      this.siteSettings(),
+      this.prisma.deliveryZone.findMany({
+        where: { isActive: true },
+        include: {
+          rates: {
+            where: { isActive: true },
+            include: { deliveryMethod: true },
+            orderBy: [{ priority: "asc" }, { baseFee: "asc" }]
+          }
+        },
+        orderBy: [{ priority: "asc" }, { name: "asc" }]
+      })
+    ]);
+
+    const productMap = new Map(products.map((product) => [product.id, product]));
+    const variantMap = new Map(variants.map((variant) => [variant.id, variant]));
+    const platformPolicy = normalizePlatformPolicy(siteSettings.checkoutPolicy);
+    const paymentMethods = configuredMethods.filter((method) => method.type === CheckoutMethodType.PAYMENT);
+    const deliveryMethods = configuredMethods.filter((method) => method.type === CheckoutMethodType.DELIVERY);
+    const activePaymentCodes = paymentMethods.map((method) => cleanCode(method.code));
+    const selectedZone = this.resolveDeliveryZone(zones, dto);
+    const invalidItems: Array<{ productId: string; variantId?: string; reason: string }> = [];
+    const quoteLines: PromotionLine[] = [];
+    const advanceLines: CheckoutAdvanceLine[] = [];
+    let subtotal = 0;
+    let allowedPaymentCodes =
+      platformPolicy.allowedPaymentCodes.length
+        ? intersects(activePaymentCodes, platformPolicy.allowedPaymentCodes)
+        : [...activePaymentCodes];
+    let requiredPaymentPercent = platformPolicy.requiredPaymentPercent;
+    let requiresAdvancePayment = platformPolicy.requiredPaymentPercent > 0;
+
+    for (const item of dto.items) {
+      const product = productMap.get(item.productId);
+      const variant = item.variantId ? variantMap.get(item.variantId) : undefined;
+      if (!product || (item.variantId && !variant)) {
+        invalidItems.push({ productId: item.productId, variantId: item.variantId, reason: "This item is unavailable." });
+        continue;
+      }
+      if (variant && variant.productId !== product.id) {
+        invalidItems.push({ productId: item.productId, variantId: item.variantId, reason: "The selected option does not belong to this product." });
+        continue;
+      }
+      if (product.variants.length && product.baseOptionEnabled === false && !item.variantId) {
+        invalidItems.push({ productId: item.productId, reason: `${product.name} requires an option selection.` });
+        continue;
+      }
+      const available = variant?.inventory ?? product.inventory;
+      if (available < item.quantity) {
+        invalidItems.push({ productId: item.productId, variantId: item.variantId, reason: `${product.name} does not have enough stock.` });
+        continue;
+      }
+
+      const policy = normalizeProductPolicy(product.checkoutPolicy);
+      const productPaymentCodes = policy.inheritPayment
+        ? platformPolicy.allowedPaymentCodes.length
+          ? platformPolicy.allowedPaymentCodes
+          : activePaymentCodes
+        : policy.allowedPaymentCodes.length
+          ? policy.allowedPaymentCodes
+          : activePaymentCodes;
+      const onlinePaymentCodes = policy.onlineOnly
+        ? productPaymentCodes.filter((code) => {
+            const method = paymentMethods.find((candidate) => cleanCode(candidate.code) === code);
+            return !this.isCashPayment(method?.code, method?.name);
+          })
+        : productPaymentCodes;
+      allowedPaymentCodes = intersects(allowedPaymentCodes, onlinePaymentCodes);
+      const productRequiredPaymentPercent =
+        policy.onlineOnly && policy.requiredPaymentPercent === undefined
+          ? 100
+          : policy.requiredPaymentPercent ?? 0;
+      const lineRequiredPaymentPercent = Math.max(
+        platformPolicy.requiredPaymentPercent,
+        productRequiredPaymentPercent
+      );
+      requiredPaymentPercent = Math.max(requiredPaymentPercent, lineRequiredPaymentPercent);
+      requiresAdvancePayment ||= lineRequiredPaymentPercent > 0;
+
+      const allowedZoneCodes = policy.inheritDelivery
+        ? platformPolicy.deliverableZoneCodes
+        : policy.allowedZoneCodes.length
+          ? policy.allowedZoneCodes
+          : platformPolicy.deliverableZoneCodes;
+      const needsKnownZone =
+        platformPolicy.requireKnownDeliveryArea ||
+        platformPolicy.deliverableZoneCodes.length > 0 ||
+        allowedZoneCodes.length > 0 ||
+        policy.blockedZoneCodes.length > 0;
+      if (!selectedZone && needsKnownZone) {
+        invalidItems.push({ productId: item.productId, variantId: item.variantId, reason: "Choose a delivery area before adding this item." });
+        continue;
+      }
+      const zoneCode = selectedZone ? cleanCode(selectedZone.code) : "";
+      if (selectedZone && allowedZoneCodes.length && !allowedZoneCodes.includes(zoneCode)) {
+        invalidItems.push({ productId: item.productId, variantId: item.variantId, reason: `${product.name} is not deliverable in ${selectedZone.name}.` });
+        continue;
+      }
+      if (selectedZone && policy.blockedZoneCodes.includes(zoneCode)) {
+        invalidItems.push({ productId: item.productId, variantId: item.variantId, reason: `${product.name} is not available for ${selectedZone.name}.` });
+        continue;
+      }
+
+      const lineTotal = roundMoney((variant?.price ?? product.price) * item.quantity);
+      subtotal = roundMoney(subtotal + lineTotal);
+      quoteLines.push({
+        productId: product.id,
+        categoryId: product.categoryId,
+        brandId: product.brandId,
+        isCombo: product.isCombo,
+        lineTotal
+      });
+      advanceLines.push({
+        productId: product.id,
+        variantId: variant?.id,
+        productName: product.name,
+        quantity: item.quantity,
+        lineTotal,
+        advancePaymentPercent: lineRequiredPaymentPercent,
+        advancePaymentAmount: 0
+      });
+    }
+
+    if (requiresAdvancePayment) {
+      allowedPaymentCodes = allowedPaymentCodes.filter((code) => {
+        const method = paymentMethods.find((candidate) => cleanCode(candidate.code) === code);
+        return !this.isCashPayment(method?.code, method?.name);
+      });
+    }
+    const availablePaymentMethods = paymentMethods.filter((method) =>
+      allowedPaymentCodes.includes(cleanCode(method.code))
+    );
+
+    const promotionResult = dto.promotionCode && subtotal > 0
+      ? await this.experience.findValidPromotion(dto.promotionCode, subtotal, dto.email, quoteLines)
+      : null;
+    const promotion = promotionResult?.promotion ?? null;
+    const discount = promotionResult
+      ? this.experience.promotionDiscount(promotionResult.promotion, promotionResult.eligibleSubtotal)
+      : 0;
+
+    const zoneRates = selectedZone?.rates ?? [];
+    const hasZoneRates = zoneRates.length > 0;
+    const deliveryOptions = deliveryMethods
+      .map((method) => {
+        const rate = zoneRates.find((item) => item.deliveryMethodId === method.id);
+        if (hasZoneRates && !rate) return null;
+        const fee = rate?.baseFee ?? method.fee ?? 0;
+        const freeThreshold = rate?.freeThreshold ?? method.freeThreshold;
+        const finalFee =
+          promotion?.type === PromotionType.FREE_SHIPPING ||
+          (freeThreshold && subtotal - discount >= freeThreshold)
+            ? 0
+            : fee;
+        return {
+          ...method,
+          fee: roundMoney(finalFee),
+          baseFee: fee,
+          freeThreshold,
+          minDeliveryDays: rate?.minDeliveryDays ?? method.minDeliveryDays,
+          maxDeliveryDays: rate?.maxDeliveryDays ?? method.maxDeliveryDays,
+          rateId: rate?.id
+        };
+      })
+      .filter(Boolean) as Array<Record<string, unknown> & { code: string; name: string; fee: number }>;
+
+    const selectedPaymentMethod =
+      availablePaymentMethods.find((method) =>
+        cleanCode(method.code) === cleanCode(dto.paymentMethod) ||
+        method.name.toLowerCase() === dto.paymentMethod?.trim().toLowerCase()
+      ) ?? availablePaymentMethods[0] ?? null;
+    const selectedDeliveryMethod =
+      deliveryOptions.find((method) => cleanCode(method.code) === cleanCode(dto.deliveryMethodCode)) ??
+      deliveryOptions[0] ??
+      null;
+    const shippingFee = selectedDeliveryMethod?.fee ?? 0;
+    const total = roundMoney(Math.max(subtotal - discount + shippingFee, 0));
+    let allocatedDiscount = 0;
+    const advancePaymentItems = advanceLines.map((line, index) => {
+      const lineDiscount =
+        subtotal > 0
+          ? index === advanceLines.length - 1
+            ? roundMoney(discount - allocatedDiscount)
+            : roundMoney(discount * (line.lineTotal / subtotal))
+          : 0;
+      allocatedDiscount = roundMoney(allocatedDiscount + lineDiscount);
+      const discountedLineTotal = roundMoney(Math.max(line.lineTotal - lineDiscount, 0));
+      const advancePaymentAmount = roundMoney(discountedLineTotal * (line.advancePaymentPercent / 100));
+      return {
+        ...line,
+        discountedLineTotal,
+        advancePaymentAmount
+      };
+    });
+    const amountDueNow = roundMoney(advancePaymentItems.reduce((sum, line) => sum + line.advancePaymentAmount, 0));
+    return {
+      subtotal,
+      discount,
+      shippingFee,
+      total,
+      requiredPaymentPercent,
+      amountDueNow,
+      amountDueOnDelivery: roundMoney(total - amountDueNow),
+      advancePaymentSubtotal: roundMoney(
+        advancePaymentItems
+          .filter((line) => line.advancePaymentPercent > 0)
+          .reduce((sum, line) => sum + line.discountedLineTotal, 0)
+      ),
+      advancePaymentItems,
+      invalidItems,
+      deliveryZone: selectedZone
+        ? { id: selectedZone.id, code: selectedZone.code, name: selectedZone.name, city: selectedZone.city }
+        : null,
+      paymentMethods: availablePaymentMethods,
+      deliveryMethods: deliveryOptions,
+      selectedPaymentMethod,
+      selectedDeliveryMethod,
+      promotion: promotion ? { id: promotion.id, code: promotion.code, name: promotion.name, type: promotion.type } : null
+    };
+  }
+
+  async productEligibility(dto: ProductEligibilityDto) {
+    const quote = await this.checkoutQuote({
+      items: [{ productId: dto.productId, variantId: dto.variantId, quantity: dto.quantity ?? 1 }],
+      deliveryZoneCode: dto.deliveryZoneCode,
+      shippingInfo: dto.shippingInfo
+    });
+    return {
+      canAddToCart: quote.invalidItems.length === 0,
+      reason: quote.invalidItems[0]?.reason ?? null,
+      deliveryZone: quote.deliveryZone,
+      paymentMethods: quote.paymentMethods,
+      deliveryMethods: quote.deliveryMethods,
+      requiredPaymentPercent: quote.requiredPaymentPercent,
+      amountDueNow: quote.amountDueNow
+    };
   }
 
   async checkout(dto: CheckoutDto, authUser?: AuthUser) {
@@ -664,6 +1133,22 @@ export class EcommerceService {
         }
       });
       if (legacyOrder) return legacyOrder;
+    }
+
+    const activeDeliveryZoneCount = await this.prisma.deliveryZone.count({ where: { isActive: true } });
+    if (activeDeliveryZoneCount > 0 && !cleanCode(dto.deliveryZoneCode)) {
+      throw new BadRequestException("Choose your delivery area before placing the order.");
+    }
+
+    const quote = await this.checkoutQuote({ ...dto, email: dto.email });
+    if (quote.invalidItems.length) {
+      throw new BadRequestException(quote.invalidItems[0].reason);
+    }
+    if (!quote.selectedPaymentMethod) {
+      throw new BadRequestException("No available payment method for these products.");
+    }
+    if (!quote.selectedDeliveryMethod) {
+      throw new BadRequestException("No available delivery method for this area.");
     }
 
     const productIds = [...new Set(dto.items.map((item) => item.productId))];
@@ -707,67 +1192,19 @@ export class EcommerceService {
       }
       return total + (variant?.price ?? product.price) * item.quantity;
     }, 0);
-    const promotionLines: PromotionLine[] = dto.items.map((item) => {
-      const product = productMap.get(item.productId)!;
-      const variant = item.variantId ? variantMap.get(item.variantId) : undefined;
-      return {
-        productId: product.id,
-        categoryId: product.categoryId,
-        brandId: product.brandId,
-        isCombo: product.isCombo,
-        lineTotal: (variant?.price ?? product.price) * item.quantity
-      };
-    });
-    const promotionResult = dto.promotionCode
-      ? await this.experience.findValidPromotion(
-          dto.promotionCode,
-          subtotal,
-          dto.email,
-          promotionLines
-        )
-      : null;
-    const promotion = promotionResult?.promotion ?? null;
-    const discount = promotionResult
-      ? this.experience.promotionDiscount(
-          promotionResult.promotion,
-          promotionResult.eligibleSubtotal
-        )
-      : 0;
-    const configuredMethods = await this.checkoutMethods();
-    const paymentMethods = configuredMethods.filter(
-      (method) => method.type === CheckoutMethodType.PAYMENT
-    );
-    const deliveryMethods = configuredMethods.filter(
-      (method) => method.type === CheckoutMethodType.DELIVERY
-    );
-    const requestedPayment = dto.paymentMethod?.trim();
-    const paymentConfig = requestedPayment
-      ? paymentMethods.find(
-          (method) =>
-            method.code === requestedPayment.toUpperCase() ||
-            method.name.toLowerCase() === requestedPayment.toLowerCase()
-        )
-      : paymentMethods[0];
-    const deliveryConfig = dto.deliveryMethodCode
-      ? deliveryMethods.find(
-          (method) => method.code === dto.deliveryMethodCode?.trim().toUpperCase()
-        )
-      : deliveryMethods[0];
-    if (paymentMethods.length && !paymentConfig) {
-      throw new BadRequestException("The selected payment method is unavailable.");
-    }
-    if (deliveryMethods.length && !deliveryConfig) {
-      throw new BadRequestException("The selected delivery method is unavailable.");
-    }
-    const deliveryFee = deliveryConfig?.fee ?? 80;
-    const deliveryFreeThreshold = deliveryConfig?.freeThreshold ?? 3000;
-    const shippingFee =
-      promotion?.type === "FREE_SHIPPING" ||
-      (deliveryFreeThreshold > 0 && subtotal - discount >= deliveryFreeThreshold)
-        ? 0
-        : deliveryFee;
+    const promotion = quote.promotion;
+    const discount = quote.discount;
+    const shippingFee = quote.shippingFee;
+    const paymentConfig = quote.selectedPaymentMethod as { code?: string; name?: string; metadata?: unknown } | null;
+    const deliveryConfig = quote.selectedDeliveryMethod as { code?: string; name?: string } | null;
     const orderNumber = `ME-${Date.now().toString().slice(-8)}`;
-    const paymentMethod = paymentConfig?.name ?? requestedPayment ?? "Cash on delivery";
+    const paymentMethod = paymentConfig?.name ?? dto.paymentMethod?.trim() ?? "Cash on delivery";
+    const shippingInfo = dto.shippingInfo;
+    const billingSameAsShipping = dto.billingSameAsShipping ?? !dto.billingInfo;
+    const billingInfo = billingSameAsShipping ? shippingInfo : dto.billingInfo;
+    const shippingAddress = shippingInfo ? formatAddressInfo(shippingInfo) : dto.shippingAddress;
+    const total = quote.total;
+    const paymentStatus = PaymentStatus.PENDING;
 
     try {
       return await this.prisma.$transaction(async (transaction) => {
@@ -812,20 +1249,31 @@ export class EcommerceService {
           customerName: dto.customerName,
           email: dto.email,
           phone: dto.phone,
-          shippingAddress: dto.shippingAddress,
-          paymentStatus: "PENDING",
+          shippingAddress,
+          shippingInfo: shippingInfo as Prisma.InputJsonValue | undefined,
+          billingInfo: billingInfo as Prisma.InputJsonValue | undefined,
+          billingSameAsShipping,
+          paymentStatus,
           paymentMethod,
           deliveryMethodCode: deliveryConfig?.code,
           deliveryMethodName: deliveryConfig?.name,
+          deliveryZoneCode: quote.deliveryZone?.code,
+          deliveryZoneName: quote.deliveryZone?.name,
           promotionId: promotion?.id,
           subtotal,
           discount,
           shippingFee,
-          total: subtotal - discount + shippingFee,
+          total,
+          amountDueNow: quote.amountDueNow,
+          amountDueOnDelivery: quote.amountDueOnDelivery,
+          requiredPaymentPercent: quote.requiredPaymentPercent,
           items: {
             create: dto.items.map((item) => {
               const product = productMap.get(item.productId)!;
               const variant = item.variantId ? variantMap.get(item.variantId) : undefined;
+              const advanceLine = quote.advancePaymentItems.find((line) =>
+                line.productId === item.productId && (line.variantId ?? null) === (item.variantId ?? null)
+              );
               return {
                 productId: item.productId,
                 productName: product.name,
@@ -833,7 +1281,9 @@ export class EcommerceService {
                 variantName: variant?.name,
                 quantity: item.quantity,
                 unitPrice: variant?.price ?? product.price,
-                unitCost: variant?.costPrice ?? product.costPrice
+                unitCost: variant?.costPrice ?? product.costPrice,
+                advancePaymentPercent: advanceLine?.advancePaymentPercent ?? 0,
+                advancePaymentAmount: advanceLine?.advancePaymentAmount ?? 0
               };
             })
           },
@@ -853,14 +1303,9 @@ export class EcommerceService {
           },
           payments: {
             create: {
-              provider:
-                paymentConfig?.code === "BKASH"
-                  ? "bkash"
-                  : paymentMethod === "Cash on delivery"
-                    ? "cash"
-                    : "pending-gateway",
+              provider: this.paymentProviderFor(paymentConfig?.code, paymentMethod, paymentConfig?.metadata),
               method: paymentMethod,
-              amount: subtotal - discount + shippingFee,
+              amount: quote.amountDueNow || total,
               status: "PENDING"
             }
           },
@@ -1635,7 +2080,7 @@ export class EcommerceService {
   }
 
   async adminCatalog() {
-    const [products, brands, categories, banners, homeSections, testimonials, checkoutMethods, siteSettings] =
+    const [products, brands, categories, banners, homeSections, testimonials, checkoutMethods, deliveryZones, deliveryRates, siteSettings] =
       await Promise.all([
       this.prisma.product.findMany({
         include: {
@@ -1654,6 +2099,14 @@ export class EcommerceService {
       this.prisma.checkoutMethod.findMany({
         orderBy: [{ type: "asc" }, { priority: "asc" }, { name: "asc" }]
       }),
+      this.prisma.deliveryZone.findMany({
+        include: { rates: { include: { deliveryMethod: true } } },
+        orderBy: [{ priority: "asc" }, { name: "asc" }]
+      }),
+      this.prisma.deliveryRate.findMany({
+        include: { zone: true, deliveryMethod: true },
+        orderBy: [{ priority: "asc" }, { baseFee: "asc" }]
+      }),
       this.siteSettings()
     ]);
     return {
@@ -1664,6 +2117,8 @@ export class EcommerceService {
       homeSections,
       testimonials,
       checkoutMethods,
+      deliveryZones,
+      deliveryRates,
       siteSettings
     };
   }
@@ -1712,6 +2167,10 @@ export class EcommerceService {
         brandId: dto.brandId === undefined ? undefined : dto.brandId || null,
         categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null,
         details: details === undefined ? undefined : details.length ? details : null,
+        checkoutPolicy:
+          dto.checkoutPolicy === undefined
+            ? undefined
+            : normalizeProductPolicy(dto.checkoutPolicy) as Prisma.InputJsonValue,
         images:
           imageUrls === undefined
             ? undefined

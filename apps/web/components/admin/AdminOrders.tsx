@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
+  AddressInfo,
   AdminOrdersResponse,
   AdminCatalog,
   Order,
@@ -62,6 +63,20 @@ function defaultOrderVariant(product: AdminCatalog["products"][number]) {
   if (isBaseProductEnabled(product) && product.inventory > 0) return undefined;
   return product.variants?.find((variant) => variant.isActive && variant.inventory > 0)?.id
     ?? product.variants?.find((variant) => variant.isActive)?.id;
+}
+
+function formatAddressInfo(info?: AddressInfo | null, fallback = "") {
+  if (!info) return fallback;
+  return [
+    info.recipient,
+    info.phone,
+    info.email,
+    info.line1,
+    info.line2,
+    info.area,
+    info.city,
+    info.postalCode
+  ].filter(Boolean).join(", ");
 }
 
 export function AdminOrders() {
@@ -288,18 +303,57 @@ export function AdminOrders() {
   function downloadOrdersCsv(orders: Order[], filenamePrefix: string) {
     if (!orders.length) return;
     const rows = [
-      ["Order", "Date", "Customer", "Email", "Phone", "Status", "Payment", "Items", "Total"],
-      ...orders.map((order) => [
-        order.orderNumber,
-        new Date(order.createdAt).toISOString(),
-        order.customerName,
-        order.email,
-        order.phone,
-        order.status,
-        order.paymentStatus ?? "PENDING",
-        order.items.reduce((sum, item) => sum + item.quantity, 0),
-        order.total
-      ])
+      [
+        "Order",
+        "Date",
+        "Customer",
+        "Email",
+        "Phone",
+        "Status",
+        "Payment status",
+        "Payment method",
+        "Delivery method",
+        "Delivery zone",
+        "Shipping address",
+        "Billing address",
+        "Items",
+        "Advance items",
+        "Subtotal",
+        "Discount",
+        "Delivery fee",
+        "Total",
+        "Advance payment",
+        "Due on delivery"
+      ],
+      ...orders.map((order) => {
+        const amountDueNow = order.amountDueNow ?? 0;
+        const amountDueOnDelivery = order.amountDueOnDelivery ?? Math.max(order.total - amountDueNow, 0);
+        return [
+          order.orderNumber,
+          new Date(order.createdAt).toISOString(),
+          order.customerName,
+          order.email,
+          order.phone,
+          order.status,
+          order.paymentStatus ?? "PENDING",
+          order.paymentMethod ?? "",
+          order.deliveryMethodName ?? "",
+          order.deliveryZoneName ?? order.deliveryZoneCode ?? "",
+          formatAddressInfo(order.shippingInfo, order.shippingAddress),
+          formatAddressInfo(order.billingInfo, order.billingSameAsShipping ? order.shippingAddress : ""),
+          order.items.map((item) => `${item.productName}${item.variantName ? ` (${item.variantName})` : ""} x ${item.quantity}`).join("; "),
+          order.items
+            .filter((item) => item.advancePaymentAmount)
+            .map((item) => `${item.productName}: ${item.advancePaymentPercent ?? 0}% = ${item.advancePaymentAmount}`)
+            .join("; "),
+          order.subtotal,
+          order.discount ?? 0,
+          order.shippingFee,
+          order.total,
+          amountDueNow,
+          amountDueOnDelivery
+        ];
+      })
     ];
     const csv = rows
       .map((row) => row.map((value) => `"${String(value).replace(/"/g, "\"\"")}"`).join(","))
@@ -325,6 +379,9 @@ export function AdminOrders() {
     const options = order ? orderTransitions[order.status] ?? [] : [];
     return common === null ? options : common.filter((status) => options.includes(status));
   }, null) ?? [];
+  const selectedAmountDueNow = selected?.amountDueNow ?? 0;
+  const selectedAmountDueOnDelivery =
+    selected ? selected.amountDueOnDelivery ?? Math.max(selected.total - selectedAmountDueNow, 0) : 0;
 
   if (loading && !result) return <AdminLoading label="Loading the order queue..." />;
   if (error && !result) return <AdminError message={error} retry={() => void load()} />;
@@ -468,7 +525,10 @@ export function AdminOrders() {
                     <td><strong>{order.customerName}</strong><small>{order.items.length} line items</small></td>
                     <td><StatusBadge value={order.status} /></td>
                     <td><StatusBadge value={order.paymentStatus} kind="payment" /></td>
-                    <td><strong>{formatMoney(order.total)}</strong></td>
+                    <td>
+                      <strong>{formatMoney(order.total)}</strong>
+                      {order.amountDueNow ? <small>Advance {formatMoney(order.amountDueNow)}</small> : null}
+                    </td>
                     <td><button type="button" title={`Open ${order.orderNumber}`} onClick={(event) => { event.stopPropagation(); setSelected(order); }}><ChevronRight size={17} /></button></td>
                   </tr>
                 ))}
@@ -575,13 +635,23 @@ export function AdminOrders() {
               <strong>{selected.customerName}</strong>
               <a href={`mailto:${selected.email}`}><Mail size={15} />{selected.email}</a>
               <a href={`tel:${selected.phone}`}><Phone size={15} />{selected.phone}</a>
-              <p><MapPin size={15} />{selected.shippingAddress}</p>
+              <p><MapPin size={15} />{formatAddressInfo(selected.shippingInfo, selected.shippingAddress)}</p>
+              {selected.billingInfo && !selected.billingSameAsShipping ? (
+                <p><Mail size={15} />Billing: {formatAddressInfo(selected.billingInfo)}</p>
+              ) : null}
+              {selected.deliveryZoneName ? <p><Truck size={15} />Zone: {selected.deliveryZoneName}</p> : null}
             </div>
 
             <div className="admin-order-lines">
               {selected.items.map((item) => (
                 <div key={item.id}>
-                  <span><strong>{item.productName}</strong><small>{item.quantity} x {formatMoney(item.unitPrice)}</small></span>
+                  <span>
+                    <strong>{item.productName}</strong>
+                    <small>{item.quantity} x {formatMoney(item.unitPrice)}</small>
+                    {item.advancePaymentAmount ? (
+                      <small>Advance {item.advancePaymentPercent ?? 0}%: {formatMoney(item.advancePaymentAmount)}</small>
+                    ) : null}
+                  </span>
                   <strong>{formatMoney(item.quantity * item.unitPrice)}</strong>
                 </div>
               ))}
@@ -595,6 +665,12 @@ export function AdminOrders() {
                 ) : null}
                 <div><dt>Delivery{selected.deliveryMethodName ? ` · ${selected.deliveryMethodName}` : ""}</dt><dd>{formatMoney(selected.shippingFee)}</dd></div>
                 <div><dt>Total</dt><dd>{formatMoney(selected.total)}</dd></div>
+                {selectedAmountDueNow > 0 ? (
+                  <>
+                    <div><dt>Advance payment</dt><dd>{formatMoney(selectedAmountDueNow)}</dd></div>
+                    <div><dt>Due on delivery</dt><dd>{formatMoney(selectedAmountDueOnDelivery)}</dd></div>
+                  </>
+                ) : null}
               </dl>
             </div>
 

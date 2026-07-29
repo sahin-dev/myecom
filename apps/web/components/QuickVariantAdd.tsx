@@ -8,9 +8,11 @@ import {
   ProductVariant,
   baseProductOptionLabel,
   formatMoney,
-  isBaseProductEnabled
+  isBaseProductEnabled,
+  productAdvancePaymentLabel
 } from "../lib/catalog";
 import { useCart } from "./CartContext";
+import { useSiteSettings } from "./SiteSettingsContext";
 
 const baseSelection = "base";
 type VariantSelection = ProductVariant | typeof baseSelection;
@@ -30,6 +32,7 @@ export function QuickVariantAdd({
   const dialogRef = useRef<HTMLDivElement>(null);
   const dialogTitleId = useId();
   const { addItem } = useCart();
+  const { settings } = useSiteSettings();
   const variants = (product.variants ?? []).filter((variant) => variant.isActive);
   const baseEnabled = isBaseProductEnabled(product);
   const baseAvailable = baseEnabled && product.inventory > 0;
@@ -37,6 +40,7 @@ export function QuickVariantAdd({
   const selectedVariant = selected === baseSelection ? null : selected;
   const selectedLabel =
     selected === baseSelection ? baseProductOptionLabel(product) : selected?.name;
+  const advanceLabel = productAdvancePaymentLabel(product, settings.checkoutPolicy);
 
   useEffect(() => {
     if (!open) return;
@@ -132,6 +136,7 @@ export function QuickVariantAdd({
           <div>
             <small>{product.name}</small>
             <h2 id={dialogTitleId}>Choose an option</h2>
+            {advanceLabel ? <p className="quick-option-advance">{advanceLabel}</p> : null}
           </div>
           <button type="button" onClick={() => setOpen(false)} aria-label="Close option chooser">
             <X size={18} />

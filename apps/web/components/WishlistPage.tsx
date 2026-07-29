@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Heart, ShoppingBag } from "lucide-react";
+import { ChevronLeft, ChevronRight, CreditCard, Heart, ShoppingBag } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Catalog,
@@ -10,6 +10,7 @@ import {
   fetchAccountWishlist,
   fetchCatalog,
   formatMoney,
+  productAdvancePaymentLabel,
   searchCatalog
 } from "../lib/catalog";
 import { useAuth } from "./AuthContext";
@@ -73,6 +74,7 @@ export function WishlistPage() {
                 <WishlistProductCard
                   key={product.id}
                   product={product}
+                  platformPolicy={catalog.siteSettings.checkoutPolicy}
                   onRemove={() => toggle(product)}
                   onAdd={() => addItem(product)}
                 />
@@ -100,16 +102,19 @@ export function WishlistPage() {
 
 function WishlistProductCard({
   product,
+  platformPolicy,
   onRemove,
   onAdd
 }: {
   product: Product;
+  platformPolicy?: Catalog["siteSettings"]["checkoutPolicy"];
   onRemove: () => void;
   onAdd: () => void;
 }) {
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const price = selectedVariant?.price ?? product.price;
   const compareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
+  const advanceLabel = productAdvancePaymentLabel(product, platformPolicy);
 
   return (
     <article className="product-card">
@@ -127,6 +132,11 @@ function WishlistProductCard({
           {compareAt && compareAt > price ? <small>{formatMoney(compareAt)}</small> : null}
         </div>
       </div>
+      {advanceLabel ? (
+        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
+          <CreditCard size={14} />
+        </span>
+      ) : null}
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (

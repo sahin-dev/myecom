@@ -29,6 +29,8 @@ import {
   fetchProductReviews,
   fetchStockAlertSubscription,
   isBaseProductEnabled,
+  productAdvancePaymentLabel,
+  productAdvancePaymentPercent,
   submitProductReview,
   subscribeStockAlert,
   trackAnalyticsEvent
@@ -210,6 +212,8 @@ export function ProductDetails({
     if (firstSentence && firstSentence.length <= 180) return firstSentence;
     return `${description.slice(0, 165).trim()}...`;
   }, [product.description]);
+  const advancePercent = productAdvancePaymentPercent(product, catalog.siteSettings.checkoutPolicy);
+  const advanceLabel = productAdvancePaymentLabel(product, catalog.siteSettings.checkoutPolicy);
   const productDetailSections = useMemo(
     () =>
       (product.details ?? [])
@@ -500,6 +504,17 @@ export function ProductDetails({
             <strong>{money(unitPrice)}</strong>
             {compareAt ? <small>{money(compareAt)}</small> : null}
           </div>
+          {advanceLabel ? (
+            <div className="product-advance-panel">
+              <span><CreditCard size={18} /></span>
+              <div>
+                <strong>{advanceLabel}</strong>
+                <p>
+                  Pay {advancePercent}% of this product value online now. The remaining product amount and delivery fee are due later.
+                </p>
+              </div>
+            </div>
+          ) : null}
           <p className="product-description">{productSummary}</p>
 
           {product.variants?.length ? (
@@ -547,6 +562,11 @@ export function ProductDetails({
                 ? `${availableInventory} items available`
                 : "Restock alert available"}
             </span>
+            {advanceLabel ? (
+              <span>
+                <CreditCard size={18} /> Advance payment applies
+              </span>
+            ) : null}
           </div>
           {availableInventory < 1 ? (
             <div className={`stock-alert-panel ${stockAlertRequested ? "active" : ""}`}>
@@ -871,6 +891,15 @@ export function ProductDetails({
                   {item.compareAt ? <small>{money(item.compareAt)}</small> : null}
                 </div>
               </div>
+              {productAdvancePaymentLabel(item, catalog.siteSettings.checkoutPolicy) ? (
+                <span
+                  className="advance-payment-badge"
+                  title={productAdvancePaymentLabel(item, catalog.siteSettings.checkoutPolicy)}
+                  aria-label={productAdvancePaymentLabel(item, catalog.siteSettings.checkoutPolicy)}
+                >
+                  <CreditCard size={14} />
+                </span>
+              ) : null}
               <Link className="secondary-action full" href={`/products/${item.slug}`}>
                 View details
               </Link>

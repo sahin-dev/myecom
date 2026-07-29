@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -47,6 +48,7 @@ import {
   formatMoney,
   markNotificationRead,
   markAllNotificationsRead,
+  productAdvancePaymentLabel,
   updateAddress,
   updatePreferences
 } from "../lib/catalog";
@@ -513,6 +515,8 @@ export function AccountPage() {
             <div className="account-orders">
               {pagedOrders.map((order) => {
                 const expanded = expandedOrderId === order.id;
+                const amountDueNow = order.amountDueNow ?? 0;
+                const amountDueOnDelivery = order.amountDueOnDelivery ?? Math.max(order.total - amountDueNow, 0);
                 return (
                   <article key={order.id} className={expanded ? "expanded" : ""}>
                     <button
@@ -545,6 +549,9 @@ export function AccountPage() {
                                 <strong>{item.productName}</strong>
                                 {item.variantName ? <small>{item.variantName}</small> : null}
                                 <small>{item.quantity} x {formatMoney(item.unitPrice)}</small>
+                                {item.advancePaymentAmount ? (
+                                  <small>Advance {item.advancePaymentPercent ?? 0}%: {formatMoney(item.advancePaymentAmount)}</small>
+                                ) : null}
                               </span>
                               <strong>{formatMoney(item.quantity * item.unitPrice)}</strong>
                             </div>
@@ -553,6 +560,7 @@ export function AccountPage() {
                         <div className="account-order-meta">
                           <p><MapPin size={14} /> {order.shippingAddress}</p>
                           {order.deliveryMethodName ? <p><Truck size={14} /> {order.deliveryMethodName}</p> : null}
+                          <p><CreditCard size={14} /> {order.paymentMethod ?? "Cash on delivery"} - {order.paymentStatus ?? "PENDING"}</p>
                         </div>
                         <dl className="account-order-summary">
                           <div><dt>Subtotal</dt><dd>{formatMoney(order.subtotal)}</dd></div>
@@ -564,6 +572,12 @@ export function AccountPage() {
                           ) : null}
                           <div><dt>Delivery</dt><dd>{formatMoney(order.shippingFee)}</dd></div>
                           <div><dt>Total</dt><dd>{formatMoney(order.total)}</dd></div>
+                          {amountDueNow > 0 ? (
+                            <>
+                              <div><dt>Advance payment</dt><dd>{formatMoney(amountDueNow)}</dd></div>
+                              <div><dt>Due on delivery</dt><dd>{formatMoney(amountDueOnDelivery)}</dd></div>
+                            </>
+                          ) : null}
                         </dl>
                         <button type="button" className="text-link" onClick={() => setReceiptOrder(order)}>
                           Download receipt
@@ -994,9 +1008,11 @@ function AccountPagination({
 
 function AccountRecommendationCard({ product }: { product: Product }) {
   const { addItem } = useCart();
+  const { settings } = useSiteSettings();
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const price = selectedVariant?.price ?? product.price;
   const compareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
+  const advanceLabel = productAdvancePaymentLabel(product, settings.checkoutPolicy);
 
   return (
     <article className="product-card">
@@ -1008,6 +1024,11 @@ function AccountRecommendationCard({ product }: { product: Product }) {
           {compareAt && compareAt > price ? <small>{formatMoney(compareAt)}</small> : null}
         </div>
       </div>
+      {advanceLabel ? (
+        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
+          <CreditCard size={14} />
+        </span>
+      ) : null}
       {product.variants?.length ? (
         <QuickVariantAdd
           product={product}

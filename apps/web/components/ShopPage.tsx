@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   Filter,
   Heart,
   Search,
@@ -18,6 +19,7 @@ import {
   ProductVariant,
   fallbackCatalog,
   formatMoney,
+  productAdvancePaymentLabel,
   selectableProductInventory,
   searchCatalog,
   trackAnalyticsEvent
@@ -26,6 +28,7 @@ import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
 import { QuickVariantAdd } from "./QuickVariantAdd";
+import { useSiteSettings } from "./SiteSettingsContext";
 import { useWishlist } from "./WishlistContext";
 
 type ShopQuery = {
@@ -216,6 +219,7 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
 
 function ShopProduct({ product }: { product: Product }) {
   const { addItem } = useCart();
+  const { settings } = useSiteSettings();
   const { isSaved, toggle } = useWishlist();
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const saved = isSaved(product.slug);
@@ -227,6 +231,7 @@ function ShopProduct({ product }: { product: Product }) {
   const savings = displayCompareAt && displayCompareAt > displayPrice
     ? Math.round(((displayCompareAt - displayPrice) / displayCompareAt) * 100)
     : 0;
+  const advanceLabel = productAdvancePaymentLabel(product, settings.checkoutPolicy);
   return (
     <article className="product-card">
       <div className="card-topline">
@@ -244,6 +249,11 @@ function ShopProduct({ product }: { product: Product }) {
           <span>1-2 day delivery</span>
         </div>
       </div>
+      {advanceLabel ? (
+        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
+          <CreditCard size={14} />
+        </span>
+      ) : null}
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (

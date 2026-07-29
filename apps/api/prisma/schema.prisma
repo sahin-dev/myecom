@@ -35,6 +35,7 @@ enum UserRole {
 
 enum PaymentStatus {
   PENDING
+  PARTIALLY_PAID
   PAID
   FAILED
   PARTIALLY_REFUNDED
@@ -233,6 +234,7 @@ model Product {
   supplier           Supplier?           @relation(fields: [supplierId], references: [id])
   tags               String[]
   details            Json?
+  checkoutPolicy     Json?
   images             ProductImage[]
   variants           ProductVariant[]
   reviews            Review[]
@@ -311,6 +313,7 @@ model SiteSettings {
   instagramUrl          String?
   youtubeUrl            String?
   whatsappUrl           String?
+  checkoutPolicy        Json?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }
@@ -357,10 +360,47 @@ model CheckoutMethod {
   freeThreshold   Float?
   minDeliveryDays Int?
   maxDeliveryDays Int?
+  metadata        Json?
   isActive        Boolean            @default(true)
   priority        Int                @default(0)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
+  deliveryRates   DeliveryRate[]
+}
+
+model DeliveryZone {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  code        String         @unique
+  city        String?
+  areas       String[]       @default([])
+  postalCodes String[]       @default([])
+  isActive    Boolean        @default(true)
+  priority    Int            @default(0)
+  rates       DeliveryRate[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model DeliveryRate {
+  id               String         @id @default(auto()) @map("_id") @db.ObjectId
+  zoneId           String         @db.ObjectId
+  zone             DeliveryZone   @relation(fields: [zoneId], references: [id])
+  deliveryMethodId String         @db.ObjectId
+  deliveryMethod   CheckoutMethod @relation(fields: [deliveryMethodId], references: [id])
+  baseFee          Float          @default(0)
+  freeThreshold    Float?
+  minOrder         Float          @default(0)
+  maxOrder         Float?
+  minDeliveryDays  Int?
+  maxDeliveryDays  Int?
+  isActive         Boolean        @default(true)
+  priority         Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([zoneId])
+  @@index([deliveryMethodId])
 }
 
 model Cart {
@@ -424,11 +464,16 @@ model Order {
   email              String
   phone              String
   shippingAddress    String
+  shippingInfo       Json?
+  billingInfo        Json?
+  billingSameAsShipping Boolean @default(true)
   status             OrderStatus        @default(PLACED)
   paymentStatus      PaymentStatus?
   paymentMethod      String?
   deliveryMethodCode String?
   deliveryMethodName String?
+  deliveryZoneCode   String?
+  deliveryZoneName   String?
   trackingCode       String?
   courierName        String?
   adminNote          String?
@@ -438,6 +483,9 @@ model Order {
   discount           Float              @default(0)
   shippingFee        Float
   total              Float
+  amountDueNow       Float              @default(0)
+  amountDueOnDelivery Float             @default(0)
+  requiredPaymentPercent Int            @default(0)
   items              OrderItem[]
   trackingEvents     TrackingEvent[]
   notifications      Notification[]
@@ -461,19 +509,21 @@ model CheckoutRequest {
 }
 
 model OrderItem {
-  id          String          @id @default(auto()) @map("_id") @db.ObjectId
-  orderId     String          @db.ObjectId
-  order       Order           @relation(fields: [orderId], references: [id])
-  productId   String          @db.ObjectId
-  productName String
-  variantId   String?         @db.ObjectId
-  variant     ProductVariant? @relation(fields: [variantId], references: [id])
-  variantName String?
-  quantity    Int
-  unitPrice   Float
-  unitCost    Float?
-  returnItems ReturnItem[]
-  createdAt   DateTime        @default(now())
+  id                    String          @id @default(auto()) @map("_id") @db.ObjectId
+  orderId               String          @db.ObjectId
+  order                 Order           @relation(fields: [orderId], references: [id])
+  productId             String          @db.ObjectId
+  productName           String
+  variantId             String?         @db.ObjectId
+  variant               ProductVariant? @relation(fields: [variantId], references: [id])
+  variantName           String?
+  quantity              Int
+  unitPrice             Float
+  unitCost              Float?
+  advancePaymentPercent Int             @default(0)
+  advancePaymentAmount  Float           @default(0)
+  returnItems           ReturnItem[]
+  createdAt             DateTime        @default(now())
 }
 
 model TrackingEvent {

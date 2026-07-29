@@ -8,8 +8,9 @@
     "outDir": "./dist",
     "noEmit": false,
     "baseUrl": "./",
+    "rootDir": "./src",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "prisma/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "prisma"]
 }

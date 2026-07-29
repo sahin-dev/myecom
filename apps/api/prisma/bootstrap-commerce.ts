@@ -190,8 +190,36 @@ const checkoutMethods: Array<Prisma.CheckoutMethodCreateInput> = [
     type: CheckoutMethodType.PAYMENT,
     code: "ONLINE_PAYMENT",
     name: "Online payment",
-    description: "Enable this after a payment gateway has been connected.",
+    description: "Online checkout through the connected gateway.",
     priority: 2,
+    metadata: { provider: "bkash" },
+    isActive: true
+  },
+  {
+    type: CheckoutMethodType.PAYMENT,
+    code: "BKASH",
+    name: "bKash",
+    description: "Pay securely with bKash.",
+    priority: 3,
+    metadata: { provider: "bkash" },
+    isActive: false
+  },
+  {
+    type: CheckoutMethodType.PAYMENT,
+    code: "NAGAD",
+    name: "Nagad",
+    description: "Nagad gateway can be enabled after credentials are connected.",
+    priority: 4,
+    metadata: { provider: "nagad" },
+    isActive: false
+  },
+  {
+    type: CheckoutMethodType.PAYMENT,
+    code: "CARD",
+    name: "Card payment",
+    description: "Card gateway can be enabled after credentials are connected.",
+    priority: 5,
+    metadata: { provider: "card" },
     isActive: false
   },
   {
@@ -213,6 +241,41 @@ const checkoutMethods: Array<Prisma.CheckoutMethodCreateInput> = [
     description: "Faster delivery for urgent orders.",
     fee: 150,
     minDeliveryDays: 1,
+    maxDeliveryDays: 1,
+    priority: 2,
+    isActive: false
+  }
+];
+
+const deliveryZones: Array<Prisma.DeliveryZoneCreateInput> = [
+  {
+    code: "DHAKA",
+    name: "Dhaka city",
+    city: "Dhaka",
+    areas: ["Dhanmondi", "Gulshan", "Banani", "Mirpur", "Uttara", "Mohammadpur", "Bashundhara"],
+    postalCodes: ["1205", "1212", "1213", "1216", "1230", "1207", "1229"],
+    priority: 1,
+    isActive: true
+  }
+];
+
+const deliveryRates = [
+  {
+    zoneCode: "DHAKA",
+    deliveryMethodCode: "STANDARD_DHAKA",
+    baseFee: 80,
+    freeThreshold: 3000,
+    minDeliveryDays: 1,
+    maxDeliveryDays: 2,
+    priority: 1,
+    isActive: true
+  },
+  {
+    zoneCode: "DHAKA",
+    deliveryMethodCode: "EXPRESS_DHAKA",
+    baseFee: 150,
+    freeThreshold: undefined,
+    minDeliveryDays: 0,
     maxDeliveryDays: 1,
     priority: 2,
     isActive: false
@@ -298,8 +361,54 @@ async function main() {
     await prisma.checkoutMethod.upsert({
       where: { code: method.code },
       create: method,
-      update: {}
+      update:
+        method.code === "ONLINE_PAYMENT"
+          ? {
+              name: method.name,
+              description: method.description,
+              metadata: method.metadata as Prisma.InputJsonValue,
+              priority: method.priority
+            }
+          : {}
     });
+  }
+  for (const zone of deliveryZones) {
+    await prisma.deliveryZone.upsert({
+      where: { code: zone.code },
+      create: zone,
+      update: {
+        name: zone.name,
+        city: zone.city,
+        areas: zone.areas,
+        postalCodes: zone.postalCodes,
+        priority: zone.priority
+      }
+    });
+  }
+  for (const rate of deliveryRates) {
+    const [zone, deliveryMethod] = await Promise.all([
+      prisma.deliveryZone.findUnique({ where: { code: rate.zoneCode } }),
+      prisma.checkoutMethod.findUnique({ where: { code: rate.deliveryMethodCode } })
+    ]);
+    if (!zone || !deliveryMethod) continue;
+    const existing = await prisma.deliveryRate.findFirst({
+      where: { zoneId: zone.id, deliveryMethodId: deliveryMethod.id }
+    });
+    const data = {
+      zoneId: zone.id,
+      deliveryMethodId: deliveryMethod.id,
+      baseFee: rate.baseFee,
+      freeThreshold: rate.freeThreshold,
+      minDeliveryDays: rate.minDeliveryDays,
+      maxDeliveryDays: rate.maxDeliveryDays,
+      priority: rate.priority,
+      isActive: rate.isActive
+    };
+    if (existing) {
+      await prisma.deliveryRate.update({ where: { id: existing.id }, data });
+    } else {
+      await prisma.deliveryRate.create({ data });
+    }
   }
   if ((await prisma.testimonial.count()) === 0) {
     await prisma.testimonial.createMany({

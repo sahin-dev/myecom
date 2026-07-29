@@ -63,7 +63,7 @@ export const orderStatuses = [
   "CANCELLED"
 ];
 
-export const paymentStatuses = ["PENDING", "PAID", "FAILED", "PARTIALLY_REFUNDED", "REFUNDED"];
+export const paymentStatuses = ["PENDING", "PARTIALLY_PAID", "PAID", "FAILED", "PARTIALLY_REFUNDED", "REFUNDED"];
 
 export const formatStatus = (value?: string | null) =>
   (value ?? "PENDING")
