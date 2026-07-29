@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
-    "build": "nest build",
+    "build": "pnpm prisma:generate && nest build",
     "lint": "tsc --noEmit",
     "start": "node dist/main.js",
     "prisma:generate": "prisma generate",

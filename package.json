@@ -5,6 +5,7 @@
     "dev": "pnpm --parallel --filter @my-ecom/api --filter @my-ecom/web dev",
     "dev:api": "pnpm --filter @my-ecom/api dev",
     "dev:web": "pnpm --filter @my-ecom/web dev",
+    "prebuild": "pnpm prisma:generate",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "audit:ui": "node scripts/audit-ui-controls.cjs",
@@ -16,5 +17,8 @@
   "devDependencies": {
     "typescript": "^5.5.4"
   },
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@9.15.0",
+  "prisma": {
+    "schema": "apps/api/prisma/schema.prisma"
+  }
 }
