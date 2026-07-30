@@ -8,7 +8,6 @@ import {
   PackagePlus,
   RefreshCw,
   RotateCcw,
-  Search,
   Truck,
   XCircle
 } from "lucide-react";
@@ -16,7 +15,6 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AdminCatalog,
   InventoryMovement,
-  Payment,
   PurchaseOrder,
   Refund,
   ReturnRequest,
@@ -25,14 +23,12 @@ import {
   createSupplier,
   deleteSupplier,
   fetchAdminCatalog,
-  fetchAdminPayments,
   fetchAdminReturns,
   fetchAdminRefunds,
   fetchInventoryMovements,
   fetchPurchaseOrders,
   fetchSuppliers,
   formatMoney,
-  recheckAdminPayment,
   updateAdminReturn,
   updateAdminRefund,
   updatePurchaseOrder,
@@ -70,7 +66,6 @@ const refundTransitions: Record<Refund["status"], Refund["status"][]> = {
 const returnPageSize = 8;
 const supplierPageSize = 6;
 const refundPageSize = 10;
-const paymentPageSize = 10;
 const purchaseOrderPageSize = 10;
 const movementPageSize = 15;
 
@@ -80,11 +75,6 @@ export function AdminOperations() {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [refunds, setRefunds] = useState<Refund[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [paymentSearch, setPaymentSearch] = useState("");
-  const [paymentStatusFilter, setPaymentStatusFilter] = useState("ALL");
-  const [paymentPage, setPaymentPage] = useState(1);
-  const [recheckingPaymentId, setRecheckingPaymentId] = useState("");
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [loading, setLoading] = useState(true);
@@ -137,14 +127,13 @@ export function AdminOperations() {
     setLoading(true);
     setError("");
     try {
-      const [returnData, supplierData, poData, movementData, catalogData, refundData, paymentData] = await Promise.all([
+      const [returnData, supplierData, poData, movementData, catalogData, refundData] = await Promise.all([
         fetchAdminReturns(),
         fetchSuppliers(),
         fetchPurchaseOrders(),
         fetchInventoryMovements(),
         fetchAdminCatalog(),
-        fetchAdminRefunds(),
-        fetchAdminPayments()
+        fetchAdminRefunds()
       ]);
       setReturns(returnData);
       setSuppliers(supplierData);
@@ -152,7 +141,6 @@ export function AdminOperations() {
       setMovements(movementData);
       setCatalog(catalogData);
       setRefunds(refundData);
-      setPayments(paymentData);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Operations data is unavailable.");
     } finally {
@@ -323,35 +311,10 @@ export function AdminOperations() {
     }
   }
 
-  async function recheckPayment(item: Payment) {
-    setRecheckingPaymentId(item.id);
-    try {
-      const updated = await recheckAdminPayment(item.id);
-      setPayments((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
-      notify(`Payment for ${item.order.orderNumber} is now ${updated.status.toLowerCase()}.`);
-    } catch (caught) {
-      notify(caught instanceof Error ? caught.message : "Payment could not be re-checked.", "error");
-    } finally {
-      setRecheckingPaymentId("");
-    }
-  }
-
-  const filteredPayments = useMemo(() => payments.filter((item) => {
-    if (paymentStatusFilter !== "ALL" && item.status !== paymentStatusFilter) return false;
-    const search = paymentSearch.trim().toLowerCase();
-    if (!search) return true;
-    return (
-      item.order.orderNumber.toLowerCase().includes(search) ||
-      item.transactionId?.toLowerCase().includes(search) ||
-      item.method.toLowerCase().includes(search)
-    );
-  }), [payments, paymentStatusFilter, paymentSearch]);
   const supplierPages = Math.max(1, Math.ceil(suppliers.length / supplierPageSize));
   const pagedSuppliers = suppliers.slice((supplierPage - 1) * supplierPageSize, supplierPage * supplierPageSize);
   const refundPages = Math.max(1, Math.ceil(refunds.length / refundPageSize));
   const pagedRefunds = refunds.slice((refundPage - 1) * refundPageSize, refundPage * refundPageSize);
-  const paymentPages = Math.max(1, Math.ceil(filteredPayments.length / paymentPageSize));
-  const pagedPayments = filteredPayments.slice((paymentPage - 1) * paymentPageSize, paymentPage * paymentPageSize);
   const purchaseOrderPages = Math.max(1, Math.ceil(purchaseOrders.length / purchaseOrderPageSize));
   const pagedPurchaseOrders = purchaseOrders.slice(
     (purchaseOrderPage - 1) * purchaseOrderPageSize,
@@ -365,10 +328,6 @@ export function AdminOperations() {
   }, [returnFilter]);
 
   useEffect(() => {
-    setPaymentPage(1);
-  }, [paymentSearch, paymentStatusFilter]);
-
-  useEffect(() => {
     if (returnPage > returnPages) setReturnPage(returnPages);
   }, [returnPage, returnPages]);
 
@@ -379,10 +338,6 @@ export function AdminOperations() {
   useEffect(() => {
     if (refundPage > refundPages) setRefundPage(refundPages);
   }, [refundPage, refundPages]);
-
-  useEffect(() => {
-    if (paymentPage > paymentPages) setPaymentPage(paymentPages);
-  }, [paymentPage, paymentPages]);
 
   useEffect(() => {
     if (purchaseOrderPage > purchaseOrderPages) setPurchaseOrderPage(purchaseOrderPages);
@@ -418,7 +373,6 @@ export function AdminOperations() {
         <a href="#operations-returns">Returns</a>
         <a href="#operations-supply">Supply</a>
         <a href="#operations-refunds">Refunds</a>
-        <a href="#operations-payments">Payments</a>
         <a href="#operations-orders">Purchase orders</a>
         <a href="#operations-ledger">Inventory ledger</a>
       </nav>
@@ -702,62 +656,6 @@ export function AdminOperations() {
           total={refunds.length}
           pageSize={refundPageSize}
           onPageChange={setRefundPage}
-        />
-      </section>
-
-      <section className="admin-data-panel" id="operations-payments">
-        <AdminSectionHeader title="Payments" description="Transaction records for every order, across every configured payment method." />
-        <form className="admin-filterbar" onSubmit={(event) => event.preventDefault()}>
-          <label className="admin-search">
-            <Search size={17} />
-            <input
-              value={paymentSearch}
-              onChange={(event) => setPaymentSearch(event.target.value)}
-              placeholder="Order number, transaction ID, or method"
-            />
-          </label>
-          <select value={paymentStatusFilter} onChange={(event) => setPaymentStatusFilter(event.target.value)}>
-            <option value="ALL">All payment statuses</option>
-            <option value="PENDING">Pending</option>
-            <option value="PAID">Paid</option>
-            <option value="FAILED">Failed</option>
-            <option value="PARTIALLY_REFUNDED">Partially refunded</option>
-            <option value="REFUNDED">Refunded</option>
-          </select>
-        </form>
-        <div className="admin-table-wrap">
-          <table className="admin-table">
-            <thead><tr><th>Order</th><th>Customer</th><th>User ID</th><th>Method</th><th>Transaction ID</th><th>Amount</th><th>Date</th><th>Status</th><th /></tr></thead>
-            <tbody>{pagedPayments.map((item) => (
-              <tr key={item.id}>
-                <td><strong>{item.order.orderNumber}</strong></td>
-                <td>{item.order.customerName}<small>{item.order.email}</small></td>
-                <td><small>{item.order.userId ?? "Guest"}</small></td>
-                <td>{item.method}<small>{item.provider}</small></td>
-                <td>{item.transactionId ?? "—"}</td>
-                <td>{formatMoney(item.amount)}</td>
-                <td>{new Date(item.createdAt).toLocaleString("en-BD")}</td>
-                <td><StatusBadge value={item.status} kind="payment" /></td>
-                <td>
-                  {item.provider === "bkash" && item.gatewayReference ? (
-                    <div className="admin-row-actions">
-                      <button type="button" onClick={() => void recheckPayment(item)} disabled={recheckingPaymentId === item.id}>
-                        <RefreshCw size={14} /> {recheckingPaymentId === item.id ? "Checking..." : "Re-check"}
-                      </button>
-                    </div>
-                  ) : null}
-                </td>
-              </tr>
-            ))}</tbody>
-          </table>
-          {!filteredPayments.length ? <p className="muted-copy">No payments match this filter.</p> : null}
-        </div>
-        <AdminPagination
-          page={paymentPage}
-          pages={paymentPages}
-          total={filteredPayments.length}
-          pageSize={paymentPageSize}
-          onPageChange={setPaymentPage}
         />
       </section>
 

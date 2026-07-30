@@ -22,6 +22,7 @@ import {
   Truck
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "../AuthContext";
 import {
   AdminCatalog,
   Banner,
@@ -60,15 +61,15 @@ type ContentMode = "identity" | "homepage" | "banners" | "brands" | "categories"
 type Editable = HomeSection | (Banner & { isActive: boolean }) | Brand | Category | Testimonial | CheckoutMethod;
 const contentPageSize = 8;
 
-const modes: Array<{ id: ContentMode; label: string; icon: React.ReactNode }> = [
-  { id: "identity", label: "Site identity", icon: <PanelTop size={17} /> },
-  { id: "homepage", label: "Homepage", icon: <LayoutTemplate size={17} /> },
-  { id: "banners", label: "Banners", icon: <ImagePlus size={17} /> },
-  { id: "brands", label: "Brands", icon: <Store size={17} /> },
-  { id: "categories", label: "Categories", icon: <Layers3 size={17} /> },
-  { id: "testimonials", label: "Homepage reviews", icon: <Star size={17} /> },
-  { id: "checkout", label: "Checkout methods", icon: <CreditCard size={17} /> },
-  { id: "pages", label: "Info pages", icon: <FileText size={17} /> }
+const modes: Array<{ id: ContentMode; label: string; icon: React.ReactNode; permissions: string[] }> = [
+  { id: "identity", label: "Site identity", icon: <PanelTop size={17} />, permissions: ["content.write"] },
+  { id: "homepage", label: "Homepage", icon: <LayoutTemplate size={17} />, permissions: ["content.write"] },
+  { id: "banners", label: "Banners", icon: <ImagePlus size={17} />, permissions: ["content.write"] },
+  { id: "brands", label: "Brands", icon: <Store size={17} />, permissions: ["brands.manage"] },
+  { id: "categories", label: "Categories", icon: <Layers3 size={17} />, permissions: ["categories.manage"] },
+  { id: "testimonials", label: "Homepage reviews", icon: <Star size={17} />, permissions: ["content.write"] },
+  { id: "checkout", label: "Checkout methods", icon: <CreditCard size={17} />, permissions: ["checkout.read", "checkout.write", "checkout_policy.write", "payment_methods.read", "payment_methods.write", "delivery_methods.read", "delivery_methods.write", "delivery_zones.read", "delivery_zones.write"] },
+  { id: "pages", label: "Info pages", icon: <FileText size={17} />, permissions: ["content.write"] }
 ];
 
 const infoPageTitles: Record<string, string> = {
@@ -127,6 +128,11 @@ function paymentKindValue(method?: CheckoutMethod | null) {
   return "gateway";
 }
 
+function paymentLogoUrl(method?: CheckoutMethod | null) {
+  const metadata = checkoutMethodMetadata(method);
+  return String(metadata.logoUrl ?? "").trim();
+}
+
 function scrollToAdminEditor(id: string) {
   window.requestAnimationFrame(() => {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -134,6 +140,7 @@ function scrollToAdminEditor(id: string) {
 }
 
 export function AdminContent() {
+  const { user } = useAuth();
   const { setSettings } = useSiteSettings();
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [mode, setMode] = useState<ContentMode>("identity");
@@ -156,6 +163,15 @@ export function AdminContent() {
   const [editingRate, setEditingRate] = useState<DeliveryRate | null>(null);
   const [editingPaymentMethod, setEditingPaymentMethod] = useState<CheckoutMethod | null>(null);
   const [editingDeliveryMethod, setEditingDeliveryMethod] = useState<CheckoutMethod | null>(null);
+  const can = useCallback(
+    (...permissions: string[]) =>
+      Boolean(user?.permissions.includes("*") || permissions.some((permission) => user?.permissions.includes(permission))),
+    [user]
+  );
+  const visibleModes = useMemo(
+    () => modes.filter((item) => can(...item.permissions)),
+    [can]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -185,6 +201,11 @@ export function AdminContent() {
     window.addEventListener("popstate", applyLocation);
     return () => window.removeEventListener("popstate", applyLocation);
   }, [load]);
+  useEffect(() => {
+    if (!visibleModes.some((item) => item.id === mode) && visibleModes[0]) {
+      setMode(visibleModes[0].id);
+    }
+  }, [mode, visibleModes]);
   useEffect(() => {
     setEditing(null);
     setCreating(false);
@@ -241,11 +262,13 @@ export function AdminContent() {
 
   function editPaymentMethod(method: CheckoutMethod) {
     setEditingPaymentMethod(method);
+    setImage(paymentLogoUrl(method));
     scrollToAdminEditor("admin-payment-method-editor");
   }
 
   function editDeliveryMethod(method: CheckoutMethod) {
     setEditingDeliveryMethod(method);
+    setImage("");
     scrollToAdminEditor("admin-delivery-method-editor");
   }
 
@@ -470,6 +493,7 @@ export function AdminContent() {
       metadata: {
         paymentKind,
         provider,
+        logoUrl: image || undefined,
         settlement: paymentKind === "cash" ? "collect_on_delivery" : "gateway"
       }
     };
@@ -478,8 +502,8 @@ export function AdminContent() {
       else await createAdminResource("checkout-methods", payload);
       notify(editingPaymentMethod ? "Payment method updated." : "Payment method saved.");
       setEditingPaymentMethod(null);
+      setImage("");
       await load();
-      event.currentTarget.reset();
     } catch (caught) {
       notify(caught instanceof Error ? caught.message : "Payment method could not be saved.", "error");
     }
@@ -509,7 +533,6 @@ export function AdminContent() {
       notify(editingDeliveryMethod ? "Delivery method updated." : "Delivery method saved.");
       setEditingDeliveryMethod(null);
       await load();
-      event.currentTarget.reset();
     } catch (caught) {
       notify(caught instanceof Error ? caught.message : "Delivery method could not be saved.", "error");
     }
@@ -554,7 +577,6 @@ export function AdminContent() {
       notify(editingZone ? "Delivery zone updated." : "Delivery zone saved.");
       setEditingZone(null);
       await load();
-      event.currentTarget.reset();
     } catch (caught) {
       notify(caught instanceof Error ? caught.message : "Delivery zone could not be saved.", "error");
     }
@@ -582,7 +604,6 @@ export function AdminContent() {
       notify(editingRate ? "Delivery rate updated." : "Delivery rate saved.");
       setEditingRate(null);
       await load();
-      event.currentTarget.reset();
     } catch (caught) {
       notify(caught instanceof Error ? caught.message : "Delivery rate could not be saved.", "error");
     }
@@ -669,7 +690,7 @@ export function AdminContent() {
         }
       />
       <div className="admin-content-tabs" role="tablist" aria-label="Content types">
-        {modes.map((item) => (
+        {visibleModes.map((item) => (
           <button
             key={item.id}
             type="button"
@@ -974,13 +995,20 @@ export function AdminContent() {
                   <label>Code<input name="code" placeholder="BKASH" defaultValue={editingPaymentMethod?.code ?? ""} required /></label>
                   <label>Display name<input name="name" placeholder="bKash" defaultValue={editingPaymentMethod?.name ?? ""} required /></label>
                 </div>
+                <AdminUploadField
+                  label="Payment logo"
+                  value={image}
+                  onChange={setImage}
+                  onMessage={notifyUpload}
+                  recommendedDimensions="Transparent PNG or WebP, around 320 x 120 px"
+                />
                 <label>Customer note<textarea name="description" placeholder="Pay securely after order confirmation." defaultValue={editingPaymentMethod?.description ?? ""} /></label>
                 <div className="form-grid">
                   <label>Priority<input name="priority" type="number" defaultValue={editingPaymentMethod?.priority ?? 0} /></label>
                   <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={editingPaymentMethod?.isActive ?? true} /> Available at checkout</label>
                 </div>
                 <div className="admin-inline-actions">
-                  {editingPaymentMethod ? <button className="secondary-action" type="button" onClick={() => setEditingPaymentMethod(null)}>Cancel edit</button> : null}
+                  {editingPaymentMethod ? <button className="secondary-action" type="button" onClick={() => { setEditingPaymentMethod(null); setImage(""); }}>Cancel edit</button> : null}
                   <button className="primary-action" type="submit">{editingPaymentMethod ? "Update payment method" : "Save payment method"}</button>
                 </div>
               </form>
@@ -992,7 +1020,9 @@ export function AdminContent() {
                 </div>
                 {paymentCheckoutMethods.map((method, index) => (
                   <article key={method.id} className="checkout-method-card">
-                    <div className="admin-content-image"><CreditCard size={20} /></div>
+                    <div className="admin-content-image payment-method-logo-frame">
+                      {paymentLogoUrl(method) ? <img src={paymentLogoUrl(method)} alt="" /> : <CreditCard size={20} />}
+                    </div>
                     <div>
                       <strong>{method.name}</strong>
                       <p>{method.description || method.code}</p>

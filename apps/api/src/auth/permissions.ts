@@ -87,7 +87,15 @@ export const permissionCatalogue: PermissionGroup[] = [
       permission("content.write", "Manage storefront", "Manage banners, homepage sections, testimonials, and site identity."),
       permission("promotions.read", "View promotions", "View coupon performance and configuration."),
       permission("promotions.write", "Manage promotions", "Create, update, and remove coupons.", "high"),
-      permission("checkout.write", "Manage checkout methods", "Enable and configure payment and delivery methods.", "high")
+      permission("checkout.read", "View checkout settings", "View payment methods, delivery methods, zones, and platform checkout policy."),
+      permission("checkout_policy.write", "Manage checkout policy", "Configure platform payment requirements and allowed delivery areas.", "high"),
+      permission("payment_methods.read", "View payment methods", "View cash, online payment, and gateway provider setup."),
+      permission("payment_methods.write", "Manage payment methods", "Enable, reorder, and configure payment methods and gateway providers.", "high"),
+      permission("delivery_methods.read", "View delivery methods", "View delivery service types and timing defaults."),
+      permission("delivery_methods.write", "Manage delivery methods", "Create, update, enable, and reorder delivery service types.", "high"),
+      permission("delivery_zones.read", "View delivery zones", "View service areas, postal codes, and zone rates."),
+      permission("delivery_zones.write", "Manage delivery zones", "Create, update, and remove delivery areas and zone rates.", "high"),
+      permission("checkout.write", "Manage all checkout settings", "Legacy all-access permission for checkout methods, zones, rates, and policy.", "high")
     ]
   },
   {
@@ -119,13 +127,17 @@ export const rolePermissions: Record<UserRole, string[]> = {
     "orders.export", "customers.read", "customers.write", "returns.read", "returns.write",
     "refunds.read", "refunds.write", "payments.read", "payments.write", "suppliers.read", "suppliers.write",
     "purchase_orders.read", "purchase_orders.write", "inventory.read", "inventory.write",
-    "catalog.read", "uploads.write"
+    "catalog.read", "uploads.write", "checkout.read", "delivery_methods.read",
+    "delivery_zones.read"
   ],
   CATALOG: [
     "dashboard.read", "catalog.read", "products.create", "products.update",
     "products.delete", "inventory.read", "brands.manage", "categories.manage",
     "combos.manage", "content.write", "promotions.read", "promotions.write",
-    "reviews.read", "reviews.write", "growth.read", "uploads.write"
+    "reviews.read", "reviews.write", "growth.read", "uploads.write", "checkout.read",
+    "checkout_policy.write", "payment_methods.read", "payment_methods.write",
+    "delivery_methods.read", "delivery_methods.write", "delivery_zones.read",
+    "delivery_zones.write", "checkout.write"
   ],
   SUPPORT: [
     "dashboard.read", "orders.read", "orders.update", "customers.read",
@@ -134,7 +146,9 @@ export const rolePermissions: Record<UserRole, string[]> = {
   ],
   ANALYST: [
     "dashboard.read", "orders.read", "orders.export", "customers.read",
-    "growth.read", "inventory.read", "catalog.read", "promotions.read", "payments.read"
+    "growth.read", "inventory.read", "catalog.read", "promotions.read",
+    "payments.read", "checkout.read", "payment_methods.read", "delivery_methods.read",
+    "delivery_zones.read"
   ]
 };
 

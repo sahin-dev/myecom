@@ -858,7 +858,7 @@ export type Payment = {
   method: string;
   amount: number;
   currency: string;
-  status: "PENDING" | "PAID" | "FAILED" | "PARTIALLY_REFUNDED" | "REFUNDED";
+  status: "PENDING" | "PARTIALLY_PAID" | "PAID" | "FAILED" | "PARTIALLY_REFUNDED" | "REFUNDED";
   transactionId?: string | null;
   gatewayReference?: string | null;
   order: { orderNumber: string; customerName: string; email: string; userId?: string | null; total: number };
@@ -1448,20 +1448,47 @@ export const testimonials: Testimonial[] = [
   }
 ];
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const configuredApiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 export const authStorageKey = "my-ecom-access-token";
+
+function normalizedConfiguredApiBase() {
+  return configuredApiBase.replace(/\/$/, "");
+}
+
+function isLocalApiHost(hostname: string) {
+  return ["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(hostname);
+}
+
+function apiBase() {
+  if (typeof window === "undefined") return normalizedConfiguredApiBase();
+  try {
+    const url = new URL(configuredApiBase);
+    if (isLocalApiHost(url.hostname)) return "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return normalizedConfiguredApiBase();
+  }
+}
 
 export function resolveMediaUrl(value?: string | null) {
   const source = value?.trim();
   if (!source) return "";
-  if (source.startsWith("/uploads/")) return `${apiBase}${source}`;
+  if (source.startsWith("/uploads/")) return source;
+  try {
+    const url = new URL(source);
+    if (isLocalApiHost(url.hostname) && url.pathname.startsWith("/uploads/")) {
+      return `${url.pathname}${url.search}${url.hash}`;
+    }
+  } catch {
+    return source;
+  }
   return source;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token =
     typeof window === "undefined" ? null : window.localStorage.getItem(authStorageKey);
-  const response = await fetch(`${apiBase}/api${path}`, {
+  const response = await fetch(`${apiBase()}/api${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -1526,6 +1553,7 @@ export async function createCheckout(input: {
   addressId?: string;
   promotionCode?: string;
   paymentMethod?: string;
+  payNowAmount?: number;
   deliveryMethodCode?: string;
   deliveryZoneCode?: string;
   sessionKey?: string;
@@ -2168,6 +2196,13 @@ export async function executeBkashPayment(paymentID: string) {
   });
 }
 
+export async function markBkashPaymentFailed(paymentID: string) {
+  return request<Order>("/checkout/bkash/failed", {
+    method: "POST",
+    body: JSON.stringify({ paymentID })
+  });
+}
+
 export async function fetchInfoPages() {
   return request<InfoPageContent[]>("/catalog/info-pages");
 }
@@ -2477,7 +2512,7 @@ export async function uploadAdminImage(file: File) {
     typeof window === "undefined" ? null : window.localStorage.getItem(authStorageKey);
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`${apiBase}/api/admin/uploads`, {
+  const response = await fetch(`${apiBase()}/api/admin/uploads`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form

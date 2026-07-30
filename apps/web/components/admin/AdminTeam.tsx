@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   Trash2,
   UserCheck,
@@ -75,6 +76,8 @@ export function AdminTeam() {
   const [roleName, setRoleName] = useState("");
   const [roleDescription, setRoleDescription] = useState("");
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [roleSearch, setRoleSearch] = useState("");
+  const [permissionSearch, setPermissionSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -132,6 +135,24 @@ export function AdminTeam() {
         ? current.filter((key) => !keys.includes(key))
         : [...new Set([...current, ...keys])]
     );
+  }
+
+  function addPermission(permission: string) {
+    setSelectedPermissions((current) =>
+      current.includes(permission) ? current : [...current, permission]
+    );
+  }
+
+  function removePermission(permission: string) {
+    setSelectedPermissions((current) => current.filter((item) => item !== permission));
+  }
+
+  function addPermissionGroup(permissions: string[]) {
+    setSelectedPermissions((current) => [...new Set([...current, ...permissions])]);
+  }
+
+  function removePermissionGroup(permissions: string[]) {
+    setSelectedPermissions((current) => current.filter((item) => !permissions.includes(item)));
   }
 
   async function saveRole(event: FormEvent<HTMLFormElement>) {
@@ -248,10 +269,56 @@ export function AdminTeam() {
   }
 
   const assignableRoles = roles.filter((role) => role.isActive && role.key !== "owner");
+  const allPermissionItems = useMemo(
+    () =>
+      groups.flatMap((group) =>
+        group.permissions.map((permission) => ({
+          ...permission,
+          groupKey: group.key,
+          groupLabel: group.label
+        }))
+      ),
+    [groups]
+  );
+  const selectedPermissionDetails = useMemo(
+    () =>
+      selectedPermissions
+        .map((key) => allPermissionItems.find((item) => item.key === key))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    [allPermissionItems, selectedPermissions]
+  );
+  const searchedRoles = useMemo(() => {
+    const query = roleSearch.trim().toLowerCase();
+    if (!query) return roles;
+    return roles.filter((role) =>
+      [
+        role.name,
+        role.key,
+        role.description ?? "",
+        role.permissions.join(" ")
+      ].join(" ").toLowerCase().includes(query)
+    );
+  }, [roleSearch, roles]);
+  const permissionSearchGroups = useMemo(() => {
+    const query = permissionSearch.trim().toLowerCase();
+    if (!query) return [];
+    return groups
+      .map((group) => {
+        const groupMatches = `${group.label} ${group.key}`.toLowerCase().includes(query);
+        const permissions = group.permissions.filter((item) =>
+          groupMatches ||
+          `${item.label} ${item.key} ${item.description} ${group.label}`
+            .toLowerCase()
+            .includes(query)
+        );
+        return { ...group, permissions };
+      })
+      .filter((group) => group.permissions.length);
+  }, [groups, permissionSearch]);
   const staffPages = Math.max(1, Math.ceil(staff.length / staffPageSize));
   const pagedStaff = staff.slice((staffPage - 1) * staffPageSize, staffPage * staffPageSize);
-  const rolePages = Math.max(1, Math.ceil(roles.length / rolePageSize));
-  const pagedRoles = roles.slice((rolePage - 1) * rolePageSize, rolePage * rolePageSize);
+  const rolePages = Math.max(1, Math.ceil(searchedRoles.length / rolePageSize));
+  const pagedRoles = searchedRoles.slice((rolePage - 1) * rolePageSize, rolePage * rolePageSize);
   const auditPages = Math.max(1, Math.ceil(logs.length / auditPageSize));
   const pagedLogs = logs.slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize);
 
@@ -262,6 +329,10 @@ export function AdminTeam() {
   useEffect(() => {
     if (rolePage > rolePages) setRolePage(rolePages);
   }, [rolePage, rolePages]);
+
+  useEffect(() => {
+    setRolePage(1);
+  }, [roleSearch]);
 
   useEffect(() => {
     if (auditPage > auditPages) setAuditPage(auditPages);
@@ -388,16 +459,26 @@ export function AdminTeam() {
               description="Presets are maintained by the platform. Duplicate one for a tailored role."
               action={can("roles.create") ? <button type="button" className="secondary-action" onClick={() => beginRole()}><Plus size={16} /> New role</button> : undefined}
             />
+            <label className="admin-list-search">
+              <Search size={16} />
+              <input
+                value={roleSearch}
+                onChange={(event) => setRoleSearch(event.target.value)}
+                placeholder="Search roles, keys, or permissions"
+                aria-label="Search access roles"
+              />
+            </label>
             {pagedRoles.map((role) => (
               <button type="button" className={editingRole?.id === role.id ? "active" : ""} key={role.id} onClick={() => beginRole(role)}>
                 <span><strong>{role.name}</strong><small>{role.description ?? "Custom access policy"}</small></span>
                 <span><b>{role.permissions.includes("*") ? "All" : role.permissions.length}</b><small>permissions · {role._count.users} staff</small></span>
               </button>
             ))}
+            {!pagedRoles.length ? <p className="admin-empty-state">No access roles match this search.</p> : null}
             <AdminPagination
               page={rolePage}
               pages={rolePages}
-              total={roles.length}
+              total={searchedRoles.length}
               pageSize={rolePageSize}
               onPageChange={setRolePage}
             />
@@ -419,7 +500,62 @@ export function AdminTeam() {
                 </div>
                 <div className="admin-permission-summary">
                   <span><KeyRound size={17} /><strong>{selectedPermissions.length}</strong> permissions selected</span>
-                  {selectedPermissions.some((key) => groups.flatMap((group) => group.permissions).find((item) => item.key === key)?.risk === "high") ? <span className="risk"><AlertTriangle size={16} /> Includes high-impact actions</span> : null}
+                  {selectedPermissionDetails.some((item) => item.risk === "high") ? <span className="risk"><AlertTriangle size={16} /> Includes high-impact actions</span> : null}
+                </div>
+                <div className="admin-permission-finder">
+                  <label>
+                    <span><Search size={16} /> Search permissions to add</span>
+                    <input
+                      value={permissionSearch}
+                      onChange={(event) => setPermissionSearch(event.target.value)}
+                      placeholder="Try payment, delivery zone, customers..."
+                    />
+                  </label>
+                  {permissionSearch.trim() ? (
+                    <div>
+                      {permissionSearchGroups.map((group) => {
+                        const keys = group.permissions.map((item) => item.key);
+                        const selectedCount = keys.filter((key) => selectedPermissions.includes(key)).length;
+                        const allSelected = selectedCount === keys.length;
+                        return (
+                          <section className="admin-permission-search-group" key={group.key}>
+                            <header>
+                              <span>
+                                <strong>{group.label}</strong>
+                                <small>{selectedCount} of {keys.length} matching permissions selected</small>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => allSelected ? removePermissionGroup(keys) : addPermissionGroup(keys)}
+                              >
+                                {allSelected ? "Remove group" : selectedCount ? "Add missing" : "Add group"}
+                              </button>
+                            </header>
+                            <div>
+                              {group.permissions.map((item) => {
+                                const selected = selectedPermissions.includes(item.key);
+                                return (
+                                  <button
+                                    type="button"
+                                    key={item.key}
+                                    className={selected ? "selected" : ""}
+                                    onClick={() => selected ? removePermission(item.key) : addPermission(item.key)}
+                                  >
+                                    <span>
+                                      <strong>{item.label}{item.risk === "high" ? <AlertTriangle size={13} /> : null}</strong>
+                                      <small>{item.key} · {item.description}</small>
+                                    </span>
+                                    <b>{selected ? "Remove" : "Add"}</b>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        );
+                      })}
+                      {!permissionSearchGroups.length ? <p>No permission matches this search.</p> : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="admin-permission-groups">
                   {groups.map((group) => {

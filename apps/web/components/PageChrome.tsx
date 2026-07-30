@@ -15,7 +15,7 @@ import {
   X,
   Youtube
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Category, SiteSettings, resolveMediaUrl } from "../lib/catalog";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
@@ -38,6 +38,18 @@ export function PageHeader({
   const { settings: defaultSettings } = useSiteSettings();
   const settings = siteSettings ?? defaultSettings;
   const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const categoryNavRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!categoriesOpen) return;
+    function closeOnOutsideClick(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (target && categoryNavRef.current?.contains(target)) return;
+      setCategoriesOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [categoriesOpen]);
 
   return (
     <>
@@ -80,7 +92,7 @@ export function PageHeader({
           </button>
         </nav>
       </header>
-      <nav className={`category-nav ${home ? "home-category-nav" : ""}`} aria-label="Shop categories">
+      <nav ref={categoryNavRef} className={`category-nav ${home ? "home-category-nav" : ""}`} aria-label="Shop categories">
         <button
           className="mobile-category-toggle"
           type="button"

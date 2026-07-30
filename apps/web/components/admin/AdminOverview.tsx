@@ -109,7 +109,7 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
             label="Awaiting payment"
             value={dashboard.operations.awaitingPayment}
             action="Review payments"
-            onClick={() => onNavigate("orders")}
+            onClick={() => onNavigate("payments")}
           />
           <OperationMetric
             icon={<Boxes size={18} />}

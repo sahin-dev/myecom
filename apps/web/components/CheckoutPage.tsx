@@ -30,6 +30,7 @@ import {
   formatMoney,
   initiateBkashPayment,
   isBaseProductEnabled,
+  resolveMediaUrl,
   trackAnalyticsEvent,
   validatePromotion
 } from "../lib/catalog";
@@ -79,9 +80,59 @@ function isOnlinePaymentGroup(method?: { code?: string; name?: string } | null) 
 
 function isOnlinePaymentProvider(method?: { code?: string; name?: string; metadata?: Record<string, unknown> | null } | null) {
   if (!method || isCashPaymentMethod(method) || isOnlinePaymentGroup(method)) return false;
+  const paymentKind = cleanPaymentCode(String(method.metadata?.paymentKind ?? ""));
+  if (paymentKind === "GATEWAY") return true;
   const provider = cleanPaymentCode(String(method.metadata?.provider ?? ""));
   const value = `${cleanPaymentCode(method.code)} ${cleanPaymentCode(method.name)} ${provider}`;
   return ["BKASH", "NAGAD", "CARD", "SSLCOMMERZ", "STRIPE"].some((token) => value.includes(token));
+}
+
+function isBkashPaymentMethod(method?: { code?: string; name?: string; metadata?: Record<string, unknown> | null } | null) {
+  if (!method) return false;
+  const provider = cleanPaymentCode(String(method.metadata?.provider ?? ""));
+  const value = `${cleanPaymentCode(method.code)} ${cleanPaymentCode(method.name)} ${provider}`;
+  return value.includes("BKASH");
+}
+
+function paymentProviderKey(method?: { code?: string; name?: string; metadata?: Record<string, unknown> | null } | null) {
+  if (!method) return "gateway";
+  const provider = cleanPaymentCode(String(method.metadata?.provider ?? ""));
+  const value = `${cleanPaymentCode(method.code)} ${cleanPaymentCode(method.name)} ${provider}`;
+  if (value.includes("BKASH")) return "bkash";
+  if (value.includes("NAGAD")) return "nagad";
+  if (value.includes("CARD") || value.includes("SSLCOMMERZ") || value.includes("STRIPE")) return "card";
+  return "gateway";
+}
+
+function paymentLogoUrl(method?: { metadata?: Record<string, unknown> | null } | null) {
+  const logo = typeof method?.metadata?.logoUrl === "string" ? method.metadata.logoUrl : "";
+  return resolveMediaUrl(logo);
+}
+
+function PaymentMethodLogo({
+  method
+}: {
+  method: { code?: string; name?: string; metadata?: Record<string, unknown> | null };
+}) {
+  const uploadedLogo = paymentLogoUrl(method);
+  if (uploadedLogo) {
+    return (
+      <span className="payment-provider-logo uploaded" aria-hidden="true">
+        <img src={uploadedLogo} alt="" />
+      </span>
+    );
+  }
+  const provider = paymentProviderKey(method);
+  const label =
+    provider === "bkash" ? "bKash" :
+    provider === "nagad" ? "Nagad" :
+    provider === "card" ? "Card" :
+    "Pay";
+  return (
+    <span className={`payment-provider-logo ${provider}`} aria-hidden="true">
+      {label}
+    </span>
+  );
 }
 
 export function CheckoutPage() {
@@ -104,6 +155,7 @@ export function CheckoutPage() {
   const [promotionCode, setPromotionCode] = useState("");
   const [promotionNotice, setPromotionNotice] = useState("");
   const [paymentMethodCode, setPaymentMethodCode] = useState("");
+  const [paymentAmountMode, setPaymentAmountMode] = useState<"minimum" | "full">("minimum");
   const [deliveryMethodCode, setDeliveryMethodCode] = useState("");
   const [order, setOrder] = useState<Order | null>(null);
   const [placingOrder, setPlacingOrder] = useState(false);
@@ -224,8 +276,19 @@ export function CheckoutPage() {
       : selectedDelivery?.fee ?? 0;
   const shippingFee = quote?.shippingFee ?? fallbackShippingFee;
   const total = quote?.total ?? Math.max(subtotal - discount + shippingFee, 0);
-  const amountDueNow = quote?.amountDueNow ?? total;
-  const amountDueOnDelivery = quote?.amountDueOnDelivery ?? 0;
+  const minimumPayNowAmount = quote?.amountDueNow ?? 0;
+  const canChoosePaymentAmount =
+    paymentMode === "online" &&
+    requiredPaymentPercent > 0 &&
+    minimumPayNowAmount > 0 &&
+    minimumPayNowAmount < total;
+  const payNowAmount =
+    paymentMode === "online"
+      ? canChoosePaymentAmount && paymentAmountMode === "minimum"
+        ? minimumPayNowAmount
+        : total
+      : minimumPayNowAmount;
+  const dueOnDeliveryAmount = Math.max(total - payNowAmount, 0);
   const advancePaymentItems = quote?.advancePaymentItems?.filter((item) => item.advancePaymentAmount > 0) ?? [];
   const ready = !directLoading && (directLine ? true : cartReady);
   const canPlaceOrder =
@@ -235,6 +298,10 @@ export function CheckoutPage() {
     Boolean(paymentMethods.length) &&
     Boolean(deliveryMethods.length) &&
     (!requiresDeliveryZoneSelection || Boolean(deliveryZoneCode));
+
+  useEffect(() => {
+    setPaymentAmountMode(canChoosePaymentAmount ? "minimum" : "full");
+  }, [canChoosePaymentAmount, minimumPayNowAmount, total]);
 
   function chooseAddress(addressId: string) {
     setSelectedAddressId(addressId);
@@ -308,10 +375,22 @@ export function CheckoutPage() {
       .then((result) => {
         if (!active) return;
         setQuote(result);
+        const resultPaymentMethods = result.paymentMethods;
+        const resultOnlineProviderMethods = resultPaymentMethods.filter(isOnlinePaymentProvider);
+        const resultOnlineGroupMethod = resultPaymentMethods.find(isOnlinePaymentGroup);
+        const resultOnlineMethods = resultOnlineProviderMethods.length
+          ? resultOnlineProviderMethods
+          : resultOnlineGroupMethod
+            ? [resultOnlineGroupMethod]
+            : resultPaymentMethods.filter((method) => !isCashPaymentMethod(method));
+        const currentOnlineMethod = resultOnlineMethods.find((method) => method.code === paymentMethodCode);
         const nextPaymentCode =
-          result.selectedPaymentMethod && isOnlinePaymentGroup(result.selectedPaymentMethod) && onlineProviderMethods[0]
-            ? onlineProviderMethods[0].code
-            : result.selectedPaymentMethod?.code;
+          currentOnlineMethod?.code ??
+          (
+            result.selectedPaymentMethod && isOnlinePaymentGroup(result.selectedPaymentMethod) && resultOnlineProviderMethods[0]
+              ? resultOnlineProviderMethods[0].code
+              : result.selectedPaymentMethod?.code
+          );
         if (nextPaymentCode && nextPaymentCode !== paymentMethodCode) {
           setPaymentMethodCode(nextPaymentCode);
         }
@@ -428,6 +507,7 @@ export function CheckoutPage() {
         addressId: selectedAddressId || undefined,
         promotionCode: promotion?.code,
         paymentMethod: selectedPaymentMethodCode,
+        payNowAmount: paymentMode === "online" ? payNowAmount : undefined,
         deliveryMethodCode,
         deliveryZoneCode,
         sessionKey: analyticsSessionKey(),
@@ -444,7 +524,7 @@ export function CheckoutPage() {
       const pendingGateway = created.payments?.find((payment) => payment.status === "PENDING");
       const shouldStartBkash =
         pendingGateway?.provider === "bkash" ||
-        ["BKASH", "ONLINE_PAYMENT"].includes(selectedPaymentMethodCode);
+        isBkashPaymentMethod(selectedOnlineMethod);
 
       if (shouldStartBkash) {
         try {
@@ -562,7 +642,7 @@ export function CheckoutPage() {
               <strong>{quoteLoading ? "Checking..." : shippingFee ? formatMoney(shippingFee) : "Free"}</strong>
             </div>
             <div className="cost-line grand-total"><span>Total</span><strong>{formatMoney(total)}</strong></div>
-            {requiredPaymentPercent > 0 ? (
+            {paymentMode === "online" ? (
               <>
                 {advancePaymentItems.length ? (
                   <div className="checkout-advance-breakdown">
@@ -576,11 +656,37 @@ export function CheckoutPage() {
                     ))}
                   </div>
                 ) : null}
-                <div className="cost-line"><span>Pay now</span><strong>{formatMoney(amountDueNow)}</strong></div>
-                <div className="cost-line"><span>Due on delivery</span><strong>{formatMoney(amountDueOnDelivery)}</strong></div>
-                {quote?.advancePaymentSubtotal ? (
-                  <p className="form-note">Advance is calculated only on products that require upfront payment.</p>
+                {canChoosePaymentAmount ? (
+                  <div className="checkout-payment-choice" role="radiogroup" aria-label="Choose payment amount">
+                    <button
+                      type="button"
+                      className={paymentAmountMode === "minimum" ? "active" : ""}
+                      onClick={() => setPaymentAmountMode("minimum")}
+                    >
+                      <span>Minimum advance</span>
+                      <strong>{formatMoney(minimumPayNowAmount)}</strong>
+                      <small>Pay the required amount now</small>
+                    </button>
+                    <button
+                      type="button"
+                      className={paymentAmountMode === "full" ? "active" : ""}
+                      onClick={() => setPaymentAmountMode("full")}
+                    >
+                      <span>Full payment</span>
+                      <strong>{formatMoney(total)}</strong>
+                      <small>Clear the full order online</small>
+                    </button>
+                  </div>
                 ) : null}
+                <div className="cost-line"><span>Pay now</span><strong>{formatMoney(payNowAmount)}</strong></div>
+                <div className="cost-line"><span>Due on delivery</span><strong>{formatMoney(dueOnDeliveryAmount)}</strong></div>
+                {quote?.advancePaymentSubtotal ? (
+                  <p className="form-note">
+                    Minimum advance is calculated only on products that require upfront payment.
+                  </p>
+                ) : (
+                  <p className="form-note">Online payment will be collected before this order is confirmed for processing.</p>
+                )}
               </>
             ) : null}
             <p className="secure-note"><ShieldCheck size={18} /> Your order information is sent securely.</p>
@@ -601,129 +707,183 @@ export function CheckoutPage() {
             </div>
           ) : (
             <form className="checkout-panel product-checkout-form" onSubmit={checkout}>
-              <p className="eyebrow">Delivery details</p>
-              <h2>Where should we send it?</h2>
-              {activeDeliveryZones.length ? (
-                <label className="field-label">
-                  Delivery area
-                  <select value={deliveryZoneCode} onChange={(event) => setDeliveryZoneCode(event.target.value)} required>
-                    <option value="">Choose delivery area</option>
-                    {activeDeliveryZones.map((zone) => (
-                      <option value={zone.code} key={zone.id}>
-                        {zone.name}{zone.city ? ` / ${zone.city}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {quote?.deliveryZone ? <small>Matched zone: {quote.deliveryZone.name}</small> : null}
-                  {!deliveryZoneCode ? <small>Required for delivery fee, payment availability, and service coverage.</small> : null}
-                </label>
-              ) : null}
-              {addresses.length ? (
-                <label className="field-label">
-                  Saved address
-                  <select value={selectedAddressId} onChange={(event) => chooseAddress(event.target.value)}>
-                    {addresses.map((address) => (
-                      <option value={address.id} key={address.id}>
-                        {address.label} / {address.city}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <div className="form-grid">
-                <label className="field-label">Full name<input name="customerName" placeholder="Person receiving the order" defaultValue={user?.name ?? ""} required /></label>
-                <label className="field-label">Phone number<input name="phone" placeholder="Delivery contact number" defaultValue={user?.phone ?? ""} required /></label>
-              </div>
-              <label className="field-label">Email address<input name="email" type="email" placeholder="Order confirmation email" defaultValue={user?.email ?? ""} required /></label>
-              <label className="field-label">Address line 1<input name="shippingLine1" placeholder="House, road, building" value={shippingLine1} onChange={(event) => setShippingLine1(event.target.value)} required /></label>
-              <label className="field-label">Address line 2<input name="shippingLine2" placeholder="Apartment, floor, landmark" value={shippingLine2} onChange={(event) => setShippingLine2(event.target.value)} /></label>
-              <div className="form-grid">
-                <label className="field-label">Area<input name="shippingArea" placeholder="Dhanmondi" value={shippingArea} onChange={(event) => setShippingArea(event.target.value)} /></label>
-                <label className="field-label">City<input name="shippingCity" placeholder="Dhaka" value={shippingCity} onChange={(event) => setShippingCity(event.target.value)} required /></label>
-              </div>
-              <div className="form-grid">
-                <label className="field-label">Postal code<input name="shippingPostalCode" placeholder="1209" value={shippingPostalCode} onChange={(event) => setShippingPostalCode(event.target.value)} /></label>
-                <label className="field-label">Delivery note<input name="shippingNote" placeholder="Call before delivery" value={shippingNote} onChange={(event) => setShippingNote(event.target.value)} /></label>
-              </div>
-              {deliveryMethods.length ? (
-                <label className="field-label">
-                  Delivery method
-                  <select value={deliveryMethodCode || deliveryMethods[0].code} onChange={(event) => setDeliveryMethodCode(event.target.value)}>
-                    {deliveryMethods.map((method) => (
-                      <option value={method.code} key={method.id}>
-                        {method.name}{method.fee ? ` / ${formatMoney(method.fee)}` : " / Free"}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedDelivery?.description ? <small>{selectedDelivery.description}</small> : null}
-                </label>
-              ) : null}
-              {paymentMethods.length ? (
-                <label className="field-label">
-                  Payment method
-                  <select
-                    value={paymentMode === "online" ? "ONLINE" : selectedCashMethod?.code ?? ""}
-                    onChange={(event) => {
-                      if (event.target.value === "ONLINE") {
-                        setPaymentMethodCode(selectedOnlineMethod?.code ?? onlinePaymentMethods[0]?.code ?? onlineGroupMethod?.code ?? "");
-                      } else {
-                        setPaymentMethodCode(event.target.value);
-                      }
-                    }}
-                  >
-                    {requiredPaymentPercent <= 0 ? cashPaymentMethods.map((method) => (
-                      <option value={method.code} key={method.id}>{method.name}</option>
-                    )) : null}
-                    {onlinePaymentMethods.length ? <option value="ONLINE">Online payment</option> : null}
-                  </select>
-                  {requiredPaymentPercent > 0 ? <small>Advance payment requires an online payment option.</small> : null}
-                </label>
-              ) : (
-                <p className="detail-notice">No payment method is currently available. Please contact support.</p>
-              )}
-              {paymentMode === "online" && onlinePaymentMethods.length ? (
-                <div className="online-payment-options">
-                  <span>Pay online with</span>
-                  <div>
-                    {onlinePaymentMethods.map((method) => (
-                      <button
-                        key={method.id}
-                        type="button"
-                        className={selectedPaymentMethodCode === method.code ? "active" : ""}
-                        onClick={() => setPaymentMethodCode(method.code)}
-                      >
-                        <CreditCard size={15} />
-                        {isOnlinePaymentGroup(method) ? "Gateway" : method.name}
-                      </button>
-                    ))}
-                  </div>
+              <header className="checkout-details-head">
+                <div>
+                  <p className="eyebrow">Delivery details</p>
+                  <h2>Where should we send it?</h2>
                 </div>
-              ) : null}
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={billingSameAsShipping}
-                  onChange={(event) => setBillingSameAsShipping(event.target.checked)}
-                />
-                Billing information is same as shipping
-              </label>
-              {!billingSameAsShipping ? (
-                <fieldset className="checkout-billing-fields">
-                  <legend>Billing information</legend>
+                <span>{deliveryZoneCode ? "Area selected" : "Area required"}</span>
+              </header>
+              <div className="checkout-address-scroll">
+                <section className="checkout-field-card">
+                  <header>
+                    <span>1</span>
+                    <div><strong>Contact</strong><small>For delivery updates and confirmation</small></div>
+                  </header>
                   <div className="form-grid">
-                    <label className="field-label">Billing name<input name="billingName" defaultValue={user?.name ?? ""} required={!billingSameAsShipping} /></label>
-                    <label className="field-label">Billing phone<input name="billingPhone" defaultValue={user?.phone ?? ""} required={!billingSameAsShipping} /></label>
+                    <label className="field-label">Full name<input name="customerName" placeholder="Person receiving the order" defaultValue={user?.name ?? ""} required /></label>
+                    <label className="field-label">Phone number<input name="phone" placeholder="Delivery contact number" defaultValue={user?.phone ?? ""} required /></label>
                   </div>
-                  <label className="field-label">Billing email<input name="billingEmail" type="email" defaultValue={user?.email ?? ""} /></label>
-                  <label className="field-label">Billing address line 1<input name="billingLine1" required={!billingSameAsShipping} /></label>
-                  <label className="field-label">Billing address line 2<input name="billingLine2" /></label>
+                  <label className="field-label">Email address<input name="email" type="email" placeholder="Order confirmation email" defaultValue={user?.email ?? ""} required /></label>
+                </section>
+
+                <section className="checkout-field-card">
+                  <header>
+                    <span>2</span>
+                    <div><strong>Shipping address</strong><small>Used for service area and delivery fee</small></div>
+                  </header>
+                  {activeDeliveryZones.length ? (
+                    <label className="field-label">
+                      Delivery area
+                      <select value={deliveryZoneCode} onChange={(event) => setDeliveryZoneCode(event.target.value)} required>
+                        <option value="">Choose delivery area</option>
+                        {activeDeliveryZones.map((zone) => (
+                          <option value={zone.code} key={zone.id}>
+                            {zone.name}{zone.city ? ` / ${zone.city}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {quote?.deliveryZone ? <small>Matched zone: {quote.deliveryZone.name}</small> : null}
+                      {!deliveryZoneCode ? <small>Required for delivery fee, payment availability, and service coverage.</small> : null}
+                    </label>
+                  ) : null}
+                  {addresses.length ? (
+                    <label className="field-label">
+                      Saved address
+                      <select value={selectedAddressId} onChange={(event) => chooseAddress(event.target.value)}>
+                        {addresses.map((address) => (
+                          <option value={address.id} key={address.id}>
+                            {address.label} / {address.city}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <label className="field-label">Address line 1<input name="shippingLine1" placeholder="House, road, building" value={shippingLine1} onChange={(event) => setShippingLine1(event.target.value)} required /></label>
+                  <label className="field-label">Address line 2<input name="shippingLine2" placeholder="Apartment, floor, landmark" value={shippingLine2} onChange={(event) => setShippingLine2(event.target.value)} /></label>
                   <div className="form-grid">
-                    <label className="field-label">Billing area<input name="billingArea" /></label>
-                    <label className="field-label">Billing city<input name="billingCity" defaultValue={shippingCity} required={!billingSameAsShipping} /></label>
+                    <label className="field-label">Area<input name="shippingArea" placeholder="Dhanmondi" value={shippingArea} onChange={(event) => setShippingArea(event.target.value)} /></label>
+                    <label className="field-label">City<input name="shippingCity" placeholder="Dhaka" value={shippingCity} onChange={(event) => setShippingCity(event.target.value)} required /></label>
                   </div>
-                  <label className="field-label">Billing postal code<input name="billingPostalCode" /></label>
-                </fieldset>
-              ) : null}
+                  <div className="form-grid">
+                    <label className="field-label">Postal code<input name="shippingPostalCode" placeholder="1209" value={shippingPostalCode} onChange={(event) => setShippingPostalCode(event.target.value)} /></label>
+                    <label className="field-label">Delivery note<input name="shippingNote" placeholder="Call before delivery" value={shippingNote} onChange={(event) => setShippingNote(event.target.value)} /></label>
+                  </div>
+                </section>
+
+                <section className="checkout-field-card">
+                  <header>
+                    <span>3</span>
+                    <div><strong>Billing</strong><small>Use the same details or add billing info</small></div>
+                  </header>
+                  <label className="checkout-billing-toggle">
+                    <input
+                      type="checkbox"
+                      checked={billingSameAsShipping}
+                      onChange={(event) => setBillingSameAsShipping(event.target.checked)}
+                    />
+                    Billing information is same as shipping
+                  </label>
+                  {!billingSameAsShipping ? (
+                    <fieldset className="checkout-billing-fields">
+                      <legend>Billing information</legend>
+                      <div className="form-grid">
+                        <label className="field-label">Billing name<input name="billingName" defaultValue={user?.name ?? ""} required={!billingSameAsShipping} /></label>
+                        <label className="field-label">Billing phone<input name="billingPhone" defaultValue={user?.phone ?? ""} required={!billingSameAsShipping} /></label>
+                      </div>
+                      <label className="field-label">Billing email<input name="billingEmail" type="email" defaultValue={user?.email ?? ""} /></label>
+                      <label className="field-label">Billing address line 1<input name="billingLine1" required={!billingSameAsShipping} /></label>
+                      <label className="field-label">Billing address line 2<input name="billingLine2" /></label>
+                      <div className="form-grid">
+                        <label className="field-label">Billing area<input name="billingArea" /></label>
+                        <label className="field-label">Billing city<input name="billingCity" defaultValue={shippingCity} required={!billingSameAsShipping} /></label>
+                      </div>
+                      <label className="field-label">Billing postal code<input name="billingPostalCode" /></label>
+                    </fieldset>
+                  ) : null}
+                </section>
+              </div>
+              <section className="checkout-options-panel">
+                <header>
+                  <strong>Delivery and payment</strong>
+                  <small>Choose the service and checkout method for this order</small>
+                </header>
+                <div className="checkout-options-grid">
+                  {deliveryMethods.length ? (
+                    <label className="field-label">
+                      Delivery method
+                      <select value={deliveryMethodCode || deliveryMethods[0].code} onChange={(event) => setDeliveryMethodCode(event.target.value)}>
+                        {deliveryMethods.map((method) => (
+                          <option value={method.code} key={method.id}>
+                            {method.name}{method.fee ? ` / ${formatMoney(method.fee)}` : " / Free"}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedDelivery?.description ? <small>{selectedDelivery.description}</small> : null}
+                    </label>
+                  ) : null}
+                  {paymentMethods.length ? (
+                    <label className="field-label">
+                      Payment method
+                      <select
+                        value={paymentMode === "online" ? "ONLINE" : selectedCashMethod?.code ?? ""}
+                        onChange={(event) => {
+                          if (event.target.value === "ONLINE") {
+                            setPaymentMethodCode(selectedOnlineMethod?.code ?? onlinePaymentMethods[0]?.code ?? onlineGroupMethod?.code ?? "");
+                          } else {
+                            setPaymentMethodCode(event.target.value);
+                          }
+                        }}
+                      >
+                        {requiredPaymentPercent <= 0 ? cashPaymentMethods.map((method) => (
+                          <option value={method.code} key={method.id}>{method.name}</option>
+                        )) : null}
+                        {onlinePaymentMethods.length ? <option value="ONLINE">Online payment</option> : null}
+                      </select>
+                      {requiredPaymentPercent > 0 ? <small>Advance payment requires an online payment option.</small> : null}
+                    </label>
+                  ) : (
+                    <p className="detail-notice">No payment method is currently available. Please contact support.</p>
+                  )}
+                </div>
+                {paymentMode === "online" && onlinePaymentMethods.length ? (
+                  <div className="online-payment-options">
+                    <span>Pay online with</span>
+                    <div className="form-grid">
+                      {onlinePaymentMethods.map((method) => (
+                        paymentLogoUrl(method) ? (
+                          <button
+                            key={method.id}
+                            type="button"
+                            className={[
+                              "logo-only",
+                              selectedPaymentMethodCode === method.code ? "active" : ""
+                            ].filter(Boolean).join(" ")}
+                            onClick={() => setPaymentMethodCode(method.code)}
+                            aria-label={isOnlinePaymentGroup(method) ? "Gateway" : method.name}
+                            aria-pressed={selectedPaymentMethodCode === method.code}
+                            title={isOnlinePaymentGroup(method) ? "Gateway" : method.name}
+                          >
+                            <PaymentMethodLogo method={method} />
+                            {selectedPaymentMethodCode === method.code ? <span className="selected-payment-mark">Selected</span> : null}
+                          </button>
+                        ) : (
+                          <button
+                            key={method.id}
+                            type="button"
+                            className={selectedPaymentMethodCode === method.code ? "active" : ""}
+                            onClick={() => setPaymentMethodCode(method.code)}
+                            aria-pressed={selectedPaymentMethodCode === method.code}
+                          >
+                            {isOnlinePaymentGroup(method) ? "Gateway" : method.name}
+                            {selectedPaymentMethodCode === method.code ? <span className="selected-payment-mark">Selected</span> : null}
+                          </button>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
               {notice ? <p className="detail-notice">{notice}</p> : null}
               <button
                 className="primary-action full"
@@ -731,7 +891,11 @@ export function CheckoutPage() {
                 disabled={!canPlaceOrder}
               >
                 <CreditCard size={18} />
-                {placingOrder ? "Placing order..." : requiredPaymentPercent > 0 ? `Pay ${formatMoney(amountDueNow)} now` : `Place order - ${formatMoney(total)}`}
+                {placingOrder
+                  ? "Placing order..."
+                  : paymentMode === "online"
+                    ? `Pay ${formatMoney(payNowAmount)} now`
+                    : `Place order - ${formatMoney(total)}`}
               </button>
               <p className="form-note">Payment and delivery availability is checked from your selected delivery area.</p>
             </form>

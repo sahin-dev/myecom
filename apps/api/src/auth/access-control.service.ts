@@ -211,7 +211,15 @@ export class AccessControlService {
     const compatibility: Record<string, string[]> = {
       "catalog.write": ["products.create", "products.update", "products.delete", "combos.manage"],
       "orders.write": ["orders.update", "orders.delete"],
-      "content.write": ["content.write", "brands.manage", "categories.manage", "checkout.write"]
+      "content.write": ["content.write", "brands.manage", "categories.manage"],
+      "checkout.read": ["checkout.write", "checkout_policy.write", "payment_methods.read", "payment_methods.write", "delivery_methods.read", "delivery_methods.write", "delivery_zones.read", "delivery_zones.write"],
+      "checkout_policy.write": ["checkout.write"],
+      "payment_methods.read": ["checkout.write", "payment_methods.write"],
+      "payment_methods.write": ["checkout.write"],
+      "delivery_methods.read": ["checkout.write", "delivery_methods.write"],
+      "delivery_methods.write": ["checkout.write"],
+      "delivery_zones.read": ["checkout.write", "delivery_zones.write"],
+      "delivery_zones.write": ["checkout.write"]
     };
     return required.some((permission) =>
       available.includes(permission) ||

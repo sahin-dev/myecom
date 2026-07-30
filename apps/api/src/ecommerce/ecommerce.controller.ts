@@ -241,14 +241,26 @@ export class EcommerceController {
 
   @Get("admin/catalog")
   @UseGuards(AdminGuard)
-  @RequirePermission("catalog.read", "inventory.read")
+  @RequirePermission(
+    "catalog.read",
+    "inventory.read",
+    "content.write",
+    "checkout.read",
+    "checkout.write",
+    "payment_methods.read",
+    "payment_methods.write",
+    "delivery_methods.read",
+    "delivery_methods.write",
+    "delivery_zones.read",
+    "delivery_zones.write"
+  )
   adminCatalog() {
     return this.ecommerce.adminCatalog();
   }
 
   @Patch("admin/site-settings")
   @UseGuards(AdminGuard)
-  @RequirePermission("content.write")
+  @RequirePermission("content.write", "checkout_policy.write", "checkout.write")
   updateSiteSettings(@Body() dto: UpdateSiteSettingsDto) {
     return this.ecommerce.updateSiteSettings(dto);
   }
@@ -318,63 +330,63 @@ export class EcommerceController {
 
   @Post("admin/checkout-methods")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("payment_methods.write", "delivery_methods.write", "checkout.write")
   createCheckoutMethod(@Body() dto: CreateCheckoutMethodDto) {
     return this.ecommerce.createCheckoutMethod(dto);
   }
 
   @Patch("admin/checkout-methods/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("payment_methods.write", "delivery_methods.write", "checkout.write")
   updateCheckoutMethod(@Param("id") id: string, @Body() dto: UpdateCheckoutMethodDto) {
     return this.ecommerce.updateCheckoutMethod(id, dto);
   }
 
   @Delete("admin/checkout-methods/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("payment_methods.write", "delivery_methods.write", "checkout.write")
   deleteCheckoutMethod(@Param("id") id: string) {
     return this.ecommerce.deleteCheckoutMethod(id);
   }
 
   @Post("admin/delivery-zones")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("delivery_zones.write", "checkout.write")
   createDeliveryZone(@Body() dto: CreateDeliveryZoneDto) {
     return this.ecommerce.createDeliveryZone(dto);
   }
 
   @Patch("admin/delivery-zones/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("delivery_zones.write", "checkout.write")
   updateDeliveryZone(@Param("id") id: string, @Body() dto: UpdateDeliveryZoneDto) {
     return this.ecommerce.updateDeliveryZone(id, dto);
   }
 
   @Delete("admin/delivery-zones/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("delivery_zones.write", "checkout.write")
   deleteDeliveryZone(@Param("id") id: string) {
     return this.ecommerce.deleteDeliveryZone(id);
   }
 
   @Post("admin/delivery-rates")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("delivery_zones.write", "checkout.write")
   createDeliveryRate(@Body() dto: CreateDeliveryRateDto) {
     return this.ecommerce.createDeliveryRate(dto);
   }
 
   @Patch("admin/delivery-rates/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("delivery_zones.write", "checkout.write")
   updateDeliveryRate(@Param("id") id: string, @Body() dto: UpdateDeliveryRateDto) {
     return this.ecommerce.updateDeliveryRate(id, dto);
   }
 
   @Delete("admin/delivery-rates/:id")
   @UseGuards(AdminGuard)
-  @RequirePermission("checkout.write")
+  @RequirePermission("delivery_zones.write", "checkout.write")
   deleteDeliveryRate(@Param("id") id: string) {
     return this.ecommerce.deleteDeliveryRate(id);
   }

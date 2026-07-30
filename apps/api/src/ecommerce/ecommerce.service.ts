@@ -1204,6 +1204,27 @@ export class EcommerceService {
     const billingInfo = billingSameAsShipping ? shippingInfo : dto.billingInfo;
     const shippingAddress = shippingInfo ? formatAddressInfo(shippingInfo) : dto.shippingAddress;
     const total = quote.total;
+    const minimumPayNowAmount = roundMoney(quote.amountDueNow);
+    const usesOnlinePayment = !this.isCashPayment(paymentConfig?.code, paymentMethod);
+    const defaultPayNowAmount = usesOnlinePayment
+      ? minimumPayNowAmount || total
+      : minimumPayNowAmount;
+    const requestedPayNowAmount =
+      dto.payNowAmount === undefined || !usesOnlinePayment
+        ? defaultPayNowAmount
+        : roundMoney(Number(dto.payNowAmount));
+    if (!Number.isFinite(requestedPayNowAmount)) {
+      throw new BadRequestException("Pay now amount is invalid.");
+    }
+    if (requestedPayNowAmount + 0.01 < minimumPayNowAmount) {
+      throw new BadRequestException("Pay now amount cannot be lower than the required advance payment.");
+    }
+    if (requestedPayNowAmount - 0.01 > total) {
+      throw new BadRequestException("Pay now amount cannot be higher than the order total.");
+    }
+    const amountDueNow = roundMoney(requestedPayNowAmount);
+    const amountDueOnDelivery = roundMoney(Math.max(total - amountDueNow, 0));
+    const paymentRecordAmount = usesOnlinePayment ? amountDueNow : total;
     const paymentStatus = PaymentStatus.PENDING;
 
     try {
@@ -1264,8 +1285,8 @@ export class EcommerceService {
           discount,
           shippingFee,
           total,
-          amountDueNow: quote.amountDueNow,
-          amountDueOnDelivery: quote.amountDueOnDelivery,
+          amountDueNow,
+          amountDueOnDelivery,
           requiredPaymentPercent: quote.requiredPaymentPercent,
           items: {
             create: dto.items.map((item) => {
@@ -1305,7 +1326,7 @@ export class EcommerceService {
             create: {
               provider: this.paymentProviderFor(paymentConfig?.code, paymentMethod, paymentConfig?.metadata),
               method: paymentMethod,
-              amount: quote.amountDueNow || total,
+              amount: paymentRecordAmount,
               status: "PENDING"
             }
           },
@@ -1435,6 +1456,7 @@ export class EcommerceService {
       },
       include: {
         items: true,
+        payments: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         notifications: { orderBy: { createdAt: "desc" } }
@@ -1508,15 +1530,16 @@ export class EcommerceService {
         await transaction.couponRedemption.deleteMany({
           where: { orderId: current.id }
         });
-        const paidPayment = current.payments.find(
+        const paidPayments = current.payments.filter(
           (payment) => payment.status === PaymentStatus.PAID
         );
-        if (paidPayment) {
+        const paidAmount = roundMoney(paidPayments.reduce((sum, payment) => sum + payment.amount, 0));
+        if (paidAmount > 0) {
           await transaction.refund.create({
             data: {
               orderId: current.id,
-              paymentId: paidPayment.id,
-              amount: current.total,
+              paymentId: paidPayments[0]?.id,
+              amount: paidAmount,
               reason: "Order cancelled",
               status: "PENDING"
             }
@@ -1973,6 +1996,7 @@ export class EcommerceService {
       where: { OR: identifiers },
       include: {
         items: true,
+        payments: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         notifications: { orderBy: { createdAt: "desc" } }
@@ -2024,6 +2048,7 @@ export class EcommerceService {
       },
       include: {
         items: true,
+        payments: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         notifications: { orderBy: { createdAt: "desc" } }

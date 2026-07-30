@@ -149,42 +149,52 @@ export class ExperienceService {
   }) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(48, Math.max(8, Number(query.limit) || 16));
+    const search = query.search?.trim();
+    const andFilters: Prisma.ProductWhereInput[] = [];
+    if (search) {
+      andFilters.push({
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { description: { contains: search, mode: "insensitive" } },
+          {
+            brand: {
+              is: {
+                name: { contains: search, mode: "insensitive" }
+              }
+            }
+          },
+          {
+            category: {
+              is: {
+                name: { contains: search, mode: "insensitive" }
+              }
+            }
+          },
+          { tags: { has: search.toLowerCase() } }
+        ]
+      });
+    }
+    if (query.inStock === "true") {
+      andFilters.push({
+        OR: [
+          { inventory: { gt: 0 } },
+          { variants: { some: { isActive: true, inventory: { gt: 0 } } } }
+        ]
+      });
+    }
+    if (query.minPrice || query.maxPrice) {
+      andFilters.push({
+        price: {
+          ...(query.minPrice ? { gte: Number(query.minPrice) } : {}),
+          ...(query.maxPrice ? { lte: Number(query.maxPrice) } : {})
+        }
+      });
+    }
     const where: Prisma.ProductWhereInput = {
       status: "ACTIVE",
-      ...(query.search?.trim()
-        ? {
-            OR: [
-              { name: { contains: query.search.trim(), mode: "insensitive" } },
-              { description: { contains: query.search.trim(), mode: "insensitive" } },
-              {
-                brand: {
-                  is: {
-                    name: { contains: query.search.trim(), mode: "insensitive" }
-                  }
-                }
-              },
-              {
-                category: {
-                  is: {
-                    name: { contains: query.search.trim(), mode: "insensitive" }
-                  }
-                }
-              },
-              { tags: { has: query.search.trim().toLowerCase() } }
-            ]
-          }
-        : {}),
+      ...(andFilters.length ? { AND: andFilters } : {}),
       ...(query.category ? { category: { is: { slug: query.category } } } : {}),
-      ...(query.brand ? { brandId: query.brand } : {}),
-      ...(query.inStock === "true" ? { inventory: { gt: 0 } } : {}),
-      ...(query.minPrice || query.maxPrice
-        ? {
-            price: {
-              ...(query.minPrice ? { gte: Number(query.minPrice) } : {}),
-              ...(query.maxPrice ? { lte: Number(query.maxPrice) } : {})
-            }
-          }
-        : {})
+      ...(query.brand ? { brandId: query.brand } : {})
     };
     const orderBy: Prisma.ProductOrderByWithRelationInput =
       query.sort === "price-asc"
@@ -1585,7 +1595,10 @@ export class ExperienceService {
   }
 
   async requeryPayment(id: string) {
-    const payment = await this.prisma.payment.findUnique({ where: { id } });
+    const payment = await this.prisma.payment.findUnique({
+      where: { id },
+      include: { order: true }
+    });
     if (!payment) throw new NotFoundException("Payment not found.");
     if (payment.provider !== "bkash" || !payment.gatewayReference) {
       throw new BadRequestException("Only bKash payments with a gateway reference can be re-checked.");
@@ -1598,19 +1611,48 @@ export class ExperienceService {
         : transactionStatus === "Initiated"
           ? PaymentStatus.PENDING
           : PaymentStatus.FAILED;
-    const updated = await this.prisma.payment.update({
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.payment.update({
+        where: { id },
+        data: {
+          status,
+          transactionId: (result.trxID as string | undefined) ?? payment.transactionId,
+          providerPayload: result as unknown as Prisma.InputJsonValue
+        }
+      });
+      const paid = await transaction.payment.aggregate({
+        where: { orderId: payment.orderId, status: PaymentStatus.PAID },
+        _sum: { amount: true }
+      });
+      const paidAmount = Number(paid._sum.amount ?? 0);
+      await transaction.order.update({
+        where: { id: payment.orderId },
+        data: {
+          paymentStatus:
+            paidAmount + 0.01 >= payment.order.total
+              ? PaymentStatus.PAID
+              : paidAmount > 0
+                ? PaymentStatus.PARTIALLY_PAID
+                : status === PaymentStatus.FAILED
+                  ? PaymentStatus.FAILED
+                  : PaymentStatus.PENDING
+        }
+      });
+    });
+    return this.prisma.payment.findUnique({
       where: { id },
-      data: {
-        status,
-        transactionId: (result.trxID as string | undefined) ?? payment.transactionId,
-        providerPayload: result as unknown as Prisma.InputJsonValue
+      include: {
+        order: {
+          select: {
+            orderNumber: true,
+            customerName: true,
+            email: true,
+            userId: true,
+            total: true
+          }
+        }
       }
     });
-    await this.prisma.order.update({
-      where: { id: payment.orderId },
-      data: { paymentStatus: status }
-    });
-    return updated;
   }
 
   async infoPages() {

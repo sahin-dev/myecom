@@ -31,6 +31,7 @@ import {
   isBaseProductEnabled,
   productAdvancePaymentLabel,
   productAdvancePaymentPercent,
+  resolveMediaUrl,
   submitProductReview,
   subscribeStockAlert,
   trackAnalyticsEvent
@@ -131,7 +132,7 @@ export function ProductDetails({
   const initialVariant = preferredVariant(initialProduct, initialVariantId);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(initialVariant);
   const [activeImage, setActiveImage] = useState<string | null>(
-    initialProduct.images?.[0]?.url ?? initialProduct.imageUrl ?? null
+    resolveMediaUrl(initialProduct.images?.[0]?.url ?? initialProduct.imageUrl) || null
   );
   const [quantity, setQuantity] = useState(
     availableQuantity(initialProduct, initialVariant, initialQuantity)
@@ -153,7 +154,7 @@ export function ProductDetails({
   useEffect(() => {
     const variant = preferredVariant(initialProduct, initialVariantId);
     setSelectedVariant(variant);
-    setActiveImage(initialProduct.images?.[0]?.url ?? initialProduct.imageUrl ?? null);
+    setActiveImage(resolveMediaUrl(initialProduct.images?.[0]?.url ?? initialProduct.imageUrl) || null);
     setQuantity(availableQuantity(initialProduct, variant, initialQuantity));
     setNotice("");
     setNoticeTone("info");
@@ -269,14 +270,20 @@ export function ProductDetails({
     () =>
       [
         ...(product.images ?? []).map((image) => ({
-          url: image.url,
+          url: resolveMediaUrl(image.url),
           alt: image.alt ?? product.name
         })),
         ...(product.imageUrl &&
         !(product.images ?? []).some((image) => image.url === product.imageUrl)
-          ? [{ url: product.imageUrl, alt: product.name }]
+          ? [{ url: resolveMediaUrl(product.imageUrl), alt: product.name }]
           : [])
-      ].slice(0, 5),
+      ]
+        .filter((image) => image.url)
+        .filter(
+          (image, index, images) =>
+            images.findIndex((candidate) => candidate.url === image.url) === index
+        )
+        .slice(0, 5),
     [product]
   );
   const related = useMemo(
@@ -675,12 +682,15 @@ export function ProductDetails({
           <div className="detail-combo-products">
             <strong><PackageCheck size={17} /> Included in this combo</strong>
             <div>
-              {product.comboProducts.map((item) => (
-                <Link href={`/products/${item.slug}`} key={item.id}>
-                  <span>{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <PackageCheck size={18} />}</span>
-                  <div><strong>{item.name}</strong><small>{money(item.price)} individually</small></div>
-                </Link>
-              ))}
+              {product.comboProducts.map((item) => {
+                const image = resolveMediaUrl(item.imageUrl);
+                return (
+                  <Link href={`/products/${item.slug}`} key={item.id}>
+                    <span>{image ? <img src={image} alt="" /> : <PackageCheck size={18} />}</span>
+                    <div><strong>{item.name}</strong><small>{money(item.price)} individually</small></div>
+                  </Link>
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -909,8 +919,34 @@ export function ProductDetails({
       </section>
 
       <div className="mobile-purchase-bar">
-        <div>
-          <small>{selectedVariant?.name ?? product.name}</small>
+        <div className="mobile-purchase-summary">
+          {product.variants?.length ? (
+            <label className="mobile-option-select">
+              <span>Option</span>
+              <select
+                value={selectedVariant?.id ?? "base"}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  chooseVariant(nextValue === "base" ? null : product.variants?.find((variant) => variant.id === nextValue) ?? null);
+                }}
+              >
+                {baseEnabled ? (
+                  <option value="base" disabled={product.inventory < 1}>
+                    {baseProductOptionLabel(product)}
+                  </option>
+                ) : null}
+                {product.variants
+                  .filter((variant) => variant.isActive)
+                  .map((variant) => (
+                    <option value={variant.id} key={variant.id} disabled={variant.inventory < 1}>
+                      {variant.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          ) : (
+            <small>{product.name}</small>
+          )}
           <strong>{money(unitPrice)}</strong>
         </div>
         <button

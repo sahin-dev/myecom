@@ -3,6 +3,7 @@ import { AuthProvider } from "../components/AuthContext";
 import { CartProvider } from "../components/CartContext";
 import { WishlistProvider } from "../components/WishlistContext";
 import { AnalyticsBootstrap } from "../components/AnalyticsBootstrap";
+import { HorizontalDragScroll } from "../components/HorizontalDragScroll";
 import { SiteSettingsProvider } from "../components/SiteSettingsContext";
 import {
   fallbackCatalog,
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AuthProvider>
           <SiteSettingsProvider>
             <AnalyticsBootstrap />
+            <HorizontalDragScroll />
             <WishlistProvider>
               <CartProvider>{children}</CartProvider>
             </WishlistProvider>

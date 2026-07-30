@@ -10,7 +10,8 @@ import {
   Heart,
   Search,
   ShoppingBag,
-  SlidersHorizontal
+  SlidersHorizontal,
+  X
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import {
@@ -52,6 +53,7 @@ const emptyQuery: ShopQuery = {
   maxPrice: "",
   page: 1
 };
+const shopPageSize = 48;
 
 export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQuery }) {
   const router = useRouter();
@@ -69,6 +71,19 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
+    setSearch(initialQuery.search);
+    setSearchDraft(initialQuery.search);
+    setCategory(initialQuery.category);
+    setBrand(initialQuery.brand);
+    setSort(initialQuery.sort);
+    setInStock(initialQuery.inStock);
+    setMinPrice(initialQuery.minPrice);
+    setMaxPrice(initialQuery.maxPrice);
+    setPage(initialQuery.page);
+  }, [initialQuery]);
+
+  useEffect(() => {
+    let active = true;
     setLoading(true);
     searchCatalog({
       search,
@@ -79,10 +94,22 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
       minPrice: minPrice ? Number(minPrice) : undefined,
       maxPrice: maxPrice ? Number(maxPrice) : undefined,
       page,
-      limit: 16
+      limit: shopPageSize
     })
-      .then(setResult)
-      .finally(() => setLoading(false));
+      .then((nextResult) => {
+        if (!active) return;
+        setResult(nextResult);
+        if (page > nextResult.pagination.pages) navigate({ page: nextResult.pagination.pages });
+      })
+      .catch(() => {
+        if (active) setResult(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [brand, category, inStock, maxPrice, minPrice, page, search, sort]);
 
   function navigate(overrides: Partial<ShopQuery>) {
@@ -97,6 +124,15 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
       page,
       ...overrides
     };
+    setSearch(next.search);
+    setSearchDraft(next.search);
+    setCategory(next.category);
+    setBrand(next.brand);
+    setSort(next.sort);
+    setInStock(next.inStock);
+    setMinPrice(next.minPrice);
+    setMaxPrice(next.maxPrice);
+    setPage(Math.max(1, next.page));
     const params = new URLSearchParams();
     if (next.search) params.set("q", next.search);
     if (next.category) params.set("category", next.category);
@@ -108,6 +144,10 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
     if (next.page > 1) params.set("page", String(next.page));
     const query = params.toString();
     router.push(query ? `/shop?${query}` : "/shop");
+  }
+
+  function clearFilters() {
+    navigate({ ...emptyQuery });
   }
 
   function submitSearch(event: FormEvent) {
@@ -126,6 +166,10 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
   }
 
   const categories = result?.facets.categories ?? fallbackCatalog.categories;
+  const pagination = result?.pagination;
+  const totalProducts = pagination?.total ?? 0;
+  const showingStart = totalProducts ? ((pagination?.page ?? page) - 1) * (pagination?.limit ?? shopPageSize) + 1 : 0;
+  const showingEnd = pagination ? Math.min(totalProducts, pagination.page * pagination.limit) : 0;
 
   return (
     <main>
@@ -144,10 +188,20 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
       </section>
 
       <section className="shop-workspace">
+        {filtersOpen ? (
+          <button
+            className="shop-filter-backdrop"
+            type="button"
+            onClick={() => setFiltersOpen(false)}
+            aria-label="Close filters"
+          />
+        ) : null}
         <aside className={filtersOpen ? "open" : ""}>
           <div className="shop-filter-title">
             <strong><SlidersHorizontal size={17} /> Filters</strong>
-            <button type="button" onClick={() => setFiltersOpen(false)}>Close</button>
+            <button type="button" onClick={() => setFiltersOpen(false)} aria-label="Close filters">
+              <X size={15} />
+            </button>
           </div>
           <label>Category
             <select value={category} onChange={(event) => navigate({ category: event.target.value, page: 1 })}>
@@ -175,7 +229,7 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
           <button
             className="shop-clear"
             type="button"
-            onClick={() => router.push("/shop")}
+            onClick={clearFilters}
           >
             Clear filters
           </button>
@@ -185,7 +239,11 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
           <div className="shop-results-bar">
             <div>
               <button type="button" onClick={() => setFiltersOpen(true)}><Filter size={16} /> Filters</button>
-              <span>{result?.pagination.total ?? 0} products</span>
+              <span>
+                {totalProducts
+                  ? `Showing ${showingStart}-${showingEnd} of ${totalProducts} products`
+                  : "0 products"}
+              </span>
             </div>
             <select value={sort} onChange={(event) => navigate({ sort: event.target.value, page: 1 })} aria-label="Sort products">
               <option value="featured">Featured</option>

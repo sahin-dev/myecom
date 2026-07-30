@@ -442,13 +442,16 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
             </Link>
           </div>
           <div className="modern-brand-grid" aria-label="Available brands">
-            {activeBrands.map((brand) => (
-              <Link href={`/shop?brand=${brand.id}`} key={brand.id}>
-                {brand.logoUrl ? <img src={brand.logoUrl} alt={`${brand.name} logo`} /> : <BadgeCheck size={22} />}
-                <strong>{brand.name}</strong>
-                <ChevronRight size={16} />
-              </Link>
-            ))}
+            {activeBrands.map((brand) => {
+              const logo = resolveMediaUrl(brand.logoUrl);
+              return (
+                <Link href={`/shop?brand=${brand.id}`} key={brand.id}>
+                  {logo ? <img src={logo} alt={`${brand.name} logo`} /> : <BadgeCheck size={22} />}
+                  <strong>{brand.name}</strong>
+                  <ChevronRight size={16} />
+                </Link>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -461,38 +464,44 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
             text={testimonialSection.subtitle ?? undefined}
           />
           <HorizontalRail variant="reviews" label="customer reviews">
-            {visibleFeaturedReviews.map((review) => (
-              <article className="modern-review-card customer" key={review.id}>
-                <div className="modern-review-score" aria-label={`${review.rating} out of 5 stars`}>
-                  {Array.from({ length: 5 }, (_, index) => (
-                    <Star size={15} key={index} fill={index < review.rating ? "currentColor" : "none"} />
-                  ))}
-                </div>
-                <blockquote>{review.comment}</blockquote>
-                <footer>
-                  {review.user?.avatarUrl ? <img src={review.user.avatarUrl} alt="" /> : <BadgeCheck size={20} />}
-                  <span>
-                    <strong>{review.user?.name ?? "Customer"}</strong>
-                    <small>{review.isVerified ? "Verified purchase" : "Customer review"}</small>
-                  </span>
-                </footer>
-                {review.product ? <Link href={`/products/${review.product.slug}`}>{review.product.name}</Link> : null}
-              </article>
-            ))}
-            {visibleCustomerStories.map((story) => (
-              <article key={story.id}>
-                <div className="modern-review-score" aria-label={`${story.rating} out of 5 stars`}>
-                  {Array.from({ length: 5 }, (_, index) => (
-                    <Star size={15} key={index} fill={index < story.rating ? "currentColor" : "none"} />
-                  ))}
-                </div>
-                <blockquote>{story.quote}</blockquote>
-                <footer>
-                  {story.avatarUrl ? <img src={story.avatarUrl} alt="" /> : <BadgeCheck size={20} />}
-                  <span><strong>{story.name}</strong><small>{story.role ?? "Customer"}</small></span>
-                </footer>
-              </article>
-            ))}
+            {visibleFeaturedReviews.map((review) => {
+              const avatar = resolveMediaUrl(review.user?.avatarUrl);
+              return (
+                <article className="modern-review-card customer" key={review.id}>
+                  <div className="modern-review-score" aria-label={`${review.rating} out of 5 stars`}>
+                    {Array.from({ length: 5 }, (_, index) => (
+                      <Star size={15} key={index} fill={index < review.rating ? "currentColor" : "none"} />
+                    ))}
+                  </div>
+                  <blockquote>{review.comment}</blockquote>
+                  <footer>
+                    {avatar ? <img src={avatar} alt="" /> : <BadgeCheck size={20} />}
+                    <span>
+                      <strong>{review.user?.name ?? "Customer"}</strong>
+                      <small>{review.isVerified ? "Verified purchase" : "Customer review"}</small>
+                    </span>
+                  </footer>
+                  {review.product ? <Link href={`/products/${review.product.slug}`}>{review.product.name}</Link> : null}
+                </article>
+              );
+            })}
+            {visibleCustomerStories.map((story) => {
+              const avatar = resolveMediaUrl(story.avatarUrl);
+              return (
+                <article key={story.id}>
+                  <div className="modern-review-score" aria-label={`${story.rating} out of 5 stars`}>
+                    {Array.from({ length: 5 }, (_, index) => (
+                      <Star size={15} key={index} fill={index < story.rating ? "currentColor" : "none"} />
+                    ))}
+                  </div>
+                  <blockquote>{story.quote}</blockquote>
+                  <footer>
+                    {avatar ? <img src={avatar} alt="" /> : <BadgeCheck size={20} />}
+                    <span><strong>{story.name}</strong><small>{story.role ?? "Customer"}</small></span>
+                  </footer>
+                </article>
+              );
+            })}
           </HorizontalRail>
         </section>
       ) : null}

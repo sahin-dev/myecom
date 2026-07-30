@@ -2,7 +2,7 @@
 
 import { Check, Truck } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Order, executeBkashPayment, fallbackCatalog } from "../lib/catalog";
+import { Order, executeBkashPayment, fallbackCatalog, markBkashPaymentFailed } from "../lib/catalog";
 import { PageFooter, PageHeader } from "./PageChrome";
 
 export function BkashReturn() {
@@ -15,13 +15,31 @@ export function BkashReturn() {
     const paymentID = search.get("paymentID");
     const gatewayStatus = search.get("status");
 
-    if (!paymentID || gatewayStatus === "cancel" || gatewayStatus === "failure") {
+    if (!paymentID) {
       setStatus("failed");
-      setMessage(
-        gatewayStatus === "cancel"
-          ? "You cancelled the bKash payment before it completed."
-          : "The bKash payment was not completed."
-      );
+      setMessage("The bKash payment was not completed.");
+      return;
+    }
+
+    if (gatewayStatus === "cancel" || gatewayStatus === "failure") {
+      markBkashPaymentFailed(paymentID)
+        .then((failedOrder) => {
+          setOrder(failedOrder);
+          setStatus("failed");
+          setMessage(
+            gatewayStatus === "cancel"
+              ? "You cancelled the bKash payment before it completed."
+              : "The bKash payment was not completed."
+          );
+        })
+        .catch(() => {
+          setStatus("failed");
+          setMessage(
+            gatewayStatus === "cancel"
+              ? "You cancelled the bKash payment before it completed."
+              : "The bKash payment was not completed."
+          );
+        });
       return;
     }
 
@@ -62,6 +80,11 @@ export function BkashReturn() {
         {status === "failed" ? (
           <div className="checkout-empty">
             <p>{message}</p>
+            {order ? (
+              <p>
+                Order <strong>{order.orderNumber}</strong> is saved with payment failed.
+              </p>
+            ) : null}
             <a className="primary-action" href="/checkout">
               Return to checkout
             </a>

@@ -419,6 +419,12 @@ export class CheckoutDto {
   paymentMethod?: string;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Transform(({ value }) => value === undefined || value === "" ? undefined : Number(value))
+  payNowAmount?: number;
+
+  @IsOptional()
   @IsString()
   deliveryMethodCode?: string;
 
