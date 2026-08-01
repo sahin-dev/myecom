@@ -32,6 +32,7 @@ import {
   isBaseProductEnabled,
   updateAdminOrder
 } from "../../lib/catalog";
+import { orderPaymentBreakdown } from "../../lib/orderPayments";
 import { useAuth } from "../AuthContext";
 import { useSiteSettings } from "../SiteSettingsContext";
 import {
@@ -322,12 +323,12 @@ export function AdminOrders() {
         "Discount",
         "Delivery fee",
         "Total",
-        "Advance payment",
-        "Due on delivery"
+        "Scheduled advance",
+        "Captured payments",
+        "Outstanding balance"
       ],
       ...orders.map((order) => {
-        const amountDueNow = order.amountDueNow ?? 0;
-        const amountDueOnDelivery = order.amountDueOnDelivery ?? Math.max(order.total - amountDueNow, 0);
+        const paymentBreakdown = orderPaymentBreakdown(order);
         return [
           order.orderNumber,
           new Date(order.createdAt).toISOString(),
@@ -350,8 +351,9 @@ export function AdminOrders() {
           order.discount ?? 0,
           order.shippingFee,
           order.total,
-          amountDueNow,
-          amountDueOnDelivery
+          paymentBreakdown.scheduledNow,
+          paymentBreakdown.paidAmount,
+          paymentBreakdown.outstandingAmount
         ];
       })
     ];
@@ -379,9 +381,7 @@ export function AdminOrders() {
     const options = order ? orderTransitions[order.status] ?? [] : [];
     return common === null ? options : common.filter((status) => options.includes(status));
   }, null) ?? [];
-  const selectedAmountDueNow = selected?.amountDueNow ?? 0;
-  const selectedAmountDueOnDelivery =
-    selected ? selected.amountDueOnDelivery ?? Math.max(selected.total - selectedAmountDueNow, 0) : 0;
+  const selectedPaymentBreakdown = selected ? orderPaymentBreakdown(selected) : null;
 
   if (loading && !result) return <AdminLoading label="Loading the order queue..." />;
   if (error && !result) return <AdminError message={error} retry={() => void load()} />;
@@ -502,36 +502,45 @@ export function AdminOrders() {
                 </tr>
               </thead>
               <tbody>
-                {result?.orders.map((order) => (
-                  <tr
-                    key={order.id}
-                    className={selected?.id === order.id ? "selected" : ""}
-                    onClick={() => setSelected(order)}
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setSelected(order);
-                      }
-                    }}
-                  >
-                    <td onClick={(event) => event.stopPropagation()}>
-                      <input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => toggleSelected(order.id)} aria-label={`Select ${order.orderNumber}`} />
-                    </td>
-                    <td>
-                      <strong>{order.orderNumber}</strong>
-                      <small>{new Date(order.createdAt).toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" })}</small>
-                    </td>
-                    <td><strong>{order.customerName}</strong><small>{order.items.length} line items</small></td>
-                    <td><StatusBadge value={order.status} /></td>
-                    <td><StatusBadge value={order.paymentStatus} kind="payment" /></td>
-                    <td>
-                      <strong>{formatMoney(order.total)}</strong>
-                      {order.amountDueNow ? <small>Advance {formatMoney(order.amountDueNow)}</small> : null}
-                    </td>
-                    <td><button type="button" title={`Open ${order.orderNumber}`} onClick={(event) => { event.stopPropagation(); setSelected(order); }}><ChevronRight size={17} /></button></td>
-                  </tr>
-                ))}
+                {result?.orders.map((order) => {
+                  const paymentBreakdown = orderPaymentBreakdown(order);
+                  return (
+                    <tr
+                      key={order.id}
+                      className={selected?.id === order.id ? "selected" : ""}
+                      onClick={() => setSelected(order)}
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelected(order);
+                        }
+                      }}
+                    >
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => toggleSelected(order.id)} aria-label={`Select ${order.orderNumber}`} />
+                      </td>
+                      <td>
+                        <strong>{order.orderNumber}</strong>
+                        <small>{new Date(order.createdAt).toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" })}</small>
+                      </td>
+                      <td><strong>{order.customerName}</strong><small>{order.items.length} line items</small></td>
+                      <td><StatusBadge value={order.status} /></td>
+                      <td><StatusBadge value={order.paymentStatus} kind="payment" /></td>
+                      <td>
+                        <strong>{formatMoney(order.total)}</strong>
+                        {paymentBreakdown.shouldShowPaymentPlan ? (
+                          <small>
+                            {paymentBreakdown.hasFailedPayment
+                              ? `Outstanding ${formatMoney(paymentBreakdown.outstandingAmount)}`
+                              : `Paid ${formatMoney(paymentBreakdown.paidAmount)}`}
+                          </small>
+                        ) : null}
+                      </td>
+                      <td><button type="button" title={`Open ${order.orderNumber}`} onClick={(event) => { event.stopPropagation(); setSelected(order); }}><ChevronRight size={17} /></button></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {!result?.orders.length ? (
@@ -665,10 +674,16 @@ export function AdminOrders() {
                 ) : null}
                 <div><dt>Delivery{selected.deliveryMethodName ? ` · ${selected.deliveryMethodName}` : ""}</dt><dd>{formatMoney(selected.shippingFee)}</dd></div>
                 <div><dt>Total</dt><dd>{formatMoney(selected.total)}</dd></div>
-                {selectedAmountDueNow > 0 ? (
+                {selectedPaymentBreakdown?.shouldShowPaymentPlan ? (
                   <>
-                    <div><dt>Advance payment</dt><dd>{formatMoney(selectedAmountDueNow)}</dd></div>
-                    <div><dt>Due on delivery</dt><dd>{formatMoney(selectedAmountDueOnDelivery)}</dd></div>
+                    {selectedPaymentBreakdown.hasFailedPayment ? (
+                      <div><dt>Failed payment attempt</dt><dd>{formatMoney(selectedPaymentBreakdown.failedAmount)}</dd></div>
+                    ) : selectedPaymentBreakdown.paidAmount > 0 ? (
+                      <div><dt>Paid online</dt><dd>{formatMoney(selectedPaymentBreakdown.paidAmount)}</dd></div>
+                    ) : (
+                      <div><dt>Advance required</dt><dd>{formatMoney(selectedPaymentBreakdown.scheduledNow)}</dd></div>
+                    )}
+                    <div><dt>Outstanding balance</dt><dd>{formatMoney(selectedPaymentBreakdown.outstandingAmount)}</dd></div>
                   </>
                 ) : null}
               </dl>

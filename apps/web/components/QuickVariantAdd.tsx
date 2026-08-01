@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, ShoppingBag, X } from "lucide-react";
+import { Check, ChevronDown, Minus, Plus, ShoppingBag, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -12,6 +12,7 @@ import {
   productAdvancePaymentLabel
 } from "../lib/catalog";
 import { useCart } from "./CartContext";
+import { ProductArt } from "./ProductArt";
 import { useSiteSettings } from "./SiteSettingsContext";
 
 const baseSelection = "base";
@@ -28,6 +29,7 @@ export function QuickVariantAdd({
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<VariantSelection | null>(null);
+  const [quantity, setQuantity] = useState(1);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const dialogTitleId = useId();
@@ -40,10 +42,29 @@ export function QuickVariantAdd({
   const selectedVariant = selected === baseSelection ? null : selected;
   const selectedLabel =
     selected === baseSelection ? baseProductOptionLabel(product) : selected?.name;
+  const selectedPrice = selectedVariant?.price ?? product.price;
+  const selectedCompareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
+  const selectedInventory =
+    selected === null
+      ? baseAvailable
+        ? product.inventory
+        : variants.find((variant) => variant.inventory > 0)?.inventory ?? 0
+      : selectedVariant?.inventory ?? product.inventory;
+  const subtotal = selectedPrice * quantity;
+  const savings =
+    selectedCompareAt && selectedCompareAt > selectedPrice
+      ? (selectedCompareAt - selectedPrice) * quantity
+      : 0;
   const advanceLabel = productAdvancePaymentLabel(product, settings.checkoutPolicy);
 
   useEffect(() => {
     if (!open) return;
+    if (selected === null) {
+      const firstAvailable = baseAvailable
+        ? baseSelection
+        : variants.find((variant) => variant.inventory > 0) ?? null;
+      if (firstAvailable) selectOption(firstAvailable);
+    }
 
     const previousOverflow = document.body.style.overflow;
     const previousPaddingRight = document.body.style.paddingRight;
@@ -91,16 +112,21 @@ export function QuickVariantAdd({
       document.removeEventListener("keydown", handleKeyDown);
       triggerRef.current?.focus();
     };
-  }, [open]);
+  }, [baseAvailable, open, selected, variants]);
 
   const selectOption = (selection: VariantSelection) => {
     setSelected(selection);
+    setQuantity(1);
     onSelect?.(selection === baseSelection ? null : selection);
+  };
+
+  const changeQuantity = (delta: number) => {
+    setQuantity((current) => Math.min(Math.max(current + delta, 1), Math.max(selectedInventory, 1)));
   };
 
   const addSelected = () => {
     if (selected === null) return;
-    addItem(product, 1, selected === baseSelection ? null : selected);
+    addItem(product, quantity, selected === baseSelection ? null : selected);
     setOpen(false);
   };
 
@@ -132,72 +158,102 @@ export function QuickVariantAdd({
         aria-modal="true"
         aria-labelledby={dialogTitleId}
       >
-        <header className="quick-option-head">
-          <div>
-            <small>{product.name}</small>
-            <h2 id={dialogTitleId}>Choose an option</h2>
-            {advanceLabel ? <p className="quick-option-advance">{advanceLabel}</p> : null}
-          </div>
-          <button type="button" onClick={() => setOpen(false)} aria-label="Close option chooser">
-            <X size={18} />
-          </button>
-        </header>
-        <div className="quick-option-list" role="radiogroup" aria-label="Available product options">
-          {baseEnabled ? (
-            <button
-              type="button"
-              className={`quick-option-choice ${selected === baseSelection ? "active" : ""}`}
-              role="radio"
-              aria-checked={selected === baseSelection}
-              disabled={product.inventory < 1}
-              onClick={() => selectOption(baseSelection)}
-            >
-              <span className="quick-option-indicator">
-                {selected === baseSelection ? <Check size={14} /> : null}
-              </span>
-              <span className="quick-option-copy">
-                <strong>{baseProductOptionLabel(product)}</strong>
-                <small>{product.inventory > 0 ? `${product.inventory} available` : "Out of stock"}</small>
-              </span>
-              <b>{formatMoney(product.price)}</b>
+        <div className="quick-option-art">
+          <ProductArt product={product} />
+        </div>
+        <div className="quick-option-panel">
+          <header className="quick-option-head">
+            <div>
+              <small>{product.brand?.name ?? product.category?.name ?? "Product option"}</small>
+              <h2 id={dialogTitleId}>{product.name}</h2>
+              {advanceLabel ? <p className="quick-option-advance">{advanceLabel}</p> : null}
+            </div>
+            <button type="button" onClick={() => setOpen(false)} aria-label="Close option chooser">
+              <X size={18} />
             </button>
-          ) : null}
-          {variants.map((variant) => {
-            const isSelected = selected !== baseSelection && selected?.id === variant.id;
-
-            return (
+          </header>
+          <div className="quick-option-price">
+            <strong>{formatMoney(selectedPrice)}</strong>
+            {selectedCompareAt && selectedCompareAt > selectedPrice ? (
+              <>
+                <small>{formatMoney(selectedCompareAt)}</small>
+                <em>Save {Math.round(((selectedCompareAt - selectedPrice) / selectedCompareAt) * 100)}%</em>
+              </>
+            ) : null}
+          </div>
+          <div className="quick-option-meta">
+            <span>{selectedLabel ?? "Choose an option"}</span>
+            <span>{selectedInventory > 0 ? `${selectedInventory} available` : "Out of stock"}</span>
+          </div>
+          <section className="quick-option-section">
+            <span>Select option</span>
+            <div className="quick-option-list" role="radiogroup" aria-label="Available product options">
+              {baseEnabled ? (
               <button
                 type="button"
-                key={variant.id}
-                className={`quick-option-choice ${isSelected ? "active" : ""}`}
+                className={`quick-option-choice ${selected === baseSelection ? "active" : ""}`}
                 role="radio"
-                aria-checked={isSelected}
-                disabled={variant.inventory < 1}
-                onClick={() => selectOption(variant)}
+                aria-checked={selected === baseSelection}
+                disabled={product.inventory < 1}
+                onClick={() => selectOption(baseSelection)}
               >
-                <span className="quick-option-indicator">
-                  {isSelected ? <Check size={14} /> : null}
-                </span>
-                <span className="quick-option-copy">
-                  <strong>{variant.name}</strong>
-                  <small>{variant.inventory > 0 ? `${variant.inventory} available` : "Out of stock"}</small>
-                </span>
-                <b>{formatMoney(variant.price)}</b>
+                {selected === baseSelection ? <Check size={13} /> : null}
+                <strong>{baseProductOptionLabel(product)}</strong>
+                <small>{formatMoney(product.price)}</small>
               </button>
-            );
-          })}
+              ) : null}
+              {variants.map((variant) => {
+                const isSelected = selected !== baseSelection && selected?.id === variant.id;
+
+                return (
+                  <button
+                    type="button"
+                    key={variant.id}
+                    className={`quick-option-choice ${isSelected ? "active" : ""}`}
+                    role="radio"
+                    aria-checked={isSelected}
+                    disabled={variant.inventory < 1}
+                    onClick={() => selectOption(variant)}
+                  >
+                    {isSelected ? <Check size={13} /> : null}
+                    <strong>{variant.name}</strong>
+                    <small>{formatMoney(variant.price)}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <section className="quick-option-purchase">
+            <div>
+              <span>Subtotal</span>
+              <strong>{formatMoney(subtotal)}</strong>
+              {savings > 0 ? <small>Save {formatMoney(savings)}</small> : null}
+            </div>
+            <div>
+              <span>Quantity</span>
+              <div className="quick-option-stepper">
+                <button type="button" onClick={() => changeQuantity(-1)} disabled={quantity <= 1} aria-label="Decrease quantity">
+                  <Minus size={15} />
+                </button>
+                <strong>{quantity}</strong>
+                <button type="button" onClick={() => changeQuantity(1)} disabled={quantity >= selectedInventory} aria-label="Increase quantity">
+                  <Plus size={15} />
+                </button>
+              </div>
+            </div>
+          </section>
+          <footer className="quick-option-actions">
+            <button
+              className="add-button full"
+              type="button"
+              disabled={selected === null || selectedInventory < 1}
+              onClick={addSelected}
+            >
+              <ShoppingBag size={17} />
+              {selected === null ? "Select an option" : selectedInventory < 1 ? "Out of stock" : "Add to cart"}
+            </button>
+          </footer>
         </div>
-        <footer className="quick-option-actions">
-          <button
-            className="add-button full"
-            type="button"
-            disabled={selected === null}
-            onClick={addSelected}
-          >
-            <ShoppingBag size={16} />
-            {selected === null ? "Select an option" : "Add to bag"}
-          </button>
-        </footer>
       </div>
     </div>
   ) : null;
@@ -218,17 +274,6 @@ export function QuickVariantAdd({
           <span>{available ? selectedLabel ?? "Choose option" : "Out of stock"}</span>
           {available ? <ChevronDown size={15} /> : null}
         </button>
-        {selected !== null ? (
-          <button
-            className="add-button quick-variant-confirm"
-            type="button"
-            disabled={selectedVariant ? selectedVariant.inventory < 1 : product.inventory < 1}
-            onClick={() => addItem(product, 1, selectedVariant)}
-          >
-            <ShoppingBag size={16} />
-            Add
-          </button>
-        ) : null}
       </div>
       {optionSheet ? createPortal(optionSheet, document.body) : null}
     </>

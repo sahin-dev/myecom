@@ -148,7 +148,7 @@ export function ProductDetails({
   const [reviewNotice, setReviewNotice] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
   const { addItem } = useCart();
-  const { user } = useAuth();
+  const { user, requireAuth } = useAuth();
   const { isSaved, toggle } = useWishlist();
 
   useEffect(() => {
@@ -345,58 +345,52 @@ export function ProductDetails({
       setNoticeTone("success");
       return;
     }
-    if (!user) {
-      setNotice("Sign in to get notified when this is back in stock.");
-      setNoticeTone("info");
-      return;
-    }
-    setStockAlertLoading(true);
-    setNotice("");
-    try {
-      await subscribeStockAlert(product.id, selectedVariant?.id);
-      setStockAlertRequested(true);
-      setNotice("We'll email you when this is back in stock.");
-      setNoticeTone("success");
-    } catch (caught) {
-      setNotice(caught instanceof Error ? caught.message : "Could not set up the stock alert.");
-      setNoticeTone("error");
-    } finally {
-      setStockAlertLoading(false);
-    }
+    requireAuth(async () => {
+      setStockAlertLoading(true);
+      setNotice("");
+      try {
+        await subscribeStockAlert(product.id, selectedVariant?.id);
+        setStockAlertRequested(true);
+        setNotice("We'll email you when this is back in stock.");
+        setNoticeTone("success");
+      } catch (caught) {
+        setNotice(caught instanceof Error ? caught.message : "Could not set up the stock alert.");
+        setNoticeTone("error");
+      } finally {
+        setStockAlertLoading(false);
+      }
+    });
   }
 
   async function submitReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!user) {
-      setReviewNotice("Sign in to share a verified product review.");
-      return;
-    }
-
     const data = new FormData(event.currentTarget);
-    setSubmittingReview(true);
-    setReviewNotice("");
-    try {
-      const savedReview = await submitProductReview(product.id, {
-        rating: Number(data.get("rating")),
-        title: String(data.get("title") ?? ""),
-        comment: String(data.get("review"))
-      });
-      setMyReview(savedReview);
-      setReviews(await fetchProductReviews(product.id));
-      setReviewNotice(
-        myReview
-          ? "Your changes were saved and are awaiting moderation."
-          : "Thank you. Your review is awaiting moderation."
-      );
-      void trackAnalyticsEvent({
-        type: "REVIEW_SUBMITTED",
-        productId: product.id
-      });
-    } catch (caught) {
-      setReviewNotice(caught instanceof Error ? caught.message : "Your review could not be submitted.");
-    } finally {
-      setSubmittingReview(false);
-    }
+    requireAuth(async () => {
+      setSubmittingReview(true);
+      setReviewNotice("");
+      try {
+        const savedReview = await submitProductReview(product.id, {
+          rating: Number(data.get("rating")),
+          title: String(data.get("title") ?? ""),
+          comment: String(data.get("review"))
+        });
+        setMyReview(savedReview);
+        setReviews(await fetchProductReviews(product.id));
+        setReviewNotice(
+          myReview
+            ? "Your changes were saved and are awaiting moderation."
+            : "Thank you. Your review is awaiting moderation."
+        );
+        void trackAnalyticsEvent({
+          type: "REVIEW_SUBMITTED",
+          productId: product.id
+        });
+      } catch (caught) {
+        setReviewNotice(caught instanceof Error ? caught.message : "Your review could not be submitted.");
+      } finally {
+        setSubmittingReview(false);
+      }
+    });
   }
 
   async function removeMyReview() {

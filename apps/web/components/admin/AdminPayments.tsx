@@ -1,6 +1,7 @@
 "use client";
 
-import { CreditCard, RefreshCw, Search } from "lucide-react";
+import { Check, Copy, CreditCard, RefreshCw, Search } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../AuthContext";
 import {
@@ -30,6 +31,10 @@ const paymentStatuses = [
   "REFUNDED"
 ];
 
+function compactId(value: string) {
+  return value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
+}
+
 export function AdminPayments() {
   const { user } = useAuth();
   const can = useCallback(
@@ -43,6 +48,7 @@ export function AdminPayments() {
   const [provider, setProvider] = useState("ALL");
   const [page, setPage] = useState(1);
   const [recheckingPaymentId, setRecheckingPaymentId] = useState("");
+  const [copiedValue, setCopiedValue] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const { message, kind, notify } = useAdminToast();
@@ -73,6 +79,44 @@ export function AdminPayments() {
     } finally {
       setRecheckingPaymentId("");
     }
+  }
+
+  async function copyValue(value: string, label: string) {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedValue(value);
+      notify(`${label} copied.`);
+      window.setTimeout(() => setCopiedValue((current) => current === value ? "" : current), 1600);
+    } catch {
+      notify(`${label} could not be copied.`, "error");
+    }
+  }
+
+  function CopyableValue({
+    value,
+    label,
+    children,
+    compact = false
+  }: {
+    value?: string | null;
+    label: string;
+    children?: ReactNode;
+    compact?: boolean;
+  }) {
+    if (!value) return null;
+    const copied = copiedValue === value;
+    return (
+      <button
+        type="button"
+        className="admin-copy-value"
+        onClick={() => void copyValue(value, label)}
+        title={`Copy ${label}`}
+      >
+        <span>{children ?? (compact ? compactId(value) : value)}</span>
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    );
   }
 
   const providers = useMemo(
@@ -141,7 +185,7 @@ export function AdminPayments() {
       <section className="admin-data-panel">
         <AdminSectionHeader
           title="Transactions"
-          description="Search by order number, customer, transaction ID, gateway reference, method, or provider."
+          description="Search by order number, customer, transaction ID, gateway reference, method, or provider. Re-check asks the gateway for the latest status when a payment is still pending."
         />
         <form className="admin-filterbar" onSubmit={(event) => event.preventDefault()}>
           <label className="admin-search">
@@ -178,29 +222,58 @@ export function AdminPayments() {
                 <th />
               </tr>
             </thead>
-            <tbody>{pagedPayments.map((item) => (
-              <tr key={item.id}>
-                <td>
-                  <strong>{item.transactionId ?? "No transaction ID"}</strong>
-                  <small>{item.gatewayReference ? `Gateway: ${item.gatewayReference}` : item.id}</small>
-                </td>
-                <td><strong>{item.order.orderNumber}</strong><small>Order total {formatMoney(item.order.total)}</small></td>
-                <td>{item.order.customerName}<small>{item.order.email} / {item.order.userId ?? "Guest"}</small></td>
-                <td>{item.method}<small>{item.provider}</small></td>
-                <td>{formatMoney(item.amount)}<small>{item.currency}</small></td>
-                <td>{new Date(item.createdAt).toLocaleString("en-BD")}<small>{item.updatedAt ? `Updated ${new Date(item.updatedAt).toLocaleString("en-BD")}` : ""}</small></td>
-                <td><StatusBadge value={item.status} kind="payment" /></td>
-                <td>
-                  {can("payments.write") && item.provider === "bkash" && item.gatewayReference ? (
-                    <div className="admin-row-actions">
-                      <button type="button" onClick={() => void recheckPayment(item)} disabled={recheckingPaymentId === item.id}>
-                        <RefreshCw size={14} /> {recheckingPaymentId === item.id ? "Checking..." : "Re-check"}
-                      </button>
-                    </div>
-                  ) : <CreditCard size={16} aria-hidden="true" />}
-                </td>
-              </tr>
-            ))}</tbody>
+            <tbody>{pagedPayments.map((item) => {
+              const canRecheck =
+                can("payments.write") &&
+                item.status === "PENDING" &&
+                item.provider === "bkash" &&
+                Boolean(item.gatewayReference);
+              return (
+                <tr key={item.id}>
+                  <td>
+                    <strong>
+                      {item.transactionId ? (
+                        <CopyableValue value={item.transactionId} label="transaction ID" compact />
+                      ) : item.status === "PENDING" ? "Awaiting gateway transaction" : "No transaction ID"}
+                    </strong>
+                    <small>
+                      {item.gatewayReference ? (
+                        <>Gateway: <CopyableValue value={item.gatewayReference} label="gateway reference" compact /></>
+                      ) : (
+                        <>Payment ID: <CopyableValue value={item.id} label="payment ID" compact /></>
+                      )}
+                    </small>
+                  </td>
+                  <td>
+                    <strong><CopyableValue value={item.order.orderNumber} label="order number" /></strong>
+                    <small>Order total {formatMoney(item.order.total)}</small>
+                  </td>
+                  <td>
+                    {item.order.customerName}
+                    <small>
+                      {item.order.email}
+                      {" / "}
+                      {item.order.userId ? (
+                        <CopyableValue value={item.order.userId} label="customer ID" compact />
+                      ) : "Guest"}
+                    </small>
+                  </td>
+                  <td>{item.method}<small>{item.provider}</small></td>
+                  <td>{formatMoney(item.amount)}<small>{item.currency}</small></td>
+                  <td>{new Date(item.createdAt).toLocaleString("en-BD")}<small>{item.updatedAt ? `Updated ${new Date(item.updatedAt).toLocaleString("en-BD")}` : ""}</small></td>
+                  <td><StatusBadge value={item.status} kind="payment" /></td>
+                  <td>
+                    {canRecheck ? (
+                      <div className="admin-row-actions">
+                        <button type="button" onClick={() => void recheckPayment(item)} disabled={recheckingPaymentId === item.id}>
+                          <RefreshCw size={14} /> {recheckingPaymentId === item.id ? "Checking..." : "Re-check"}
+                        </button>
+                      </div>
+                    ) : <CreditCard size={16} aria-hidden="true" />}
+                  </td>
+                </tr>
+              );
+            })}</tbody>
           </table>
           {!filteredPayments.length ? <p className="muted-copy">No payment records match this filter.</p> : null}
         </div>

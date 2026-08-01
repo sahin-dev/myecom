@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 import {
@@ -16,6 +17,7 @@ import {
   registerUser,
   updateMe
 } from "../lib/catalog";
+import { AuthGateModal } from "./AuthGateModal";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -33,6 +35,7 @@ type AuthContextValue = {
     avatarUrl?: string;
   }) => Promise<AuthUser>;
   logout: () => void;
+  requireAuth: (onAuthenticated: () => void | Promise<void>) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -40,6 +43,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [gateOpen, setGateOpen] = useState(false);
+  const [gateMode, setGateMode] = useState<"login" | "register">("login");
+  const pendingAction = useRef<(() => void | Promise<void>) | null>(null);
 
   useEffect(() => {
     const token = window.localStorage.getItem(authStorageKey);
@@ -88,12 +94,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  function requireAuth(onAuthenticated: () => void | Promise<void>) {
+    if (user) {
+      void onAuthenticated();
+      return;
+    }
+    pendingAction.current = onAuthenticated;
+    setGateMode("login");
+    setGateOpen(true);
+  }
+
+  function closeGate() {
+    setGateOpen(false);
+    pendingAction.current = null;
+  }
+
+  async function handleGateSuccess() {
+    const action = pendingAction.current;
+    pendingAction.current = null;
+    setGateOpen(false);
+    if (action) await action();
+  }
+
   const value = useMemo(
-    () => ({ user, loading, login, register, updateProfile, logout }),
+    () => ({ user, loading, login, register, updateProfile, logout, requireAuth }),
     [loading, user]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      <AuthGateModal
+        open={gateOpen}
+        mode={gateMode}
+        onModeChange={setGateMode}
+        onClose={closeGate}
+        onSuccess={handleGateSuccess}
+      />
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

@@ -22,8 +22,12 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AdminCustomer,
   AdminCustomerIntelligence,
+  AdminGuestSession,
+  AdminGuestSessionDetail,
   fetchAdminCustomerIntelligence,
   fetchAdminCustomers,
+  fetchAdminGuestSessionDetail,
+  fetchAdminGuestSessions,
   formatMoney,
   updateAdminCustomer
 } from "../../lib/catalog";
@@ -99,6 +103,7 @@ function productInitial(name: string) {
 }
 
 export function AdminCustomers() {
+  const [view, setView] = useState<"customers" | "guests">("customers");
   const [customers, setCustomers] = useState<AdminCustomer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [detail, setDetail] = useState<AdminCustomerIntelligence | null>(null);
@@ -222,9 +227,6 @@ export function AdminCustomers() {
     }
   }
 
-  if (loading && !customers.length) return <AdminLoading label="Loading customer records..." />;
-  if (error && !customers.length) return <AdminError message={error} retry={() => void load()} />;
-
   return (
     <div className="admin-page admin-customer-workspace">
       <AdminPageTitle
@@ -233,12 +235,26 @@ export function AdminCustomers() {
         description="Understand account value, intent signals, cart contents, product views, and marketing opportunities."
         actions={
           <>
-            <button className="secondary-action" type="button" onClick={exportCustomers}><Download size={17} /> Export</button>
-            <button className="admin-icon-button" type="button" onClick={() => void load()} title="Refresh customers"><RefreshCw size={17} /></button>
+            <div className="customer-view-toggle" role="tablist" aria-label="Customer view">
+              <button type="button" className={view === "customers" ? "active" : ""} onClick={() => setView("customers")}>Customers</button>
+              <button type="button" className={view === "guests" ? "active" : ""} onClick={() => setView("guests")}>Guests</button>
+            </div>
+            {view === "customers" ? (
+              <>
+                <button className="secondary-action" type="button" onClick={exportCustomers}><Download size={17} /> Export</button>
+                <button className="admin-icon-button" type="button" onClick={() => void load()} title="Refresh customers"><RefreshCw size={17} /></button>
+              </>
+            ) : null}
           </>
         }
       />
 
+      {view === "guests" ? <GuestSessionsPanel /> : loading && !customers.length ? (
+        <AdminLoading label="Loading customer records..." />
+      ) : error && !customers.length ? (
+        <AdminError message={error} retry={() => void load()} />
+      ) : (
+        <>
       <section className="admin-summary-strip customers">
         <div><small>Registered</small><strong>{summary.registered}</strong></div>
         <div><small>Customers with orders</small><strong>{summary.buyers}</strong></div>
@@ -322,7 +338,238 @@ export function AdminCustomers() {
       </div>
 
       {error ? <p className="admin-message is-error">{error}</p> : null}
+        </>
+      )}
     </div>
+  );
+}
+
+function GuestSessionsPanel() {
+  const [sessions, setSessions] = useState<AdminGuestSession[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [detail, setDetail] = useState<AdminGuestSessionDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [searchDraft, setSearchDraft] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const pageSize = 12;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const next = await fetchAdminGuestSessions(search);
+      setSessions(next);
+      setSelectedKey((current) =>
+        current && next.some((session) => session.sessionKey === current)
+          ? current
+          : next[0]?.sessionKey ?? null
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Guest sessions are unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }, [search]);
+
+  const loadDetail = useCallback(async (sessionKey: string) => {
+    setDetailLoading(true);
+    setDetailError("");
+    try {
+      setDetail(await fetchAdminGuestSessionDetail(sessionKey));
+    } catch (caught) {
+      setDetailError(caught instanceof Error ? caught.message : "Guest session is unavailable.");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!selectedKey) {
+      setDetail(null);
+      return;
+    }
+    void loadDetail(selectedKey);
+  }, [loadDetail, selectedKey]);
+
+  const pages = Math.max(1, Math.ceil(sessions.length / pageSize));
+  const paged = sessions.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (page > pages) setPage(pages);
+  }, [pages, page]);
+
+  function applySearch(event: FormEvent) {
+    event.preventDefault();
+    setSearch(searchDraft.trim());
+  }
+
+  if (loading && !sessions.length) return <AdminLoading label="Loading guest sessions..." />;
+  if (error && !sessions.length) return <AdminError message={error} retry={() => void load()} />;
+
+  return (
+    <div className="customer-intelligence-layout">
+      <section className="customer-directory-panel">
+        <AdminSectionHeader
+          title="Guest sessions"
+          description="Shoppers browsing without an account, identified by a device session."
+        />
+
+        <form className="admin-filterbar customer-search" onSubmit={applySearch}>
+          <label className="admin-search"><Search size={17} /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search session or email" /></label>
+          <button className="primary-action" type="submit">Search</button>
+        </form>
+
+        <div className="customer-record-list">
+          {paged.map((session) => (
+            <button
+              type="button"
+              key={session.sessionKey}
+              className={selectedKey === session.sessionKey ? "active" : ""}
+              onClick={() => setSelectedKey(session.sessionKey)}
+            >
+              <span className="customer-avatar">{(session.email ?? session.sessionKey).slice(0, 1).toUpperCase()}</span>
+              <span>
+                <strong>{session.email ?? `Guest ${session.sessionKey.slice(0, 8)}`}</strong>
+                <small>Last active {formatDateTime(session.lastSeenAt)}</small>
+              </span>
+              <span className="customer-record-metrics">
+                <small>{session.cartItemCount} in cart / {session.wishlistCount} saved</small>
+                <strong>{formatMoney(session.cartValue)}</strong>
+              </span>
+              <ArrowRight size={16} />
+            </button>
+          ))}
+          {!sessions.length ? (
+            <div className="admin-empty"><UsersRound size={30} /><strong>No guest activity yet</strong><p>Guest carts and wishlists will show up here.</p></div>
+          ) : null}
+        </div>
+        <AdminPagination
+          page={page}
+          pages={pages}
+          total={sessions.length}
+          pageSize={pageSize}
+          onPageChange={setPage}
+        />
+      </section>
+
+      <GuestSessionDetailPanel
+        detail={detail}
+        loading={detailLoading}
+        error={detailError}
+        onRefresh={() => selectedKey ? void loadDetail(selectedKey) : undefined}
+      />
+    </div>
+  );
+}
+
+function GuestSessionDetailPanel({
+  detail,
+  loading,
+  error,
+  onRefresh
+}: {
+  detail: AdminGuestSessionDetail | null;
+  loading: boolean;
+  error: string;
+  onRefresh: () => void;
+}) {
+  if (loading && !detail) return <AdminLoading label="Loading guest session..." />;
+  if (error && !detail) return <AdminError message={error} retry={onRefresh} />;
+  if (!detail) {
+    return (
+      <section className="customer-intelligence-panel empty">
+        <UsersRound size={34} />
+        <strong>Select a guest session</strong>
+        <p>Open a session to see its cart, wishlist, and any orders placed under the same email.</p>
+      </section>
+    );
+  }
+
+  const { session, cart, wishlist, orders } = detail;
+
+  return (
+    <section className="customer-intelligence-panel">
+      <header className="customer-profile-head">
+        <div>
+          <span className="customer-avatar large">{(session.email ?? session.sessionKey).slice(0, 1).toUpperCase()}</span>
+          <div>
+            <p className="eyebrow">Guest session</p>
+            <h2>{session.email ?? `Guest ${session.sessionKey.slice(0, 8)}`}</h2>
+            <small>First seen {formatDate(session.firstSeenAt)} / Last active {formatDateTime(session.lastSeenAt)}</small>
+          </div>
+        </div>
+        <div>
+          <button className="admin-icon-button" type="button" onClick={onRefresh} title="Refresh session"><RefreshCw size={16} /></button>
+        </div>
+      </header>
+
+      <div className="customer-signal-grid">
+        <SignalCard icon={ShoppingBag} label="Current cart" value={formatMoney(session.cartValue)} helper={`${session.cartItemCount} item${session.cartItemCount === 1 ? "" : "s"}`} />
+        <SignalCard icon={Heart} label="Wishlist" value={String(session.wishlistCount)} />
+        <SignalCard icon={PackageCheck} label="Orders under this email" value={String(orders.length)} />
+      </div>
+
+      <div className="customer-intel-columns">
+        <CustomerProductList
+          title="Products in cart"
+          icon={ShoppingBag}
+          empty="No active cart."
+          items={cart.items.map((item) => ({
+            id: item.id,
+            product: item.product,
+            meta: `${item.quantity} x ${formatMoney(item.unitPrice)}${item.variant ? ` / ${item.variant.name}` : ""}`,
+            stat: formatMoney(item.quantity * item.unitPrice)
+          }))}
+        />
+        <CustomerProductList
+          title="Wishlist"
+          icon={Heart}
+          empty="No wishlist items."
+          items={wishlist.map((item) => ({
+            id: item.id,
+            product: item.product,
+            meta: item.product.category?.name ?? "Saved product",
+            stat: formatMoney(item.product.price)
+          }))}
+        />
+      </div>
+
+      <section className="customer-intel-block">
+        <h3><PackageCheck size={16} /> Orders under this email</h3>
+        <div className="customer-order-mini-list">
+          {orders.map((order) => (
+            <article key={order.id}>
+              <span>
+                <strong>{order.orderNumber}</strong>
+                <small>{formatDate(order.createdAt)}</small>
+              </span>
+              <span>
+                <StatusBadge value={order.status} />
+                <b>{formatMoney(order.total)}</b>
+              </span>
+            </article>
+          ))}
+          {!orders.length ? (
+            <p className="customer-intel-empty">
+              {session.email ? "No orders yet under this email." : "No email captured yet - orders can't be matched until this guest checks out."}
+            </p>
+          ) : null}
+        </div>
+      </section>
+    </section>
   );
 }
 

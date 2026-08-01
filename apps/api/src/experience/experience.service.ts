@@ -53,6 +53,8 @@ import {
 import { BkashService } from "../payments/bkash.service";
 import { AuthService } from "../auth/auth.service";
 
+export type CartOwner = { userId?: string; sessionKey?: string };
+
 const DEFAULT_INFO_PAGES: Record<string, { eyebrow: string; title: string; intro: string; points: { title: string; detail: string }[] }> = {
   about: {
     eyebrow: "Our story",
@@ -332,9 +334,24 @@ export class ExperienceService {
     return { deleted: true };
   }
 
-  async cart(userId: string) {
+  private ownerWhere(owner: CartOwner) {
+    if (owner.userId) return { userId: owner.userId };
+    if (owner.sessionKey) return { sessionKey: owner.sessionKey };
+    throw new BadRequestException("Sign in or a guest session is required.");
+  }
+
+  private async touchGuestSession(owner: CartOwner, email?: string) {
+    if (owner.userId || !owner.sessionKey) return;
+    await this.prisma.guestSession.upsert({
+      where: { sessionKey: owner.sessionKey },
+      update: email ? { email } : {},
+      create: { sessionKey: owner.sessionKey, email }
+    });
+  }
+
+  async cart(owner: CartOwner) {
     const cart = await this.prisma.cart.findFirst({
-      where: { userId },
+      where: this.ownerWhere(owner),
       include: {
         items: {
           include: {
@@ -344,10 +361,23 @@ export class ExperienceService {
         }
       }
     });
-    return cart ?? { id: null, userId, items: [] };
+    await this.touchGuestSession(owner);
+    return cart ?? { id: null, userId: owner.userId ?? null, items: [] };
   }
 
-  async saveCart(userId: string, email: string, dto: SaveCartDto) {
+  async saveCart(owner: CartOwner, email: string | undefined, dto: SaveCartDto) {
+    const mergedItems = new Map<string, { productId: string; variantId?: string; quantity: number }>();
+    for (const item of dto.items) {
+      const key = `${item.productId}:${item.variantId ?? ""}`;
+      const existing = mergedItems.get(key);
+      if (existing) {
+        existing.quantity += item.quantity;
+      } else {
+        mergedItems.set(key, { ...item });
+      }
+    }
+    dto = { ...dto, items: [...mergedItems.values()] };
+
     const productIds = dto.items.map((item) => item.productId);
     const [products, variants] = await Promise.all([
       this.prisma.product.findMany({
@@ -380,11 +410,17 @@ export class ExperienceService {
       }
     }
 
-    return this.prisma.$transaction(async (transaction) => {
-      let cart = await transaction.cart.findFirst({ where: { userId } });
+    await this.prisma.$transaction(async (transaction) => {
+      let cart = await transaction.cart.findFirst({ where: this.ownerWhere(owner) });
       cart = cart
         ? await transaction.cart.update({ where: { id: cart.id }, data: { email } })
-        : await transaction.cart.create({ data: { userId, email } });
+        : await transaction.cart.create({
+            data: {
+              userId: owner.userId,
+              sessionKey: owner.userId ? undefined : owner.sessionKey,
+              email
+            }
+          });
       await transaction.cartItem.deleteMany({ where: { cartId: cart.id } });
       if (dto.items.length) {
         await transaction.cartItem.createMany({
@@ -399,13 +435,14 @@ export class ExperienceService {
           }))
         });
       }
-      return this.cart(userId);
     });
+    await this.touchGuestSession(owner, email);
+    return this.cart(owner);
   }
 
-  async wishlist(userId: string) {
+  async wishlist(owner: CartOwner) {
     return this.prisma.wishlistItem.findMany({
-      where: { userId },
+      where: this.ownerWhere(owner),
       include: {
         product: {
           include: {
@@ -420,28 +457,37 @@ export class ExperienceService {
     });
   }
 
-  async addWishlist(userId: string, productId: string) {
+  async addWishlist(owner: CartOwner, productId: string) {
+    const ownerFilter = this.ownerWhere(owner);
     const product = await this.prisma.product.findFirst({ where: { id: productId, status: "ACTIVE" } });
     if (!product) throw new NotFoundException("Product not found.");
-    return this.prisma.wishlistItem.upsert({
-      where: { userId_productId: { userId, productId } },
-      update: {},
-      create: { userId, productId },
-      include: {
-        product: {
-          include: {
-            brand: true,
-            category: true,
-            images: { orderBy: { position: "asc" } },
-            variants: { where: { isActive: true }, orderBy: { createdAt: "asc" } }
-          }
+    await this.touchGuestSession(owner);
+    const include = {
+      product: {
+        include: {
+          brand: true,
+          category: true,
+          images: { orderBy: { position: "asc" as const } },
+          variants: { where: { isActive: true }, orderBy: { createdAt: "asc" as const } }
         }
       }
+    };
+    const existing = await this.prisma.wishlistItem.findFirst({ where: { ...ownerFilter, productId } });
+    if (existing) {
+      return this.prisma.wishlistItem.findUniqueOrThrow({ where: { id: existing.id }, include });
+    }
+    return this.prisma.wishlistItem.create({
+      data: {
+        userId: owner.userId,
+        sessionKey: owner.userId ? undefined : owner.sessionKey,
+        productId
+      },
+      include
     });
   }
 
-  async removeWishlist(userId: string, productId: string) {
-    await this.prisma.wishlistItem.deleteMany({ where: { userId, productId } });
+  async removeWishlist(owner: CartOwner, productId: string) {
+    await this.prisma.wishlistItem.deleteMany({ where: { ...this.ownerWhere(owner), productId } });
     return { deleted: true };
   }
 
@@ -1603,6 +1649,12 @@ export class ExperienceService {
     if (payment.provider !== "bkash" || !payment.gatewayReference) {
       throw new BadRequestException("Only bKash payments with a gateway reference can be re-checked.");
     }
+    if (payment.status !== PaymentStatus.PENDING) {
+      throw new BadRequestException("Only pending bKash payments can be re-checked.");
+    }
+    if (payment.order.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException("Cancelled orders cannot be re-checked for payment.");
+    }
     const result = await this.bkash.queryPayment(payment.gatewayReference);
     const transactionStatus = result.transactionStatus as string | undefined;
     const status: PaymentStatus =
@@ -1620,24 +1672,29 @@ export class ExperienceService {
           providerPayload: result as unknown as Prisma.InputJsonValue
         }
       });
-      const paid = await transaction.payment.aggregate({
-        where: { orderId: payment.orderId, status: PaymentStatus.PAID },
-        _sum: { amount: true }
-      });
-      const paidAmount = Number(paid._sum.amount ?? 0);
-      await transaction.order.update({
-        where: { id: payment.orderId },
-        data: {
-          paymentStatus:
-            paidAmount + 0.01 >= payment.order.total
-              ? PaymentStatus.PAID
-              : paidAmount > 0
-                ? PaymentStatus.PARTIALLY_PAID
-                : status === PaymentStatus.FAILED
-                  ? PaymentStatus.FAILED
-                  : PaymentStatus.PENDING
-        }
-      });
+      await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
+      if (status === PaymentStatus.PAID && payment.order.status === OrderStatus.PLACED) {
+        await transaction.order.update({
+          where: { id: payment.orderId },
+          data: {
+            status: OrderStatus.CONFIRMED,
+            trackingEvents: {
+              create: {
+                status: OrderStatus.CONFIRMED,
+                location: "Payment gateway",
+                note: "Online payment completed and the order was confirmed automatically."
+              }
+            },
+            notifications: {
+              create: {
+                email: payment.order.email,
+                title: "Order confirmed",
+                message: `${payment.order.orderNumber} is confirmed after successful online payment.`
+              }
+            }
+          }
+        });
+      }
     });
     return this.prisma.payment.findUnique({
       where: { id },
@@ -1652,6 +1709,42 @@ export class ExperienceService {
           }
         }
       }
+    });
+  }
+
+  private async reconcileOrderPaymentStatus(
+    transaction: Prisma.TransactionClient,
+    orderId: string
+  ) {
+    const order = await transaction.order.findUnique({
+      where: { id: orderId },
+      select: { total: true }
+    });
+    if (!order) throw new NotFoundException("Order not found.");
+
+    const [paid, pendingCount, failedCount] = await Promise.all([
+      transaction.payment.aggregate({
+        where: { orderId, status: PaymentStatus.PAID },
+        _sum: { amount: true }
+      }),
+      transaction.payment.count({ where: { orderId, status: PaymentStatus.PENDING } }),
+      transaction.payment.count({ where: { orderId, status: PaymentStatus.FAILED } })
+    ]);
+    const paidAmount = Number(paid._sum.amount ?? 0);
+    const paymentStatus =
+      paidAmount + 0.01 >= order.total
+        ? PaymentStatus.PAID
+        : paidAmount > 0
+          ? PaymentStatus.PARTIALLY_PAID
+          : pendingCount > 0
+            ? PaymentStatus.PENDING
+            : failedCount > 0
+              ? PaymentStatus.FAILED
+              : PaymentStatus.PENDING;
+
+    await transaction.order.update({
+      where: { id: orderId },
+      data: { paymentStatus }
     });
   }
 

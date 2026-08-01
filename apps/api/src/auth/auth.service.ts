@@ -37,6 +37,7 @@ export class AuthService {
         phone: dto.phone?.trim()
       }
     });
+    await this.claimGuestSession(user.id, dto.sessionKey);
     return this.session(user);
   }
 
@@ -45,7 +46,69 @@ export class AuthService {
     if (!user?.isActive || !(await verifyPassword(dto.password, user.passwordHash))) {
       throw new UnauthorizedException("Email or password is incorrect.");
     }
+    await this.claimGuestSession(user.id, dto.sessionKey);
     return this.session(user);
+  }
+
+  private async claimGuestSession(userId: string, sessionKey?: string) {
+    if (!sessionKey) return;
+
+    const guestCart = await this.prisma.cart.findFirst({
+      where: { sessionKey },
+      include: { items: true }
+    });
+    if (guestCart) {
+      const accountCart = await this.prisma.cart.findFirst({ where: { userId } });
+      if (accountCart) {
+        for (const item of guestCart.items) {
+          const existing = await this.prisma.cartItem.findFirst({
+            where: {
+              cartId: accountCart.id,
+              productId: item.productId,
+              variantId: item.variantId ?? null
+            }
+          });
+          if (existing) {
+            await this.prisma.cartItem.update({
+              where: { id: existing.id },
+              data: { quantity: existing.quantity + item.quantity }
+            });
+          } else {
+            await this.prisma.cartItem.create({
+              data: {
+                cartId: accountCart.id,
+                productId: item.productId,
+                variantId: item.variantId,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice
+              }
+            });
+          }
+        }
+        await this.prisma.cartItem.deleteMany({ where: { cartId: guestCart.id } });
+        await this.prisma.cart.delete({ where: { id: guestCart.id } });
+      } else {
+        await this.prisma.cart.update({
+          where: { id: guestCart.id },
+          data: { userId, sessionKey: null }
+        });
+      }
+    }
+
+    const guestWishlist = await this.prisma.wishlistItem.findMany({ where: { sessionKey } });
+    for (const item of guestWishlist) {
+      const existing = await this.prisma.wishlistItem.findFirst({
+        where: { userId, productId: item.productId }
+      });
+      if (!existing) {
+        await this.prisma.wishlistItem.create({ data: { userId, productId: item.productId } });
+      }
+    }
+    if (guestWishlist.length) {
+      await this.prisma.wishlistItem.deleteMany({ where: { sessionKey } });
+    }
+
+    await this.prisma.guestSession.deleteMany({ where: { sessionKey } });
   }
 
   async profile(userId: string) {

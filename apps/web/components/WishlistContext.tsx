@@ -6,15 +6,15 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 import {
   Product,
   addAccountWishlist,
-  fallbackProducts,
   fetchAccountWishlist,
+  fetchProduct,
   removeAccountWishlist,
-  searchCatalog,
   trackAnalyticsEvent
 } from "../lib/catalog";
 import { useAuth } from "./AuthContext";
@@ -27,81 +27,77 @@ type WishlistContextValue = {
 };
 
 const WishlistContext = createContext<WishlistContextValue | null>(null);
-const wishlistStorageKey = "my-ecom-wishlist";
-const isDatabaseId = (value: string) => /^[a-f0-9]{24}$/i.test(value);
+const legacyWishlistStorageKey = "my-ecom-wishlist";
 
-async function liveProductId(product: Product) {
-  if (isDatabaseId(product.id)) return product.id;
-  const result = await searchCatalog({ search: product.name, limit: 20 });
-  return result.products.find((item) => item.slug === product.slug)?.id;
+async function migrateLegacyGuestWishlist() {
+  const raw = window.localStorage.getItem(legacyWishlistStorageKey);
+  window.localStorage.removeItem(legacyWishlistStorageKey);
+  if (!raw) return;
+  try {
+    const slugs = JSON.parse(raw) as unknown;
+    if (!Array.isArray(slugs) || !slugs.length) return;
+    for (const slug of slugs) {
+      if (typeof slug !== "string") continue;
+      const product = await fetchProduct(slug).catch(() => null);
+      if (product) await addAccountWishlist(product.id).catch(() => undefined);
+    }
+  } catch {
+    // Unsalvageable legacy wishlist data - nothing to migrate.
+  }
 }
 
 export function WishlistProvider({ children }: { children: ReactNode }) {
-  const [slugs, setSlugs] = useState<string[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-  const { user } = useAuth();
+  const [items, setItems] = useState<Array<{ product: Product }>>([]);
+  const { user, loading: authLoading } = useAuth();
+  const migrationAttempted = useRef(false);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(wishlistStorageKey);
-      if (saved) setSlugs(JSON.parse(saved) as string[]);
-    } finally {
-      setHydrated(true);
-    }
-  }, []);
+    if (authLoading) return;
+    let active = true;
+    const shouldMigrate = !user && !migrationAttempted.current;
+    if (shouldMigrate) migrationAttempted.current = true;
 
-  useEffect(() => {
-    if (hydrated) {
-      window.localStorage.setItem(wishlistStorageKey, JSON.stringify(slugs));
-    }
-  }, [hydrated, slugs]);
-
-  useEffect(() => {
-    if (!user || !hydrated) return;
-    fetchAccountWishlist().then(async (items) => {
-      const remote = items.map((item) => item.product.slug);
-      const merged = [...new Set([...remote, ...slugs])];
-      setSlugs(merged);
-      const localOnly = slugs.filter((slug) => !remote.includes(slug));
-      if (localOnly.length) {
-        const result = await searchCatalog({ limit: 100 });
-        await Promise.all(localOnly.map((slug) => {
-          const product = result.products.find((item) => item.slug === slug);
-          return product ? addAccountWishlist(product.id) : Promise.resolve();
-        }));
-      }
-    }).catch(() => undefined);
-  }, [hydrated, user?.id]);
+    (shouldMigrate ? migrateLegacyGuestWishlist() : Promise.resolve())
+      .catch(() => undefined)
+      .then(() => fetchAccountWishlist())
+      .then((serverItems) => {
+        if (active) setItems(serverItems);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [authLoading, user?.id]);
 
   const value = useMemo(
     () => ({
-      slugs,
-      savedCount: slugs.length,
-      isSaved: (slug: string) => slugs.includes(slug),
+      slugs: items.map((item) => item.product.slug),
+      savedCount: items.length,
+      isSaved: (slug: string) => items.some((item) => item.product.slug === slug),
       toggle: (input: Product | string) => {
         const slug = typeof input === "string" ? input : input.slug;
         const product =
           typeof input === "string"
-            ? fallbackProducts.find((item) => item.slug === input)
+            ? items.find((item) => item.product.slug === input)?.product
             : input;
-        const removing = slugs.includes(slug);
-        setSlugs((current) =>
-          removing ? current.filter((item) => item !== slug) : [...current, slug]
+        if (!product) return;
+        const removing = items.some((item) => item.product.slug === slug);
+        setItems((current) =>
+          removing ? current.filter((item) => item.product.slug !== slug) : [...current, { product }]
         );
-        if (user && product) {
-          void liveProductId(product).then((productId) => {
-            if (!productId) return;
-            return removing
-              ? removeAccountWishlist(productId)
-              : addAccountWishlist(productId);
-          });
-        }
-        if (!removing && product && isDatabaseId(product.id)) {
+        void (removing ? removeAccountWishlist(product.id) : addAccountWishlist(product.id)).catch(() => {
+          setItems((current) =>
+            removing
+              ? [...current, { product }]
+              : current.filter((item) => item.product.slug !== slug)
+          );
+        });
+        if (!removing) {
           void trackAnalyticsEvent({ type: "WISHLIST_ADDED", productId: product.id });
         }
       }
     }),
-    [slugs, user]
+    [items]
   );
 
   return <WishlistContext.Provider value={value}>{children}</WishlistContext.Provider>;

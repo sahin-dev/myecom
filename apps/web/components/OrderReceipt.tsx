@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { AddressInfo, Order, SiteSettings, formatMoney, resolveMediaUrl } from "../lib/catalog";
+import { orderPaymentBreakdown } from "../lib/orderPayments";
 
 function addressLines(info?: AddressInfo | null, fallback?: string) {
   if (!info) return fallback ? [fallback] : [];
@@ -38,8 +39,7 @@ export function OrderReceipt({
 
   const logo = resolveMediaUrl(settings.logoUrl);
   const generatedAt = new Date().toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" });
-  const amountDueNow = order.amountDueNow ?? 0;
-  const amountDueOnDelivery = order.amountDueOnDelivery ?? Math.max(order.total - amountDueNow, 0);
+  const paymentBreakdown = orderPaymentBreakdown(order);
   const billingLines = addressLines(order.billingInfo, order.billingSameAsShipping ? order.shippingAddress : undefined);
   const shippingLines = addressLines(order.shippingInfo, order.shippingAddress);
 
@@ -115,10 +115,16 @@ export function OrderReceipt({
           ) : null}
           <div><span>Delivery</span><strong>{formatMoney(order.shippingFee)}</strong></div>
           <div className="packing-slip-grand-total"><span>Order total</span><strong>{formatMoney(order.total)}</strong></div>
-          {amountDueNow > 0 ? (
+          {paymentBreakdown.shouldShowPaymentPlan ? (
             <>
-              <div><span>Advance payment</span><strong>{formatMoney(amountDueNow)}</strong></div>
-              <div><span>Due on delivery</span><strong>{formatMoney(amountDueOnDelivery)}</strong></div>
+              {paymentBreakdown.hasFailedPayment ? (
+                <div className="packing-slip-payment-warning"><span>Failed payment attempt</span><strong>{formatMoney(paymentBreakdown.failedAmount)}</strong></div>
+              ) : paymentBreakdown.paidAmount > 0 ? (
+                <div><span>Paid online</span><strong>{formatMoney(paymentBreakdown.paidAmount)}</strong></div>
+              ) : (
+                <div><span>Advance required</span><strong>{formatMoney(paymentBreakdown.scheduledNow)}</strong></div>
+              )}
+              <div><span>Outstanding balance</span><strong>{formatMoney(paymentBreakdown.outstandingAmount)}</strong></div>
             </>
           ) : null}
         </div>

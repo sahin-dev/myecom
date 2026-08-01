@@ -507,6 +507,23 @@ export type AdminCustomer = {
   lastOrderAt?: string | null;
 };
 
+export type AdminGuestSession = {
+  sessionKey: string;
+  email?: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  cartItemCount: number;
+  cartValue: number;
+  wishlistCount: number;
+};
+
+export type AdminGuestSessionDetail = {
+  session: AdminGuestSession;
+  cart: { id: string | null; items: Array<{ id: string; product: Product; variant?: ProductVariant | null; quantity: number; unitPrice: number }> };
+  wishlist: Array<{ id: string; product: Product }>;
+  orders: Array<{ id: string; orderNumber: string; status: string; total: number; createdAt: string }>;
+};
+
 export type ProductDetailType =
   | "usage"
   | "storage"
@@ -1450,6 +1467,16 @@ export const testimonials: Testimonial[] = [
 
 const configuredApiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 export const authStorageKey = "my-ecom-access-token";
+const guestSessionStorageKey = "my-ecom-guest-session";
+
+export function guestSessionKey() {
+  if (typeof window === "undefined") return "";
+  const existing = window.localStorage.getItem(guestSessionStorageKey);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  window.localStorage.setItem(guestSessionStorageKey, created);
+  return created;
+}
 
 function normalizedConfiguredApiBase() {
   return configuredApiBase.replace(/\/$/, "");
@@ -1492,7 +1519,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : { "X-Guest-Session": guestSessionKey() }),
       ...(init?.headers ?? {})
     },
     cache: "no-store"
@@ -2056,6 +2083,15 @@ export async function fetchAdminCustomerIntelligence(id: string) {
   );
 }
 
+export async function fetchAdminGuestSessions(search?: string) {
+  const query = search ? `?search=${encodeURIComponent(search)}` : "";
+  return request<AdminGuestSession[]>(`/admin/guest-sessions${query}`);
+}
+
+export async function fetchAdminGuestSessionDetail(sessionKey: string) {
+  return request<AdminGuestSessionDetail>(`/admin/guest-sessions/${encodeURIComponent(sessionKey)}`);
+}
+
 export async function fetchAdminCustomers(search?: string) {
   const query = search ? `?search=${encodeURIComponent(search)}` : "";
   return request<AdminCustomer[]>(`/admin/customers${query}`);
@@ -2441,7 +2477,7 @@ export async function deactivateStaff(id: string) {
 export async function loginUser(input: { email: string; password: string }) {
   return request<AuthSession>("/auth/login", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify({ ...input, sessionKey: guestSessionKey() })
   });
 }
 
@@ -2453,7 +2489,7 @@ export async function registerUser(input: {
 }) {
   return request<AuthSession>("/auth/register", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify({ ...input, sessionKey: guestSessionKey() })
   });
 }
 

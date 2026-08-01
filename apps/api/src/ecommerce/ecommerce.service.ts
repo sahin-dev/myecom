@@ -2293,6 +2293,99 @@ export class EcommerceService {
     });
   }
 
+  async adminGuestSessions(search?: string) {
+    const sessions = await this.prisma.guestSession.findMany({
+      where: search?.trim()
+        ? {
+            OR: [
+              { sessionKey: { contains: search.trim(), mode: "insensitive" } },
+              { email: { contains: search.trim(), mode: "insensitive" } }
+            ]
+          }
+        : undefined,
+      orderBy: { lastSeenAt: "desc" },
+      take: 100
+    });
+    const sessionKeys = sessions.map((session) => session.sessionKey);
+    const [carts, wishlistItems] = await Promise.all([
+      this.prisma.cart.findMany({
+        where: { sessionKey: { in: sessionKeys } },
+        include: { items: true }
+      }),
+      this.prisma.wishlistItem.findMany({
+        where: { sessionKey: { in: sessionKeys } },
+        select: { sessionKey: true }
+      })
+    ]);
+    return sessions.map((session) => {
+      const cart = carts.find((item) => item.sessionKey === session.sessionKey);
+      return {
+        sessionKey: session.sessionKey,
+        email: session.email,
+        firstSeenAt: session.firstSeenAt,
+        lastSeenAt: session.lastSeenAt,
+        cartItemCount: cart?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0,
+        cartValue: roundMoney(
+          cart?.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0) ?? 0
+        ),
+        wishlistCount: wishlistItems.filter((item) => item.sessionKey === session.sessionKey).length
+      };
+    });
+  }
+
+  async adminGuestSessionDetail(sessionKey: string) {
+    const session = await this.prisma.guestSession.findUnique({ where: { sessionKey } });
+    if (!session) throw new NotFoundException("Guest session not found.");
+    const [cart, wishlist, orders] = await Promise.all([
+      this.prisma.cart.findFirst({
+        where: { sessionKey },
+        include: {
+          items: {
+            include: {
+              product: { include: { brand: true, category: true } },
+              variant: true
+            }
+          }
+        }
+      }),
+      this.prisma.wishlistItem.findMany({
+        where: { sessionKey },
+        include: {
+          product: {
+            include: {
+              brand: true,
+              category: true,
+              images: { orderBy: { position: "asc" } }
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      }),
+      session.email
+        ? this.prisma.order.findMany({
+            where: { email: { equals: session.email, mode: "insensitive" } },
+            select: { id: true, orderNumber: true, status: true, total: true, createdAt: true },
+            orderBy: { createdAt: "desc" }
+          })
+        : Promise.resolve([])
+    ]);
+    const cartItems = cart?.items ?? [];
+    return {
+      session: {
+        sessionKey: session.sessionKey,
+        email: session.email,
+        firstSeenAt: session.firstSeenAt,
+        lastSeenAt: session.lastSeenAt,
+        cartItemCount: cartItems.reduce((sum, item) => sum + item.quantity, 0),
+        cartValue: roundMoney(cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)),
+        wishlistCount: wishlist.length
+      },
+      cart: cart ?? { id: null, items: [] },
+      wishlist,
+      orders
+    };
+  }
+
   async adminCustomerIntelligence(id: string) {
     const customer = await this.prisma.user.findFirst({
       where: { id, role: "CUSTOMER" },

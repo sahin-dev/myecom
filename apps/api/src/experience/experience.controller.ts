@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -53,8 +54,14 @@ import {
   UpdateVariantDto,
   ValidatePromotionDto
 } from "./experience.dto";
-import { ExperienceService } from "./experience.service";
+import { CartOwner, ExperienceService } from "./experience.service";
 import { AccessControlService } from "../auth/access-control.service";
+
+function ownerFrom(request: OptionalAuthenticatedRequest, guestSessionKey?: string): CartOwner {
+  return request.user
+    ? { userId: request.user.id }
+    : { sessionKey: guestSessionKey };
+}
 
 @Controller()
 export class ExperienceController {
@@ -201,33 +208,51 @@ export class ExperienceController {
   }
 
   @Get("account/cart")
-  @UseGuards(JwtAuthGuard)
-  cart(@Req() request: AuthenticatedRequest) {
-    return this.experience.cart(request.user.id);
+  @UseGuards(OptionalJwtAuthGuard)
+  cart(
+    @Req() request: OptionalAuthenticatedRequest,
+    @Headers("x-guest-session") guestSessionKey?: string
+  ) {
+    return this.experience.cart(ownerFrom(request, guestSessionKey));
   }
 
   @Put("account/cart")
-  @UseGuards(JwtAuthGuard)
-  saveCart(@Body() dto: SaveCartDto, @Req() request: AuthenticatedRequest) {
-    return this.experience.saveCart(request.user.id, request.user.email, dto);
+  @UseGuards(OptionalJwtAuthGuard)
+  saveCart(
+    @Body() dto: SaveCartDto,
+    @Req() request: OptionalAuthenticatedRequest,
+    @Headers("x-guest-session") guestSessionKey?: string
+  ) {
+    return this.experience.saveCart(ownerFrom(request, guestSessionKey), request.user?.email, dto);
   }
 
   @Get("account/wishlist")
-  @UseGuards(JwtAuthGuard)
-  wishlist(@Req() request: AuthenticatedRequest) {
-    return this.experience.wishlist(request.user.id);
+  @UseGuards(OptionalJwtAuthGuard)
+  wishlist(
+    @Req() request: OptionalAuthenticatedRequest,
+    @Headers("x-guest-session") guestSessionKey?: string
+  ) {
+    return this.experience.wishlist(ownerFrom(request, guestSessionKey));
   }
 
   @Post("account/wishlist/:productId")
-  @UseGuards(JwtAuthGuard)
-  addWishlist(@Param("productId") productId: string, @Req() request: AuthenticatedRequest) {
-    return this.experience.addWishlist(request.user.id, productId);
+  @UseGuards(OptionalJwtAuthGuard)
+  addWishlist(
+    @Param("productId") productId: string,
+    @Req() request: OptionalAuthenticatedRequest,
+    @Headers("x-guest-session") guestSessionKey?: string
+  ) {
+    return this.experience.addWishlist(ownerFrom(request, guestSessionKey), productId);
   }
 
   @Delete("account/wishlist/:productId")
-  @UseGuards(JwtAuthGuard)
-  removeWishlist(@Param("productId") productId: string, @Req() request: AuthenticatedRequest) {
-    return this.experience.removeWishlist(request.user.id, productId);
+  @UseGuards(OptionalJwtAuthGuard)
+  removeWishlist(
+    @Param("productId") productId: string,
+    @Req() request: OptionalAuthenticatedRequest,
+    @Headers("x-guest-session") guestSessionKey?: string
+  ) {
+    return this.experience.removeWishlist(ownerFrom(request, guestSessionKey), productId);
   }
 
   @Get("account/preferences")

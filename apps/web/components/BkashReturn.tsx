@@ -1,14 +1,16 @@
 "use client";
 
-import { Check, Truck } from "lucide-react";
+import { Check, RotateCcw, Truck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Order, executeBkashPayment, fallbackCatalog, markBkashPaymentFailed } from "../lib/catalog";
+import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
 
 export function BkashReturn() {
   const [status, setStatus] = useState<"verifying" | "success" | "failed">("verifying");
   const [order, setOrder] = useState<Order | null>(null);
   const [message, setMessage] = useState("Verifying your bKash payment...");
+  const { clearCart } = useCart();
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -28,8 +30,8 @@ export function BkashReturn() {
           setStatus("failed");
           setMessage(
             gatewayStatus === "cancel"
-              ? "You cancelled the bKash payment before it completed."
-              : "The bKash payment was not completed."
+              ? "You cancelled the bKash payment, so the order was cancelled automatically."
+              : "The bKash payment failed, so the order was cancelled automatically."
           );
         })
         .catch(() => {
@@ -46,13 +48,22 @@ export function BkashReturn() {
     executeBkashPayment(paymentID)
       .then((confirmedOrder) => {
         setOrder(confirmedOrder);
+        clearCart();
         setStatus("success");
       })
       .catch((caught) => {
-        setStatus("failed");
-        setMessage(caught instanceof Error ? caught.message : "The bKash payment could not be confirmed.");
+        markBkashPaymentFailed(paymentID)
+          .then((failedOrder) => {
+            setOrder(failedOrder);
+            setStatus("failed");
+            setMessage("The bKash payment could not be confirmed, so the order was cancelled automatically.");
+          })
+          .catch(() => {
+            setStatus("failed");
+            setMessage(caught instanceof Error ? caught.message : "The bKash payment could not be confirmed.");
+          });
       });
-  }, []);
+  }, [clearCart]);
 
   return (
     <main>
@@ -63,10 +74,10 @@ export function BkashReturn() {
         {status === "success" && order ? (
           <div className="order-success">
             <Check size={34} />
-            <p className="eyebrow">Payment confirmed</p>
+            <p className="eyebrow">Order confirmed</p>
             <h2>Thank you, {order.customerName}</h2>
             <p>
-              Your bKash payment for order <strong>{order.orderNumber}</strong> was successful.
+              Your payment was successful. Your order number is <strong>{order.orderNumber}</strong>.
             </p>
             <a
               className="primary-action"
@@ -79,14 +90,15 @@ export function BkashReturn() {
 
         {status === "failed" ? (
           <div className="checkout-empty">
+            <RotateCcw size={32} />
             <p>{message}</p>
             {order ? (
               <p>
-                Order <strong>{order.orderNumber}</strong> is saved with payment failed.
+                Order <strong>{order.orderNumber}</strong> has been cancelled.
               </p>
             ) : null}
             <a className="primary-action" href="/checkout">
-              Return to checkout
+              Try checkout again
             </a>
           </div>
         ) : null}

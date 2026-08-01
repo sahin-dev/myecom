@@ -18,7 +18,6 @@ import {
   Product,
   ProductVariant,
   fetchAccountCart,
-  fetchProduct,
   formatMoney,
   isBaseProductEnabled,
   saveAccountCart,
@@ -43,176 +42,107 @@ type CartContextValue = {
 };
 
 const CartContext = createContext<CartContextValue | null>(null);
-const storageKey = "my-ecom-cart";
-const cartOwnerKey = "my-ecom-cart-owner";
-const guestCartOwner = "guest";
+const legacyCartStorageKey = "my-ecom-cart";
+const legacyCartOwnerStorageKey = "my-ecom-cart-owner";
 
-function lineId(line: CartLine) {
-  return line.variant?.id ?? line.product.id;
-}
-
-function mergeGuestCart(accountCart: CartLine[], guestCart: CartLine[]) {
-  const merged = accountCart.map((line) => ({ ...line }));
-  for (const guestLine of guestCart) {
-    const existing = merged.find((line) => lineId(line) === lineId(guestLine));
-    if (!existing) {
-      merged.push(guestLine);
-      continue;
-    }
-    const available =
-      guestLine.variant?.inventory ??
-      existing.variant?.inventory ??
-      guestLine.product.inventory ??
-      existing.product.inventory;
-    existing.product = guestLine.product;
-    existing.variant = guestLine.variant ?? existing.variant;
-    existing.quantity = Math.min(existing.quantity + guestLine.quantity, available);
+async function migrateLegacyGuestCart() {
+  const raw = window.localStorage.getItem(legacyCartStorageKey);
+  window.localStorage.removeItem(legacyCartStorageKey);
+  window.localStorage.removeItem(legacyCartOwnerStorageKey);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || !parsed.length) return;
+    const items = (parsed as CartLine[])
+      .filter((line) => line?.product?.id && Number.isFinite(line.quantity) && line.quantity > 0)
+      .map((line) => ({
+        productId: line.product.id,
+        variantId: line.variant?.id,
+        quantity: line.quantity
+      }));
+    if (items.length) await saveAccountCart(items);
+  } catch {
+    // Unsalvageable legacy cart data - nothing to migrate.
   }
-  return merged;
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
-  const [accountCartReady, setAccountCartReady] = useState(false);
-  const [cartOwner, setCartOwner] = useState(guestCartOwner);
   const [cartNotice, setCartNotice] = useState("");
   const [cartToast, setCartToast] = useState("");
-  const previousUserId = useRef<string | null>(null);
   const { user, loading: authLoading } = useAuth();
   const pathname = usePathname();
   const isAdminRoute = pathname === "/admin" || pathname.startsWith("/admin/");
+  const previousUserId = useRef<string | null>(null);
+  const skipNextSave = useRef(false);
+  const hadGuestItems = useRef(false);
+  const migrationAttempted = useRef(false);
 
   useEffect(() => {
+    if (authLoading) return;
     let active = true;
+    const justLoggedIn = Boolean(user) && !previousUserId.current;
+    const shouldMigrate = !user && !migrationAttempted.current;
+    if (shouldMigrate) migrationAttempted.current = true;
 
-    async function hydrateCart() {
-      try {
-        const stored = window.localStorage.getItem(storageKey);
-        setCartOwner(window.localStorage.getItem(cartOwnerKey) ?? guestCartOwner);
-        if (!stored) return;
-        const parsed = JSON.parse(stored) as unknown;
-        if (!Array.isArray(parsed)) throw new Error("Stored cart is invalid.");
-
-        const refreshed = await Promise.all(
-          (parsed as CartLine[]).map(async (line) => {
-            if (!line?.product?.slug || !Number.isFinite(line.quantity)) return null;
-            const product = await fetchProduct(line.product.slug).catch(() => line.product);
-            const activeVariants = (product.variants ?? []).filter((variant) => variant.isActive);
-            if (!line.variant && isBaseProductEnabled(product)) {
-              return {
-                product,
-                quantity: Math.max(1, Math.min(line.quantity, product.inventory))
-              } satisfies CartLine;
-            }
-            if (!activeVariants.length) {
-              return {
-                product,
-                quantity: Math.max(1, Math.min(line.quantity, product.inventory))
-              } satisfies CartLine;
-            }
-            const variant = activeVariants.find((item) => item.id === line.variant?.id);
-            if (!variant) return null;
-            return {
-              product,
-              variant,
-              quantity: Math.max(1, Math.min(line.quantity, variant.inventory))
-            } satisfies CartLine;
-          })
-        );
+    (shouldMigrate ? migrateLegacyGuestCart() : Promise.resolve())
+      .catch(() => undefined)
+      .then(() => fetchAccountCart())
+      .then((serverCart) => {
         if (!active) return;
-        const validLines = refreshed.reduce<CartLine[]>((lines, line) => {
-          if (line) lines.push(line);
-          return lines;
-        }, []);
-        const removedCount = parsed.length - validLines.length;
-        setCart(validLines);
-        if (removedCount) {
-          setCartNotice(
-            `${removedCount} saved ${removedCount === 1 ? "item now requires" : "items now require"} an option. Please choose the option again.`
-          );
+        const lines: CartLine[] = [];
+        let hadDuplicates = false;
+        for (const item of serverCart.items) {
+          const key = item.variant?.id ?? item.product.id;
+          const existing = lines.find((line) => (line.variant?.id ?? line.product.id) === key);
+          if (existing) {
+            existing.quantity += item.quantity;
+            hadDuplicates = true;
+          } else {
+            lines.push({ product: item.product, variant: item.variant, quantity: item.quantity });
+          }
         }
-      } catch {
-        window.localStorage.removeItem(storageKey);
-        if (active) setCartNotice("Your saved bag could not be restored and has been reset.");
-      } finally {
+        skipNextSave.current = !hadDuplicates;
+        setCart(lines);
+        if (justLoggedIn && hadGuestItems.current) {
+          setCartNotice("Your guest bag items were added to your account bag.");
+          hadGuestItems.current = false;
+        }
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setCartNotice(error instanceof Error ? error.message : "Your bag could not be loaded.");
+      })
+      .finally(() => {
         if (active) setHydrated(true);
-      }
-    }
-
-    void hydrateCart();
+      });
     return () => {
       active = false;
     };
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    window.localStorage.setItem(storageKey, JSON.stringify(cart));
-    window.localStorage.setItem(cartOwnerKey, cartOwner);
-  }, [cart, cartOwner, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated || authLoading) return;
-    if (!user) {
-      setAccountCartReady(false);
-      if (cartOwner !== guestCartOwner) {
-        setCart([]);
-        setCartOwner(guestCartOwner);
-      }
-      return;
-    }
-    const shouldMergeGuestCart = cartOwner === guestCartOwner;
-    fetchAccountCart()
-      .then(async (serverCart) => {
-        const accountLines = serverCart.items.map((item) => ({
-          product: item.product,
-          variant: item.variant,
-          quantity: item.quantity
-        }));
-        const nextCart = shouldMergeGuestCart
-          ? mergeGuestCart(accountLines, cart)
-          : accountLines;
-        setCart(nextCart);
-        setCartOwner(user.id);
-        if (shouldMergeGuestCart && cart.length) {
-          await saveAccountCart(
-            nextCart.map((line) => ({
-              productId: line.product.id,
-              variantId: line.variant?.id,
-              quantity: line.quantity
-            }))
-          );
-          setCartNotice(
-            `${cart.length} guest ${cart.length === 1 ? "item was" : "items were"} added to your account bag.`
-          );
-        }
-        setAccountCartReady(true);
-      })
-      .catch((error: unknown) => {
-        setAccountCartReady(false);
-        setCartNotice(
-          error instanceof Error
-            ? error.message
-            : "Your bag could not be synchronized. Please try again."
-        );
-      });
-  }, [authLoading, hydrated, user?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user?.id]);
 
   useEffect(() => {
     if (authLoading) return;
     const currentUserId = user?.id ?? null;
+    if (!previousUserId.current && currentUserId) {
+      hadGuestItems.current = cart.length > 0;
+    }
     if (previousUserId.current && !currentUserId) {
       setCart([]);
-      setCartOwner(guestCartOwner);
-      setAccountCartReady(false);
     }
     previousUserId.current = currentUserId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user?.id]);
 
   useEffect(() => {
-    if (!user || !accountCartReady) return;
+    if (!hydrated) return;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
     const timeout = window.setTimeout(() => {
       void saveAccountCart(
         cart.map((line) => ({
@@ -229,7 +159,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       });
     }, 400);
     return () => window.clearTimeout(timeout);
-  }, [accountCartReady, cart, user?.id]);
+  }, [cart, hydrated]);
 
   useEffect(() => {
     if (!cartToast) return;
@@ -247,7 +177,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
     const available = variant?.inventory ?? product.inventory;
     if (available < 1) return;
-    if (!user) setCartOwner(guestCartOwner);
     setCartNotice("");
     setCartToast(
       `${quantity} x ${product.name}${variant ? ` (${variant.name})` : ""} added to your bag.`

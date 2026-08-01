@@ -161,7 +161,7 @@ export function CheckoutPage() {
   const [placingOrder, setPlacingOrder] = useState(false);
   const [notice, setNotice] = useState("");
   const { cart, cartReady, clearCart, updateQuantity, removeItem } = useCart();
-  const { user } = useAuth();
+  const { user, requireAuth } = useAuth();
 
   useEffect(() => {
     fetchCatalog()
@@ -263,6 +263,8 @@ export function CheckoutPage() {
     paymentMode === "online"
       ? selectedOnlineMethod?.code ?? onlineGroupMethod?.code ?? paymentMethodCode
       : selectedCashMethod?.code ?? paymentMethodCode;
+  const selectedPaymentForDescription =
+    paymentMode === "online" ? selectedOnlineMethod ?? onlineGroupMethod : selectedCashMethod;
   const deliveryMethods = quote ? quote.deliveryMethods : catalog.checkoutMethods.filter(
     (method) => method.type === "DELIVERY" && method.isActive
   );
@@ -518,9 +520,6 @@ export function CheckoutPage() {
           quantity: line.quantity
         }))
       });
-      setOrder(created);
-      if (!directLine) clearCart();
-
       const pendingGateway = created.payments?.find((payment) => payment.status === "PENDING");
       const shouldStartBkash =
         pendingGateway?.provider === "bkash" ||
@@ -528,17 +527,22 @@ export function CheckoutPage() {
 
       if (shouldStartBkash) {
         try {
+          setNotice("Opening secure bKash payment...");
           const { bkashURL } = await initiateBkashPayment(created.id);
           window.location.href = bkashURL;
           return;
         } catch (bkashError) {
           setNotice(
             bkashError instanceof Error
-              ? `Your order was placed, but bKash payment could not be started: ${bkashError.message}`
-              : "Your order was placed, but bKash payment could not be started. Please contact support."
+              ? `bKash payment could not be started, so the order was cancelled: ${bkashError.message}`
+              : "bKash payment could not be started, so the order was cancelled. Please try again."
           );
+          return;
         }
       }
+
+      setOrder(created);
+      if (!directLine) clearCart();
     } catch (caught) {
       setNotice(
         caught instanceof Error
@@ -714,6 +718,14 @@ export function CheckoutPage() {
                 </div>
                 <span>{deliveryZoneCode ? "Area selected" : "Area required"}</span>
               </header>
+              {!user ? (
+                <div className="checkout-guest-prompt">
+                  <span>Have an account? Sign in for a faster checkout with saved details.</span>
+                  <button type="button" className="text-link" onClick={() => requireAuth(() => {})}>
+                    Sign in
+                  </button>
+                </div>
+              ) : null}
               <div className="checkout-address-scroll">
                 <section className="checkout-field-card">
                   <header>
@@ -810,7 +822,7 @@ export function CheckoutPage() {
                 </header>
                 <div className="checkout-options-grid">
                   {deliveryMethods.length ? (
-                    <label className="field-label">
+                    <label className="field-label checkout-method-card">
                       Delivery method
                       <select value={deliveryMethodCode || deliveryMethods[0].code} onChange={(event) => setDeliveryMethodCode(event.target.value)}>
                         {deliveryMethods.map((method) => (
@@ -819,11 +831,11 @@ export function CheckoutPage() {
                           </option>
                         ))}
                       </select>
-                      {selectedDelivery?.description ? <small>{selectedDelivery.description}</small> : null}
+                      <small>{selectedDelivery?.description ?? "Choose the delivery service for this address."}</small>
                     </label>
                   ) : null}
                   {paymentMethods.length ? (
-                    <label className="field-label">
+                    <label className="field-label checkout-method-card">
                       Payment method
                       <select
                         value={paymentMode === "online" ? "ONLINE" : selectedCashMethod?.code ?? ""}
@@ -840,7 +852,11 @@ export function CheckoutPage() {
                         )) : null}
                         {onlinePaymentMethods.length ? <option value="ONLINE">Online payment</option> : null}
                       </select>
-                      {requiredPaymentPercent > 0 ? <small>Advance payment requires an online payment option.</small> : null}
+                      <small>
+                        {requiredPaymentPercent > 0
+                          ? "Advance payment requires an online payment option."
+                          : selectedPaymentForDescription?.description ?? "Choose how this order should be paid."}
+                      </small>
                     </label>
                   ) : (
                     <p className="detail-notice">No payment method is currently available. Please contact support.</p>

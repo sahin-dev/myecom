@@ -24,6 +24,10 @@ export class RegisterDto {
   @IsString()
   @Length(6, 30)
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  sessionKey?: string;
 }
 
 export class LoginDto {
@@ -33,6 +37,10 @@ export class LoginDto {
 
   @IsString()
   password!: string;
+
+  @IsOptional()
+  @IsString()
+  sessionKey?: string;
 }
 
 export class UpdateProfileDto {

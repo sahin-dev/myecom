@@ -405,6 +405,20 @@ export class EcommerceController {
     return this.ecommerce.adminCustomerIntelligence(id);
   }
 
+  @Get("admin/guest-sessions")
+  @UseGuards(AdminGuard)
+  @RequirePermission("customers.read")
+  adminGuestSessions(@Query("search") search?: string) {
+    return this.ecommerce.adminGuestSessions(search);
+  }
+
+  @Get("admin/guest-sessions/:sessionKey")
+  @UseGuards(AdminGuard)
+  @RequirePermission("customers.read")
+  adminGuestSessionDetail(@Param("sessionKey") sessionKey: string) {
+    return this.ecommerce.adminGuestSessionDetail(sessionKey);
+  }
+
   @Patch("admin/customers/:id")
   @UseGuards(AdminGuard)
   @RequirePermission("customers.write")

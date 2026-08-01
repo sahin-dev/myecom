@@ -97,6 +97,7 @@ export function TrackOrder() {
                 <input
                   value={email}
                   type="email"
+                  suppressHydrationWarning
                   onChange={(event) => setEmail(event.target.value)}
                   placeholder="Checkout email"
                   required

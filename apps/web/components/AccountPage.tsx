@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  Download,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -52,6 +53,7 @@ import {
   updateAddress,
   updatePreferences
 } from "../lib/catalog";
+import { orderPaymentBreakdown } from "../lib/orderPayments";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
 import { OrderReceipt } from "./OrderReceipt";
@@ -515,8 +517,7 @@ export function AccountPage() {
             <div className="account-orders">
               {pagedOrders.map((order) => {
                 const expanded = expandedOrderId === order.id;
-                const amountDueNow = order.amountDueNow ?? 0;
-                const amountDueOnDelivery = order.amountDueOnDelivery ?? Math.max(order.total - amountDueNow, 0);
+                const paymentBreakdown = orderPaymentBreakdown(order);
                 return (
                   <article key={order.id} className={expanded ? "expanded" : ""}>
                     <button
@@ -528,7 +529,9 @@ export function AccountPage() {
                       <ChevronDown size={15} className={expanded ? "flip" : ""} />
                       <span>
                         <strong>{order.orderNumber}</strong>
-                        <span>{order.status.replace(/_/g, " ")}</span>
+                        <span className={`order-status-pill status-${order.status.toLowerCase()}`}>
+                          {order.status.replace(/_/g, " ")}
+                        </span>
                       </span>
                     </button>
                     <strong>{formatMoney(order.total)}</strong>
@@ -558,9 +561,9 @@ export function AccountPage() {
                           ))}
                         </div>
                         <div className="account-order-meta">
-                          <p><MapPin size={14} /> {order.shippingAddress}</p>
-                          {order.deliveryMethodName ? <p><Truck size={14} /> {order.deliveryMethodName}</p> : null}
-                          <p><CreditCard size={14} /> {order.paymentMethod ?? "Cash on delivery"} - {order.paymentStatus ?? "PENDING"}</p>
+                          <span><MapPin size={13} /> {order.shippingAddress}</span>
+                          {order.deliveryMethodName ? <span><Truck size={13} /> {order.deliveryMethodName}</span> : null}
+                          <span><CreditCard size={13} /> {order.paymentMethod ?? "Cash on delivery"} · {order.paymentStatus ?? "PENDING"}</span>
                         </div>
                         <dl className="account-order-summary">
                           <div><dt>Subtotal</dt><dd>{formatMoney(order.subtotal)}</dd></div>
@@ -571,17 +574,28 @@ export function AccountPage() {
                             </div>
                           ) : null}
                           <div><dt>Delivery</dt><dd>{formatMoney(order.shippingFee)}</dd></div>
-                          <div><dt>Total</dt><dd>{formatMoney(order.total)}</dd></div>
-                          {amountDueNow > 0 ? (
-                            <>
-                              <div><dt>Advance payment</dt><dd>{formatMoney(amountDueNow)}</dd></div>
-                              <div><dt>Due on delivery</dt><dd>{formatMoney(amountDueOnDelivery)}</dd></div>
-                            </>
+                          <div className="account-order-grand-total"><dt>Total</dt><dd>{formatMoney(order.total)}</dd></div>
+                          {paymentBreakdown.shouldShowPaymentPlan ? (
+                            <div className={`account-order-advance ${paymentBreakdown.hasFailedPayment ? "is-failed" : ""}`}>
+                              {paymentBreakdown.hasFailedPayment ? (
+                                <div><dt>Payment failed</dt><dd>{formatMoney(paymentBreakdown.failedAmount)}</dd></div>
+                              ) : paymentBreakdown.paidAmount > 0 ? (
+                                <div><dt>Paid online</dt><dd>{formatMoney(paymentBreakdown.paidAmount)}</dd></div>
+                              ) : (
+                                <div><dt>Advance required</dt><dd>{formatMoney(paymentBreakdown.scheduledNow)}</dd></div>
+                              )}
+                              <div>
+                                <dt>{paymentBreakdown.paidAmount > 0 ? "Due on delivery" : "Outstanding balance"}</dt>
+                                <dd>{formatMoney(paymentBreakdown.outstandingAmount || paymentBreakdown.scheduledOnDelivery)}</dd>
+                              </div>
+                            </div>
                           ) : null}
                         </dl>
-                        <button type="button" className="text-link" onClick={() => setReceiptOrder(order)}>
-                          Download receipt
-                        </button>
+                        <div className="account-order-detail-footer">
+                          <button type="button" className="text-link" onClick={() => setReceiptOrder(order)}>
+                            <Download size={14} /> Download receipt
+                          </button>
+                        </div>
                       </div>
                     ) : null}
                   </article>
