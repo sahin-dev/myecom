@@ -6,6 +6,16 @@ import { Order, executeBkashPayment, fallbackCatalog, markBkashPaymentFailed } f
 import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
 
+function gatewayCheckoutSource(paymentID: string | null) {
+  if (!paymentID || typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(`checkout-source:${paymentID}`);
+}
+
+function forgetGatewayCheckoutSource(paymentID: string | null) {
+  if (!paymentID || typeof window === "undefined") return;
+  window.sessionStorage.removeItem(`checkout-source:${paymentID}`);
+}
+
 export function BkashReturn() {
   const [status, setStatus] = useState<"verifying" | "success" | "failed">("verifying");
   const [order, setOrder] = useState<Order | null>(null);
@@ -27,6 +37,7 @@ export function BkashReturn() {
       markBkashPaymentFailed(paymentID)
         .then((failedOrder) => {
           setOrder(failedOrder);
+          forgetGatewayCheckoutSource(paymentID);
           setStatus("failed");
           setMessage(
             gatewayStatus === "cancel"
@@ -35,6 +46,7 @@ export function BkashReturn() {
           );
         })
         .catch(() => {
+          forgetGatewayCheckoutSource(paymentID);
           setStatus("failed");
           setMessage(
             gatewayStatus === "cancel"
@@ -48,13 +60,15 @@ export function BkashReturn() {
     executeBkashPayment(paymentID)
       .then((confirmedOrder) => {
         setOrder(confirmedOrder);
-        clearCart();
+        if (gatewayCheckoutSource(paymentID) === "cart") clearCart();
+        forgetGatewayCheckoutSource(paymentID);
         setStatus("success");
       })
       .catch((caught) => {
         markBkashPaymentFailed(paymentID)
           .then((failedOrder) => {
             setOrder(failedOrder);
+            forgetGatewayCheckoutSource(paymentID);
             setStatus("failed");
             setMessage("The bKash payment could not be confirmed, so the order was cancelled automatically.");
           })

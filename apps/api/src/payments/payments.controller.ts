@@ -40,6 +40,15 @@ export class PaymentsController {
     if (!payment) {
       throw new BadRequestException("This order has no pending bKash payment to initiate.");
     }
+    const existingPayload =
+      payment.providerPayload &&
+      typeof payment.providerPayload === "object" &&
+      !Array.isArray(payment.providerPayload)
+        ? payment.providerPayload as Record<string, unknown>
+        : {};
+    if (payment.gatewayReference && typeof existingPayload.bkashURL === "string") {
+      return { bkashURL: existingPayload.bkashURL, paymentID: payment.gatewayReference };
+    }
 
     const created = await this.bkash.createPayment({
       orderNumber: order.orderNumber,
@@ -96,8 +105,7 @@ export class PaymentsController {
         await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
       });
     } catch (error) {
-      await this.markPaymentFailed(dto.paymentID);
-      throw error;
+      return this.applyVerifiedBkashStatus(dto.paymentID);
     }
 
     
@@ -107,6 +115,110 @@ export class PaymentsController {
   @Post("failed")
   async failed(@Body() dto: ExecuteBkashDto) {
     return this.markPaymentFailed(dto.paymentID);
+  }
+
+  @Post("webhook")
+  async webhook(@Body() payload: Record<string, unknown>) {
+    const paymentID = this.paymentIdFromPayload(payload);
+    if (!paymentID) throw new BadRequestException("bKash webhook did not include a paymentID.");
+    return this.applyVerifiedBkashStatus(paymentID);
+  }
+
+  @Post("ipn")
+  async ipn(@Body() payload: Record<string, unknown>) {
+    return this.webhook(payload);
+  }
+
+  private paymentIdFromPayload(payload: Record<string, unknown>) {
+    return String(
+      payload.paymentID ??
+      payload.paymentId ??
+      payload.payment_id ??
+      payload.PaymentID ??
+      ""
+    ).trim();
+  }
+
+  private bkashPaymentStatus(payload: Record<string, unknown>) {
+    const value = String(
+      payload.transactionStatus ??
+      payload.status ??
+      payload.paymentStatus ??
+      payload.statusMessage ??
+      ""
+    ).toLowerCase();
+    if (value.includes("completed") || value.includes("success")) return PaymentStatus.PAID;
+    if (
+      value.includes("fail") ||
+      value.includes("cancel") ||
+      value.includes("declin") ||
+      value.includes("expired")
+    ) {
+      return PaymentStatus.FAILED;
+    }
+    return PaymentStatus.PENDING;
+  }
+
+  private async applyVerifiedBkashStatus(paymentID: string) {
+    const payment = await this.prisma.payment.findFirst({
+      where: { gatewayReference: paymentID },
+      include: { order: true }
+    });
+    if (!payment) throw new NotFoundException("Payment not found for this bKash payment ID.");
+    if (payment.status === PaymentStatus.PAID) {
+      return this.confirmPaidOnlineOrder(payment.orderId);
+    }
+    if (payment.status !== PaymentStatus.PENDING) {
+      return this.prisma.order.findUnique({
+        where: { id: payment.orderId },
+        include: {
+          items: true,
+          payments: true,
+          trackingEvents: { orderBy: { createdAt: "asc" } }
+        }
+      });
+    }
+    const result = await this.bkash.queryPayment(paymentID);
+    const status = this.bkashPaymentStatus(result);
+    if (status === PaymentStatus.PAID) {
+      await this.prisma.$transaction(async (transaction) => {
+        await transaction.payment.update({
+          where: { id: payment.id },
+          data: {
+            status: PaymentStatus.PAID,
+            transactionId: String(result.trxID ?? result.transactionId ?? payment.transactionId ?? "") || null,
+            providerPayload: result as unknown as Prisma.InputJsonValue
+          }
+        });
+        await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
+      });
+      return this.confirmPaidOnlineOrder(payment.orderId);
+    }
+    if (status === PaymentStatus.FAILED) {
+      await this.prisma.$transaction(async (transaction) => {
+        await transaction.payment.update({
+          where: { id: payment.id },
+          data: {
+            status: PaymentStatus.FAILED,
+            providerPayload: result as unknown as Prisma.InputJsonValue
+          }
+        });
+        await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
+      });
+      return this.cancelFailedOnlineOrder(payment.orderId);
+    }
+    await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: { providerPayload: result as unknown as Prisma.InputJsonValue }
+    });
+    return this.prisma.order.findUnique({
+      where: { id: payment.orderId },
+      include: {
+        items: true,
+        payments: true,
+        trackingEvents: { orderBy: { createdAt: "asc" } }
+      }
+    });
   }
 
   private async markPaymentFailed(paymentID: string) {

@@ -26,12 +26,19 @@ import {
   createAdminOrder,
   createManualRefund,
   baseProductOptionLabel,
+  dispatchCourierShipment,
+  effectiveCourierShipmentStatus,
+  fetchCourierServices,
   fetchAdminCatalog,
   fetchAdminOrders,
   formatMoney,
   isBaseProductEnabled,
+  permanentlyDeleteAdminResource,
+  syncCourierShipment,
+  updateCourierShipment,
   updateAdminOrder
 } from "../../lib/catalog";
+import type { CourierService, CourierShipment, CourierShipmentStatus } from "../../lib/catalog";
 import { orderPaymentBreakdown } from "../../lib/orderPayments";
 import { useAuth } from "../AuthContext";
 import { useSiteSettings } from "../SiteSettingsContext";
@@ -40,6 +47,7 @@ import {
   AdminError,
   AdminLoading,
   AdminPageTitle,
+  AdminPasswordConfirmDialog,
   AdminSectionHeader,
   AdminToast,
   StatusBadge,
@@ -55,10 +63,23 @@ const orderTransitions: Record<string, string[]> = {
   CONFIRMED: ["PACKED", "CANCELLED"],
   PACKED: ["SHIPPED", "CANCELLED"],
   SHIPPED: ["OUT_FOR_DELIVERY"],
-  OUT_FOR_DELIVERY: ["DELIVERED"],
+  OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_FAILED"],
+  DELIVERY_FAILED: ["OUT_FOR_DELIVERY"],
   DELIVERED: [],
   CANCELLED: []
 };
+const courierShipmentStatuses: CourierShipmentStatus[] = [
+  "CREATED",
+  "PICKUP_REQUESTED",
+  "PICKED_UP",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "DELIVERY_FAILED",
+  "RETURNED",
+  "CANCELLED"
+];
+const courierDispatchableOrderStatuses = ["CONFIRMED", "PACKED", "SHIPPED", "OUT_FOR_DELIVERY", "DELIVERY_FAILED"];
 
 function defaultOrderVariant(product: AdminCatalog["products"][number]) {
   if (isBaseProductEnabled(product) && product.inventory > 0) return undefined;
@@ -78,6 +99,28 @@ function formatAddressInfo(info?: AddressInfo | null, fallback = "") {
     info.city,
     info.postalCode
   ].filter(Boolean).join(", ");
+}
+
+function supportsCourierSync(service?: CourierService | null) {
+  if (!service || service.provider === "MANUAL" || !service.apiBaseUrl) return false;
+  const settings = service.settings ?? {};
+  return Boolean(String(settings.statusPath ?? settings.syncPath ?? "").trim());
+}
+
+function latestUniqueShipmentEvents(events: NonNullable<CourierShipment["events"]>) {
+  const latestByStatus = new Map<CourierShipmentStatus, (typeof events)[number]>();
+  for (const event of events) {
+    if (
+      event.normalizedStatus === "UNKNOWN" &&
+      !event.deliveryFailedReason &&
+      /no courier status endpoint/i.test(event.message)
+    ) continue;
+    latestByStatus.delete(event.normalizedStatus);
+    latestByStatus.set(event.normalizedStatus, event);
+  }
+  return [...latestByStatus.values()]
+    .sort((left, right) => new Date(left.happenedAt).getTime() - new Date(right.happenedAt).getTime())
+    .slice(-3);
 }
 
 export function AdminOrders() {
@@ -105,10 +148,12 @@ export function AdminOrders() {
   const { message, kind, notify } = useAdminToast();
   const [error, setError] = useState("");
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Order | null>(null);
   const [refundTarget, setRefundTarget] = useState<Order | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkApplying, setBulkApplying] = useState(false);
+  const [courierServices, setCourierServices] = useState<CourierService[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -137,6 +182,13 @@ export function AdminOrders() {
     void load();
     setSelectedIds(new Set());
   }, [load]);
+
+  useEffect(() => {
+    if (!can("couriers.read")) return;
+    fetchCourierServices()
+      .then(setCourierServices)
+      .catch(() => setCourierServices([]));
+  }, [user?.permissions.join("|")]);
 
   function applySearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -267,6 +319,86 @@ export function AdminOrders() {
     }
   }
 
+  async function permanentlyDeleteOrder(password: string) {
+    if (!permanentDeleteTarget) return;
+    await permanentlyDeleteAdminResource("orders", permanentDeleteTarget.id, password);
+    setPermanentDeleteTarget(null);
+    setSelected(null);
+    notify(`${permanentDeleteTarget.orderNumber} was permanently deleted.`);
+    await load();
+  }
+
+  async function dispatchCourier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setSaving(true);
+    try {
+      const updated = await dispatchCourierShipment(selected.id, {
+        courierServiceId: String(data.get("courierServiceId")),
+        pickupAddress: String(data.get("pickupAddress") || ""),
+        specialInstruction: String(data.get("specialInstruction") || ""),
+        trackingCode: String(data.get("trackingCode") || ""),
+        providerOrderId: String(data.get("providerOrderId") || ""),
+        consignmentId: String(data.get("consignmentId") || ""),
+        cashCollectionAmount: data.get("cashCollectionAmount")
+          ? Number(data.get("cashCollectionAmount"))
+          : undefined
+      });
+      setSelected(updated);
+      notify(`${updated.orderNumber} was dispatched to the courier workspace.`);
+      form.reset();
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Courier dispatch failed.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateShipmentStatus(event: FormEvent<HTMLFormElement>, shipmentId: string) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setSaving(true);
+    try {
+      const updated = await updateCourierShipment(shipmentId, {
+        status: String(data.get("status")) as CourierShipmentStatus,
+        location: String(data.get("location") || ""),
+        message: String(data.get("message") || ""),
+        deliveryFailedReason: String(data.get("deliveryFailedReason") || ""),
+        paymentCollected: data.get("paymentCollected") === "on",
+        collectedAmount: data.get("collectedAmount")
+          ? Number(data.get("collectedAmount"))
+          : undefined
+      });
+      setSelected(updated);
+      notify(`${updated.orderNumber} parcel status was updated.`);
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Parcel status could not be updated.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function syncShipment(shipmentId: string) {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      const updated = await syncCourierShipment(shipmentId);
+      setSelected(updated);
+      notify(`${updated.orderNumber} parcel status was checked.`);
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Courier status check failed.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function toggleSelected(id: string) {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -382,6 +514,10 @@ export function AdminOrders() {
     return common === null ? options : common.filter((status) => options.includes(status));
   }, null) ?? [];
   const selectedPaymentBreakdown = selected ? orderPaymentBreakdown(selected) : null;
+  const activeCourierServices = courierServices.filter((service) => service.isActive);
+  const selectedActiveShipment = selected?.courierShipments?.find((shipment) =>
+    !["DELIVERED", "RETURNED", "CANCELLED"].includes(shipment.status)
+  );
 
   if (loading && !result) return <AdminLoading label="Loading the order queue..." />;
   if (error && !result) return <AdminError message={error} retry={() => void load()} />;
@@ -436,6 +572,15 @@ export function AdminOrders() {
           confirmLabel="Cancel order"
           onCancel={() => setCancelTarget(null)}
           onConfirm={() => void cancelOrder(cancelTarget)}
+        />
+      ) : null}
+
+      {permanentDeleteTarget ? (
+        <AdminPasswordConfirmDialog
+          title={`Permanently delete ${permanentDeleteTarget.orderNumber}?`}
+          body="This erases the order and all of its items, payments, refunds, shipments, and history for good."
+          onCancel={() => setPermanentDeleteTarget(null)}
+          onConfirm={permanentlyDeleteOrder}
         />
       ) : null}
 
@@ -689,7 +834,187 @@ export function AdminOrders() {
               </dl>
             </div>
 
+            <section className="admin-order-section admin-order-courier-panel">
+              <AdminSectionHeader
+                title="Courier dispatch"
+                description={
+                  selectedActiveShipment
+                    ? "This order already has an active parcel request."
+                    : "Send a confirmed order to a courier service, or keep using manual tracking below."
+                }
+              />
+              {selected.courierShipments?.length ? (
+                <div className="admin-shipment-list">
+                  {selected.courierShipments.map((shipment) => {
+                    const effectiveStatus = effectiveCourierShipmentStatus(shipment) ?? "UNKNOWN";
+                    const meaningfulEvents = latestUniqueShipmentEvents(shipment.events ?? []);
+                    return (
+                    <article className="admin-shipment-card" key={shipment.id}>
+                      <header>
+                        <div className="admin-shipment-icon">
+                          <Truck size={18} />
+                        </div>
+                        <div>
+                          <strong>{shipment.courierService?.name ?? selected.courierName ?? "Courier"}</strong>
+                          <span>
+                            {shipment.courierService?.provider ? formatStatus(shipment.courierService.provider) : "Manual courier"}
+                          </span>
+                        </div>
+                        <StatusBadge value={effectiveStatus} />
+                      </header>
+                      <div className="admin-shipment-reference-grid">
+                        <div>
+                          <span>Tracking code</span>
+                          <strong>{shipment.trackingCode || "Not assigned"}</strong>
+                        </div>
+                        <div>
+                          <span>Consignment</span>
+                          <strong>{shipment.consignmentId || "Not assigned"}</strong>
+                        </div>
+                        <div>
+                          <span>{supportsCourierSync(shipment.courierService) ? "Last courier sync" : "Last manual update"}</span>
+                          <strong>
+                            {new Date(
+                              supportsCourierSync(shipment.courierService)
+                                ? shipment.lastSyncedAt ?? shipment.updatedAt
+                                : shipment.updatedAt
+                            ).toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" })}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Cash collection</span>
+                          <strong>
+                            {shipment.paymentCollectedAt
+                              ? `${formatMoney(shipment.collectedAmount ?? 0)} collected`
+                              : (shipment.cashCollectionAmount ?? 0) > 0
+                                ? `${formatMoney(shipment.cashCollectionAmount ?? 0)} due`
+                                : "Not recorded"}
+                          </strong>
+                        </div>
+                      </div>
+                      {shipment.deliveryFailedReason ? (
+                        <p className="admin-shipment-failure">Delivery man reason: {shipment.deliveryFailedReason}</p>
+                      ) : null}
+                      <div className="admin-shipment-events">
+                        <strong>{supportsCourierSync(shipment.courierService) ? "Recent courier updates" : "Recent manual updates"}</strong>
+                        {meaningfulEvents.map((event) => (
+                          <article key={event.id}>
+                            <span />
+                            <p>
+                              <strong>{formatStatus(event.normalizedStatus)}</strong>
+                              <small>{event.location || "Courier"} / {new Date(event.happenedAt).toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" })}</small>
+                              {event.message}
+                              {event.deliveryFailedReason ? <em>Reason: {event.deliveryFailedReason}</em> : null}
+                            </p>
+                          </article>
+                        ))}
+                        {!meaningfulEvents.length ? <p className="admin-empty-copy">No useful courier updates yet. Use manual updates until the provider status endpoint is configured.</p> : null}
+                      </div>
+                      {can("couriers.dispatch") ? (
+                        <form
+                          className="admin-shipment-status-form"
+                          key={`${shipment.id}-${effectiveStatus}-${shipment.updatedAt}`}
+                          onSubmit={(event) => void updateShipmentStatus(event, shipment.id)}
+                        >
+                          <div className="admin-shipment-update-head">
+                            <div>
+                              <strong>Update parcel</strong>
+                              <span>
+                                {supportsCourierSync(shipment.courierService)
+                                  ? "Use failed reason only when the courier reports a failed attempt."
+                                  : "This parcel uses manual tracking. Save each status update here."}
+                              </span>
+                            </div>
+                            {supportsCourierSync(shipment.courierService) ? (
+                              <button className="secondary-action" type="button" disabled={saving} onClick={() => void syncShipment(shipment.id)}>
+                                <RefreshCw size={15} /> Sync from courier
+                              </button>
+                            ) : (
+                              <span className="admin-manual-status-label">Manual updates</span>
+                            )}
+                          </div>
+                          <div className="admin-shipment-update-grid">
+                            <label>Parcel status
+                              <select name="status" defaultValue={effectiveStatus}>
+                                {effectiveStatus === "UNKNOWN" ? <option value="UNKNOWN" disabled>Choose a parcel status</option> : null}
+                                {courierShipmentStatuses.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}
+                              </select>
+                            </label>
+                            <label>Location
+                              <input name="location" placeholder="Courier hub or delivery area" />
+                            </label>
+                            <label>Courier note
+                              <input name="message" placeholder="Parcel is moving to next hub" />
+                            </label>
+                            <label>Failed delivery reason
+                              <input name="deliveryFailedReason" placeholder="Customer unavailable, wrong address..." />
+                            </label>
+                          </div>
+                          <div className="admin-cod-collection-panel">
+                            <label className="admin-check-row">
+                              <input name="paymentCollected" type="checkbox" />
+                              <span>
+                                <strong>Payment collected</strong>
+                                <small>Confirm cash collection when the parcel is delivered.</small>
+                              </span>
+                            </label>
+                            <label>
+                              Collected amount
+                              <input
+                                name="collectedAmount"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder={String(Math.max(selected.total - (selectedPaymentBreakdown?.paidAmount ?? 0), 0))}
+                              />
+                            </label>
+                          </div>
+                          <div className="admin-shipment-update-actions">
+                            <button className="primary-action" type="submit" disabled={saving}>Save parcel update</button>
+                          </div>
+                        </form>
+                      ) : null}
+                    </article>
+                  );})}
+                </div>
+              ) : <p className="admin-empty-copy">No parcel request has been created for this order yet.</p>}
+
+              {can("couriers.dispatch") && !selectedActiveShipment && courierDispatchableOrderStatuses.includes(selected.status) ? (
+                <form className="admin-courier-dispatch-form" onSubmit={dispatchCourier}>
+                  <div className="form-grid">
+                    <label>Courier service
+                      <select name="courierServiceId" required defaultValue={activeCourierServices[0]?.id ?? ""}>
+                        {!activeCourierServices.length ? <option value="">No active courier services</option> : null}
+                        {activeCourierServices.map((service) => (
+                          <option key={service.id} value={service.id}>{service.name}{service.apiConfigured ? " / API" : " / Manual"}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>Cash collection amount
+                      <input name="cashCollectionAmount" type="number" min="0" step="0.01" placeholder={formatMoney(Math.max(selected.total - (selectedPaymentBreakdown?.paidAmount ?? 0), 0))} />
+                    </label>
+                  </div>
+                  <div className="form-grid">
+                    <label>Manual tracking code<input name="trackingCode" placeholder="Optional for manual dispatch" /></label>
+                    <label>Provider order ID<input name="providerOrderId" placeholder="Optional provider reference" /></label>
+                  </div>
+                  <div className="form-grid">
+                    <label>Consignment ID<input name="consignmentId" placeholder="Optional consignment reference" /></label>
+                    <label>Pickup address<input name="pickupAddress" placeholder="Leave blank for courier default pickup" /></label>
+                  </div>
+                  <label>Courier instruction
+                    <textarea name="specialInstruction" placeholder="Fragile items, call before delivery, collection note, etc." />
+                  </label>
+                  <button className="primary-action full" type="submit" disabled={saving || !activeCourierServices.length}>
+                    <Truck size={16} /> {saving ? "Dispatching..." : "Dispatch parcel"}
+                  </button>
+                </form>
+              ) : null}
+            </section>
+
             {can("orders.update") ? <form className="admin-order-form" key={`${selected.id}-${selected.updatedAt}`} onSubmit={saveOrder}>
+              <div className="admin-order-form-section">
+                <strong>Order state</strong>
               <div className="form-grid">
                 <label>Order status
                   <select name="status" defaultValue={selected.status}>
@@ -704,6 +1029,9 @@ export function AdminOrders() {
                   </select>
                 </label>
               </div>
+              </div>
+              <div className="admin-order-form-section">
+                <strong>Manual tracking fallback</strong>
               <label>Payment method
                 <select name="paymentMethod" defaultValue={selected.paymentMethod ?? "Cash on delivery"}>
                   {!catalog?.checkoutMethods.some((method) => method.type === "PAYMENT" && method.isActive && method.name === selected.paymentMethod) && selected.paymentMethod ? (
@@ -722,6 +1050,9 @@ export function AdminOrders() {
                   <input name="trackingCode" defaultValue={selected.trackingCode ?? ""} placeholder="Tracking code" />
                 </label>
               </div>
+              </div>
+              <div className="admin-order-form-section">
+                <strong>Notes</strong>
               <label><Truck size={15} /> Tracking location
                 <input name="location" placeholder="Fulfillment center" />
               </label>
@@ -731,6 +1062,7 @@ export function AdminOrders() {
               <label>Private admin note
                 <textarea name="adminNote" defaultValue={selected.adminNote ?? ""} placeholder="Internal note, not shown to customer" />
               </label>
+              </div>
               <div className="admin-editor-sticky-actions">
                 <span />
                 <button className="primary-action" type="submit" disabled={saving}>
@@ -740,6 +1072,11 @@ export function AdminOrders() {
             </form> : null}
             {can("orders.delete") && ["PLACED", "CONFIRMED", "PACKED"].includes(selected.status) ? <button className="danger-action admin-cancel-order" type="button" disabled={saving} onClick={() => setCancelTarget(selected)}>Cancel order</button> : null}
             {can("refunds.write") && ["PAID", "PARTIALLY_REFUNDED"].includes(selected.paymentStatus ?? "") ? <button className="secondary-action" type="button" disabled={saving} onClick={() => setRefundTarget(selected)}>Issue refund</button> : null}
+            {can("orders.permanent_delete") ? (
+              <button className="danger-action admin-cancel-order" type="button" disabled={saving} onClick={() => setPermanentDeleteTarget(selected)}>
+                <Trash2 size={16} /> Permanently delete
+              </button>
+            ) : null}
 
             <div className="admin-timeline">
               <h3>Tracking history</h3>

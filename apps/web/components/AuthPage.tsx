@@ -88,7 +88,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
           ) : null}
           <label>
             <span>Email address</span>
-            <input name="email" type="email" autoComplete="email" required />
+            <input name="email" type="email" autoComplete="email" required suppressHydrationWarning />
           </label>
           {mode === "register" ? (
             <label>

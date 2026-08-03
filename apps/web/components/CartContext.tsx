@@ -1,6 +1,7 @@
 "use client";
 
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Dispatch,
@@ -25,6 +26,7 @@ import {
 } from "../lib/catalog";
 import { useAuth } from "./AuthContext";
 import { ProductArt } from "./ProductArt";
+import { useConfirm } from "./ui/ConfirmDialog";
 
 type CartContextValue = {
   cart: CartLine[];
@@ -323,11 +325,16 @@ function CartDrawer() {
     removeItem,
     clearCart
   } = useCart();
+  const confirm = useConfirm();
   const checkoutHref = cart.length ? "/checkout" : "#";
-  const emptyCart = () => {
-    if (window.confirm("Empty your shopping bag? This will remove all items.")) {
-      clearCart();
-    }
+  const emptyCart = async () => {
+    const confirmed = await confirm({
+      title: "Empty your shopping bag?",
+      description: `This removes all ${cart.length} ${cart.length === 1 ? "item" : "items"} from your bag. You can't undo it.`,
+      confirmLabel: "Empty bag",
+      tone: "danger"
+    });
+    if (confirmed) clearCart();
   };
 
   return (
@@ -340,7 +347,7 @@ function CartDrawer() {
           </div>
           <div className="drawer-header-actions">
             {cart.length ? (
-              <button className="clear-cart-button" type="button" onClick={emptyCart}>
+              <button className="clear-cart-button" type="button" onClick={() => void emptyCart()}>
                 <Trash2 size={14} />
                 Empty bag
               </button>
@@ -367,13 +374,13 @@ function CartDrawer() {
           {cart.length ? (
             cart.map((line) => (
               <article className="cart-line" key={line.variant?.id ?? line.product.id}>
-                <a href={`/products/${line.product.slug}`} onClick={() => setIsOpen(false)}>
+                <Link href={`/products/${line.product.slug}`} onClick={() => setIsOpen(false)}>
                   <ProductArt compact product={line.product} />
-                </a>
+                </Link>
                 <div className="cart-line-copy">
-                  <a href={`/products/${line.product.slug}`} onClick={() => setIsOpen(false)}>
+                  <Link href={`/products/${line.product.slug}`} onClick={() => setIsOpen(false)}>
                     <strong>{line.product.name}</strong>
-                  </a>
+                  </Link>
                   {line.variant ? <small>{line.variant.name}</small> : null}
                   <span>{formatMoney(line.variant?.price ?? line.product.price)}</span>
                   <div className="cart-line-actions">
@@ -415,9 +422,9 @@ function CartDrawer() {
               <small>Your pantry bag</small>
               <strong>Ready when you are</strong>
               <p>Choose something useful for home and it will wait for you here.</p>
-              <a className="primary-action" href="/shop" onClick={() => setIsOpen(false)}>
+              <Link className="primary-action" href="/shop" onClick={() => setIsOpen(false)}>
                 Explore products
-              </a>
+              </Link>
             </div>
           )}
         </div>
@@ -427,13 +434,13 @@ function CartDrawer() {
               <span>Subtotal</span>
               <strong>{formatMoney(subtotal)}</strong>
             </div>
-            <a
+            <Link
               className="primary-action full"
               href={checkoutHref}
               onClick={() => setIsOpen(false)}
             >
               Continue to checkout
-            </a>
+            </Link>
             <small>Delivery is calculated at checkout.</small>
           </div>
         ) : null}

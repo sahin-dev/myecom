@@ -11,6 +11,7 @@ import {
   Menu,
   Megaphone,
   Network,
+  Route,
   Search,
   ShieldCheck,
   Store,
@@ -22,8 +23,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "./AuthContext";
 import { BrandIdentity } from "./PageChrome";
 import { useSiteSettings } from "./SiteSettingsContext";
+import { AdminAppearance } from "./admin/AdminAppearance";
 import { AdminContent } from "./admin/AdminContent";
+import { AdminCheckout } from "./admin/AdminCheckout";
 import { AdminCombos } from "./admin/AdminCombos";
+import { AdminCouriers } from "./admin/AdminCouriers";
 import { AdminCustomers } from "./admin/AdminCustomers";
 import { AdminGrowth } from "./admin/AdminGrowth";
 import { AdminInventory } from "./admin/AdminInventory";
@@ -37,6 +41,8 @@ export type AdminTab =
   | "overview"
   | "orders"
   | "payments"
+  | "checkout"
+  | "couriers"
   | "inventory"
   | "combos"
   | "growth"
@@ -56,11 +62,13 @@ const navigation: Array<{
   { id: "overview", label: "Overview", description: "Priorities and performance", group: "Workspace", icon: BarChart3, permissions: ["dashboard.read"] },
   { id: "orders", label: "Orders", description: "Fulfillment workspace", group: "Commerce", icon: ClipboardList, permissions: ["orders.read", "orders.create"] },
   { id: "payments", label: "Payments", description: "Transaction records", group: "Commerce", icon: CreditCard, permissions: ["payments.read"] },
+  { id: "checkout", label: "Checkout", description: "Payment and delivery rules", group: "Commerce", icon: CreditCard, permissions: ["checkout.read", "checkout.write", "checkout_policy.write", "payment_methods.read", "payment_methods.write", "delivery_methods.read", "delivery_methods.write", "delivery_zones.read", "delivery_zones.write"] },
+  { id: "couriers", label: "Couriers", description: "Parcel services and API setup", group: "Commerce", icon: Route, permissions: ["couriers.read", "couriers.write", "couriers.dispatch"] },
   { id: "inventory", label: "Products", description: "Catalog, media, and stock", group: "Commerce", icon: Boxes, permissions: ["catalog.read", "products.create", "products.update", "inventory.read"] },
   { id: "combos", label: "Combo deals", description: "Bundles and placement", group: "Commerce", icon: Gift, permissions: ["combos.manage"] },
   { id: "customers", label: "Customers", description: "Value and retention", group: "Engagement", icon: UsersRound, permissions: ["customers.read"] },
   { id: "growth", label: "Marketing", description: "Analytics, offers, reviews", group: "Engagement", icon: TrendingUp, permissions: ["growth.read", "promotions.read", "reviews.read"] },
-  { id: "content", label: "Storefront", description: "Homepage and checkout", group: "Engagement", icon: Megaphone, permissions: ["content.write", "checkout.read", "checkout.write", "checkout_policy.write", "payment_methods.read", "payment_methods.write", "delivery_methods.read", "delivery_methods.write", "delivery_zones.read", "delivery_zones.write"] },
+  { id: "content", label: "Storefront", description: "Identity and content", group: "Engagement", icon: Megaphone, permissions: ["content.write"] },
   { id: "operations", label: "Operations", description: "Returns, refunds, supply", group: "Administration", icon: Network, permissions: ["returns.read", "refunds.read", "suppliers.read", "purchase_orders.read"] },
   { id: "team", label: "Team and access", description: "Roles, staff, and audit", group: "Administration", icon: ShieldCheck, permissions: ["staff.read", "roles.read", "audit.read"] }
 ];
@@ -175,6 +183,7 @@ export function AdminConsole() {
             <span>Quick jump</span>
             <kbd>Ctrl K</kbd>
           </button>
+          <AdminAppearance />
           <a href="/" title="Open storefront">
             <Store size={18} />
             <span>Storefront</span>
@@ -235,6 +244,8 @@ export function AdminConsole() {
           {activeTab === "overview" ? <AdminOverview onNavigate={navigate} /> : null}
           {activeTab === "orders" ? <AdminOrders /> : null}
           {activeTab === "payments" ? <AdminPayments /> : null}
+          {activeTab === "checkout" ? <AdminCheckout /> : null}
+          {activeTab === "couriers" ? <AdminCouriers /> : null}
           {activeTab === "inventory" ? <AdminInventory /> : null}
           {activeTab === "combos" ? <AdminCombos /> : null}
           {activeTab === "growth" ? <AdminGrowth /> : null}

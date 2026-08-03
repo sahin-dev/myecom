@@ -736,8 +736,8 @@ export class ExperienceService {
     });
     if (!order) throw new BadRequestException("Only delivered orders can be returned.");
     const deliveredAt = order.trackingEvents[0]?.createdAt ?? order.updatedAt;
-    if (Date.now() - deliveredAt.getTime() > 48 * 60 * 60 * 1000) {
-      throw new BadRequestException("The 48-hour return request window has closed.");
+    if (Date.now() - deliveredAt.getTime() > 3 * 24 * 60 * 60 * 1000) {
+      throw new BadRequestException("The 3-day return request window has closed.");
     }
     const requestedIds = new Set<string>();
     for (const requested of dto.items) {
@@ -761,6 +761,7 @@ export class ExperienceService {
         userId,
         reason: dto.reason,
         details: dto.details,
+        proofUrls: dto.proofUrls ?? [],
         items: { create: dto.items }
       },
       include: {
@@ -968,6 +969,19 @@ export class ExperienceService {
     }
     await this.prisma.promotion.delete({ where: { id } });
     await this.audit(actorId, "promotion.deleted", "Promotion", id);
+    return { deleted: true };
+  }
+
+  async permanentlyDeletePromotion(actorId: string, password: string, id: string) {
+    await this.auth.assertPassword(actorId, password);
+    const promotion = await this.prisma.promotion.findUnique({ where: { id } });
+    if (!promotion) throw new NotFoundException("Promotion not found.");
+
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.couponRedemption.deleteMany({ where: { promotionId: id } });
+      await transaction.promotion.delete({ where: { id } });
+    });
+    await this.audit(actorId, "promotion.permanent_delete", "Promotion", id, { code: promotion.code });
     return { deleted: true };
   }
 
@@ -1710,6 +1724,24 @@ export class ExperienceService {
         }
       }
     });
+  }
+
+  async permanentlyDeletePayment(actorId: string, password: string, id: string) {
+    await this.auth.assertPassword(actorId, password);
+    const payment = await this.prisma.payment.findUnique({ where: { id } });
+    if (!payment) throw new NotFoundException("Payment not found.");
+
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.refund.deleteMany({ where: { paymentId: id } });
+      await transaction.payment.delete({ where: { id } });
+      await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
+    });
+    await this.audit(actorId, "payment.permanent_delete", "Payment", id, {
+      orderId: payment.orderId,
+      provider: payment.provider,
+      amount: payment.amount
+    });
+    return { deleted: true };
   }
 
   private async reconcileOrderPaymentStatus(

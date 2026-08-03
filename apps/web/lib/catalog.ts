@@ -246,8 +246,35 @@ export type CheckoutMethod = {
   minDeliveryDays?: number | null;
   maxDeliveryDays?: number | null;
   metadata?: Record<string, unknown> | null;
+  paymentGatewayId?: string | null;
+  paymentGateway?: PaymentGateway | null;
   isActive: boolean;
   priority: number;
+};
+
+export type PaymentGateway = {
+  id: string;
+  provider: "BKASH" | "NAGAD" | "CARD" | "OTHER";
+  name: string;
+  code: string;
+  description?: string | null;
+  mode: string;
+  apiBaseUrl?: string | null;
+  appKey?: string | null;
+  appSecret?: string | null;
+  username?: string | null;
+  password?: string | null;
+  callbackUrl?: string | null;
+  webhookUrl?: string | null;
+  merchantId?: string | null;
+  storeId?: string | null;
+  settings?: Record<string, unknown> | null;
+  credentialsConfigured?: boolean;
+  envConfigured?: boolean;
+  apiConfigured?: boolean;
+  isActive: boolean;
+  priority: number;
+  _count?: { checkoutMethods: number };
 };
 
 export type DeliveryZone = {
@@ -277,6 +304,82 @@ export type DeliveryRate = {
   zone?: DeliveryZone;
   deliveryMethod?: CheckoutMethod;
 };
+
+export type CourierProvider = "MANUAL" | "PATHAO" | "STEADFAST" | "SUNDARBAN" | "CUSTOM";
+export type CourierShipmentStatus =
+  | "DRAFT"
+  | "CREATED"
+  | "PICKUP_REQUESTED"
+  | "PICKED_UP"
+  | "IN_TRANSIT"
+  | "OUT_FOR_DELIVERY"
+  | "DELIVERED"
+  | "DELIVERY_FAILED"
+  | "RETURNED"
+  | "CANCELLED"
+  | "UNKNOWN";
+
+export type CourierService = {
+  id: string;
+  provider: CourierProvider;
+  name: string;
+  code: string;
+  description?: string | null;
+  apiBaseUrl?: string | null;
+  apiKey?: string | null;
+  apiSecret?: string | null;
+  clientId?: string | null;
+  clientSecret?: string | null;
+  storeId?: string | null;
+  defaultPickupAddress?: string | null;
+  settings?: Record<string, unknown> | null;
+  isActive: boolean;
+  priority: number;
+  apiConfigured?: boolean;
+  credentialsConfigured?: boolean;
+  _count?: { shipments: number };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CourierShipment = {
+  id: string;
+  orderId: string;
+  courierServiceId: string;
+  provider: CourierProvider;
+  status: CourierShipmentStatus;
+  trackingCode?: string | null;
+  providerOrderId?: string | null;
+  consignmentId?: string | null;
+  deliveryFailedReason?: string | null;
+  cashCollectionAmount?: number;
+  collectedAmount?: number;
+  paymentCollectedAt?: string | null;
+  lastSyncedAt?: string | null;
+  errorMessage?: string | null;
+  courierService?: CourierService;
+  events?: Array<{
+    id: string;
+    providerStatus?: string | null;
+    normalizedStatus: CourierShipmentStatus;
+    message: string;
+    location?: string | null;
+    deliveryFailedReason?: string | null;
+    happenedAt: string;
+    createdAt: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export function effectiveCourierShipmentStatus(shipment?: CourierShipment | null): CourierShipmentStatus | null {
+  if (!shipment) return null;
+  if (shipment.status !== "UNKNOWN") return shipment.status;
+  const latestKnownEvent = [...(shipment.events ?? [])]
+    .reverse()
+    .find((event) => event.normalizedStatus !== "UNKNOWN");
+  return latestKnownEvent?.normalizedStatus ?? shipment.status;
+}
 
 export type AddressInfo = {
   recipient: string;
@@ -348,6 +451,7 @@ export type Order = {
   deliveryZoneName?: string | null;
   trackingCode?: string | null;
   courierName?: string | null;
+  courierShipments?: CourierShipment[];
   adminNote?: string | null;
   subtotal: number;
   shippingFee: number;
@@ -377,6 +481,8 @@ export type Order = {
     method: string;
     amount: number;
     status: string;
+    gatewayReference?: string | null;
+    providerPayload?: Record<string, unknown> | null;
   }>;
   trackingEvents: Array<{
     id: string;
@@ -490,6 +596,7 @@ export type AdminCatalog = {
   homeSections: HomeSection[];
   testimonials: Testimonial[];
   checkoutMethods: CheckoutMethod[];
+  paymentGateways: PaymentGateway[];
   deliveryZones: DeliveryZone[];
   deliveryRates: DeliveryRate[];
   siteSettings: SiteSettings;
@@ -831,6 +938,7 @@ export type ReturnRequest = {
   orderId: string;
   reason: string;
   details?: string | null;
+  proofUrls?: string[];
   resolution?: string | null;
   resolutionType?: "REFUND" | "REPLACEMENT" | "STORE_CREDIT" | "NO_ACTION" | null;
   status: string;
@@ -1585,6 +1693,7 @@ export async function createCheckout(input: {
   deliveryZoneCode?: string;
   sessionKey?: string;
   idempotencyKey?: string;
+  checkoutSource?: "cart" | "buy-now";
 }) {
   return request<Order>("/checkout", {
     method: "POST",
@@ -1764,12 +1873,31 @@ export async function createReturnRequest(input: {
   orderId: string;
   reason: string;
   details?: string;
+  proofUrls?: string[];
   items: Array<{ orderItemId: string; quantity: number }>;
 }) {
   return request<ReturnRequest>("/account/returns", {
     method: "POST",
     body: JSON.stringify(input)
   });
+}
+
+export async function uploadReturnProof(file: File) {
+  const token =
+    typeof window === "undefined" ? null : window.localStorage.getItem(authStorageKey);
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${apiBase()}/api/account/return-proofs`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Proof upload failed.");
+  }
+  return response.json() as Promise<{ filename: string; url: string }>;
 }
 
 export async function cancelReturnRequest(id: string) {
@@ -1887,8 +2015,10 @@ export async function createAdminResource<T>(
     | "home-sections"
     | "testimonials"
     | "checkout-methods"
+    | "payment-gateways"
     | "delivery-zones"
-    | "delivery-rates",
+    | "delivery-rates"
+    | "courier-services",
   input: unknown
 ) {
   return request<T>(`/admin/${path}`, {
@@ -1908,6 +2038,13 @@ export async function deleteAdminResource(path: string, id: string) {
   return request<{ deleted?: boolean; archived?: boolean }>(
     `/admin/${path}/${encodeURIComponent(id)}`,
     { method: "DELETE" }
+  );
+}
+
+export async function permanentlyDeleteAdminResource(path: string, id: string, password: string) {
+  return request<{ deleted: boolean }>(
+    `/admin/${path}/${encodeURIComponent(id)}/permanent-delete`,
+    { method: "POST", body: JSON.stringify({ password }) }
   );
 }
 
@@ -1933,6 +2070,85 @@ export async function fetchAdminOrders(input?: {
 
 export async function fetchAdminOrder(idOrNumber: string) {
   return request<Order>(`/admin/orders/${encodeURIComponent(idOrNumber)}`);
+}
+
+export async function fetchCourierServices() {
+  return request<CourierService[]>("/admin/courier-services");
+}
+
+export async function createCourierService(input: {
+  provider: CourierProvider;
+  name: string;
+  code?: string;
+  description?: string;
+  apiBaseUrl?: string;
+  apiKey?: string;
+  apiSecret?: string;
+  clientId?: string;
+  clientSecret?: string;
+  storeId?: string;
+  defaultPickupAddress?: string;
+  settings?: Record<string, unknown>;
+  isActive?: boolean;
+  priority?: number;
+}) {
+  return request<CourierService>("/admin/courier-services", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateCourierService(id: string, input: Partial<CourierService>) {
+  return request<CourierService>(`/admin/courier-services/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function deleteCourierService(id: string) {
+  return request<{ deleted?: boolean; archived?: boolean; service?: CourierService }>(
+    `/admin/courier-services/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function dispatchCourierShipment(idOrNumber: string, input: {
+  courierServiceId: string;
+  pickupAddress?: string;
+  parcelType?: string;
+  specialInstruction?: string;
+  cashCollectionAmount?: number;
+  trackingCode?: string;
+  providerOrderId?: string;
+  consignmentId?: string;
+}) {
+  return request<Order>(`/admin/orders/${encodeURIComponent(idOrNumber)}/courier-shipments`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateCourierShipment(id: string, input: {
+  status: CourierShipmentStatus;
+  trackingCode?: string;
+  providerOrderId?: string;
+  consignmentId?: string;
+  location?: string;
+  message?: string;
+  deliveryFailedReason?: string;
+  paymentCollected?: boolean;
+  collectedAmount?: number;
+}) {
+  return request<Order>(`/admin/courier-shipments/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function syncCourierShipment(id: string) {
+  return request<Order>(`/admin/courier-shipments/${encodeURIComponent(id)}/sync`, {
+    method: "POST"
+  });
 }
 
 export async function updateAdminOrder(idOrNumber: string, input: {

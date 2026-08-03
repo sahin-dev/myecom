@@ -15,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldAlert,
   Star,
   Store,
   Tags,
@@ -35,15 +36,18 @@ import {
   fetchGrowthAnalytics,
   formatMoney,
   moderateAdminReview,
+  permanentlyDeleteAdminResource,
   toggleAdminPromotion,
   updateAdminPromotion
 } from "../../lib/catalog";
+import { useAuth } from "../AuthContext";
 import {
   AdminConfirmDialog,
   AdminError,
   AdminLoading,
   AdminPagination,
   AdminPageTitle,
+  AdminPasswordConfirmDialog,
   AdminSectionHeader,
   AdminToast,
   StatusBadge,
@@ -82,6 +86,10 @@ function promotionValue(promotion: Promotion) {
 }
 
 export function AdminGrowth() {
+  const { user } = useAuth();
+  const canPermanentlyDeletePromotion = Boolean(
+    user?.permissions.includes("*") || user?.permissions.includes("promotions.permanent_delete")
+  );
   const [analytics, setAnalytics] = useState<GrowthAnalytics | null>(null);
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
@@ -91,6 +99,7 @@ export function AdminGrowth() {
   const [error, setError] = useState("");
   const { message, kind, notify } = useAdminToast();
   const [deleteTarget, setDeleteTarget] = useState<Promotion | null>(null);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Promotion | null>(null);
   const [reviewReplies, setReviewReplies] = useState<Record<string, string>>({});
   const [reviewPriorities, setReviewPriorities] = useState<Record<string, number>>({});
   const [reviewFilter, setReviewFilter] = useState<"ALL" | Review["status"] | "HOMEPAGE">("PENDING");
@@ -216,6 +225,14 @@ export function AdminGrowth() {
     } finally {
       setDeleteTarget(null);
     }
+  }
+
+  async function permanentlyDeletePromotion(password: string) {
+    if (!permanentDeleteTarget) return;
+    await permanentlyDeleteAdminResource("promotions", permanentDeleteTarget.id, password);
+    setPromotions((current) => current.filter((promotion) => promotion.id !== permanentDeleteTarget.id));
+    notify(`${permanentDeleteTarget.code} was permanently deleted.`);
+    setPermanentDeleteTarget(null);
   }
 
   function editPromotion(item: Promotion) {
@@ -352,6 +369,15 @@ export function AdminGrowth() {
           body="Promotions already used by a customer are archived instead of deleted."
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => void removePromotion(deleteTarget)}
+        />
+      ) : null}
+
+      {permanentDeleteTarget ? (
+        <AdminPasswordConfirmDialog
+          title={`Permanently delete ${permanentDeleteTarget.code}?`}
+          body="This force-deletes the coupon and its redemption history for good, even if it has already been used by customers."
+          onCancel={() => setPermanentDeleteTarget(null)}
+          onConfirm={permanentlyDeletePromotion}
         />
       ) : null}
 
@@ -505,6 +531,17 @@ export function AdminGrowth() {
                       <button className="icon-only danger" type="button" onClick={() => setDeleteTarget(promotion)} title="Delete promotion" aria-label={`Delete ${promotion.code}`}>
                         <Trash2 size={15} />
                       </button>
+                      {canPermanentlyDeletePromotion ? (
+                        <button
+                          className="icon-only danger"
+                          type="button"
+                          onClick={() => setPermanentDeleteTarget(promotion)}
+                          title="Permanently delete promotion"
+                          aria-label={`Permanently delete ${promotion.code}`}
+                        >
+                          <ShieldAlert size={15} />
+                        </button>
+                      ) : null}
                     </div>
                   </footer>
                 </article>

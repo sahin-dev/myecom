@@ -42,6 +42,7 @@ export function OrderReceipt({
   const paymentBreakdown = orderPaymentBreakdown(order);
   const billingLines = addressLines(order.billingInfo, order.billingSameAsShipping ? order.shippingAddress : undefined);
   const shippingLines = addressLines(order.shippingInfo, order.shippingAddress);
+  const latestShipment = order.courierShipments?.[0];
 
   return (
     <div className="packing-slip-overlay">
@@ -79,6 +80,16 @@ export function OrderReceipt({
               <div><dt>Method</dt><dd>{order.paymentMethod ?? "Cash on delivery"}</dd></div>
               <div><dt>Status</dt><dd>{order.paymentStatus ?? "PENDING"}</dd></div>
               <div><dt>Delivery</dt><dd>{order.deliveryMethodName ?? "Standard delivery"}</dd></div>
+              {latestShipment ? (
+                <div>
+                  <dt>Courier</dt>
+                  <dd>
+                    {latestShipment.courierService?.name ?? order.courierName ?? "Courier"}
+                    {latestShipment.trackingCode ? ` / ${latestShipment.trackingCode}` : ""}
+                    {latestShipment.deliveryFailedReason ? ` / Failed: ${latestShipment.deliveryFailedReason}` : ""}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </div>
         </section>

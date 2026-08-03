@@ -1,18 +1,27 @@
 "use client";
 
 import {
+  Activity,
+  AlertTriangle,
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
   Banknote,
   Boxes,
+  CheckCircle2,
   CircleDollarSign,
   Clock3,
   Eye,
+  GitBranch,
+  Layers,
+  PieChart,
   Radio,
   RefreshCw,
+  Repeat2,
   ShoppingBag,
   Sparkles,
+  Star,
+  Timer,
   UsersRound
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -25,6 +34,7 @@ import {
   AdminSectionHeader,
   StatusBadge
 } from "./AdminShared";
+import { CategoryBarChart, SalesTrendChart, Sparkline } from "./AdminOverviewCharts";
 
 export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => void }) {
   const [days, setDays] = useState(30);
@@ -48,10 +58,21 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
     void load();
   }, [load]);
 
-  const trendMax = useMemo(
-    () => Math.max(1, ...(dashboard?.salesTrend.map((point) => point.revenue) ?? [1])),
+  const openIssues = dashboard
+    ? dashboard.traffic.newOrderQueue +
+      dashboard.operations.ageingOrders +
+      dashboard.operations.awaitingPayment +
+      dashboard.lowStock.length
+    : 0;
+
+  const pipelineMax = useMemo(
+    () => Math.max(1, ...(dashboard?.statusBreakdown.map((item) => item.count) ?? [1])),
     [dashboard]
   );
+
+  const customerMixTotal = dashboard
+    ? Math.max(1, dashboard.customerInsights.newCustomers + dashboard.customerInsights.returningCustomers)
+    : 1;
 
   if (loading && !dashboard) return <AdminLoading />;
   if (error && !dashboard) return <AdminError message={error} retry={() => void load()} />;
@@ -65,6 +86,12 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
         description="A decision-ready view of sales, demand, customers, and fulfillment."
         actions={
           <>
+            <span className={`admin-status-pill${openIssues ? " attention" : ""}`}>
+              {openIssues ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
+              {openIssues
+                ? `${openIssues} item${openIssues === 1 ? "" : "s"} need attention`
+                : "All systems normal"}
+            </span>
             <div className="admin-period-control" aria-label="Reporting period">
               {[7, 30, 90].map((period) => (
                 <button
@@ -157,11 +184,13 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
           metric={dashboard.kpis.revenue}
           icon={<CircleDollarSign size={19} />}
           format={formatMoney}
+          trend={dashboard.salesTrend.map((point) => point.revenue)}
         />
         <KpiCard
           label="Orders"
           metric={dashboard.kpis.orders}
           icon={<ShoppingBag size={19} />}
+          trend={dashboard.salesTrend.map((point) => point.orders)}
         />
         <KpiCard
           label="Average order"
@@ -181,23 +210,96 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
         />
       </section>
 
+      <section className="admin-status-grid" aria-label="System status">
+        <div className="admin-status-card">
+          <AdminSectionHeader
+            title="Order pipeline"
+            description="Where every order in the system currently sits"
+            icon={<GitBranch size={16} />}
+          />
+          {dashboard.statusBreakdown.some((item) => item.count > 0) ? (
+            <div className="admin-pipeline-list">
+              {dashboard.statusBreakdown
+                .filter((item) => item.count > 0)
+                .map((item) => (
+                  <div className="admin-pipeline-row" key={item.status}>
+                    <StatusBadge value={item.status} />
+                    <div className="admin-pipeline-track">
+                      <span style={{ width: `${Math.max(4, (item.count / pipelineMax) * 100)}%` }} />
+                    </div>
+                    <div className="admin-pipeline-figures">
+                      <strong>{item.count}</strong>
+                      <small>{formatMoney(item.value)}</small>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <p className="admin-muted">No orders placed in this period yet.</p>
+          )}
+        </div>
+
+        <div className="admin-status-card">
+          <AdminSectionHeader
+            title="Fulfillment health"
+            description="How reliably orders are moving through operations"
+            icon={<Activity size={16} />}
+          />
+          <div className="admin-fulfillment-stats">
+            <div>
+              <span><Timer size={16} /></span>
+              <div>
+                <small>Average fulfillment time</small>
+                <strong>{formatFulfillmentTime(dashboard.operations.averageFulfillmentHours)}</strong>
+              </div>
+            </div>
+            <div>
+              <span><Layers size={16} /></span>
+              <div>
+                <small>Unfulfilled orders</small>
+                <strong>{dashboard.operations.unfulfilled}</strong>
+              </div>
+            </div>
+            <div>
+              <span><AlertTriangle size={16} /></span>
+              <div>
+                <small>Cancellation rate</small>
+                <strong>{dashboard.operations.cancelledRate}%</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="admin-status-card">
+          <AdminSectionHeader
+            title="Customer mix"
+            description={`${dashboard.customerInsights.repeatRate}% of orders came from returning customers`}
+            icon={<Repeat2 size={16} />}
+          />
+          <div className="admin-mix-bar">
+            <span
+              className="new"
+              style={{ width: `${(dashboard.customerInsights.newCustomers / customerMixTotal) * 100}%` }}
+            />
+            <span
+              className="returning"
+              style={{ width: `${(dashboard.customerInsights.returningCustomers / customerMixTotal) * 100}%` }}
+            />
+          </div>
+          <div className="admin-mix-legend">
+            <span><i className="new" />New<strong>{dashboard.customerInsights.newCustomers}</strong></span>
+            <span><i className="returning" />Returning<strong>{dashboard.customerInsights.returningCustomers}</strong></span>
+          </div>
+        </div>
+      </section>
+
       <section className="admin-analytics-grid">
         <div className="admin-chart-section">
           <AdminSectionHeader
             title="Sales trend"
             description={`${dashboard.period.days}-day net sales, grouped into ${dashboard.salesTrend.length} intervals`}
           />
-          <div className="admin-bar-chart" aria-label="Sales trend chart">
-            {dashboard.salesTrend.map((point) => (
-              <div
-                className="admin-bar-column"
-                key={point.date}
-                title={`${new Date(point.date).toLocaleDateString("en-BD")}: ${formatMoney(point.revenue)}, ${point.orders} orders`}
-              >
-                <span style={{ height: `${Math.max(3, (point.revenue / trendMax) * 100)}%` }} />
-              </div>
-            ))}
-          </div>
+          <SalesTrendChart points={dashboard.salesTrend} formatValue={formatMoney} />
           <div className="admin-chart-footer">
             <span>{new Date(dashboard.period.start).toLocaleDateString("en-BD")}</span>
             <strong>{formatMoney(dashboard.kpis.revenue.value)}</strong>
@@ -228,6 +330,43 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
               <dd>{dashboard.kpis.grossProfit.coverage}%</dd>
             </div>
           </dl>
+        </div>
+      </section>
+
+      <section className="admin-two-column">
+        <div>
+          <AdminSectionHeader
+            title="Category performance"
+            description="Revenue by product category this period"
+            icon={<PieChart size={16} />}
+            action={<button className="admin-text-button" onClick={() => onNavigate("inventory")}>Catalog <ArrowRight size={15} /></button>}
+          />
+          <CategoryBarChart items={dashboard.categoryPerformance} formatValue={formatMoney} />
+        </div>
+
+        <div>
+          <AdminSectionHeader
+            title="Top customers"
+            description="Ranked by spend this period"
+            icon={<Star size={16} />}
+            action={<button className="admin-text-button" onClick={() => onNavigate("customers")}>All customers <ArrowRight size={15} /></button>}
+          />
+          {dashboard.customerInsights.topCustomers.length ? (
+            <div className="admin-customer-compact">
+              {dashboard.customerInsights.topCustomers.map((customer, index) => (
+                <button key={customer.email} type="button" onClick={() => onNavigate("customers")}>
+                  <span className="admin-customer-rank">{index + 1}</span>
+                  <span>
+                    <strong>{customer.name || customer.email}</strong>
+                    <small>{customer.orders} order{customer.orders === 1 ? "" : "s"} · {new Date(customer.lastOrderAt).toLocaleDateString("en-BD")}</small>
+                  </span>
+                  <strong>{formatMoney(customer.spend)}</strong>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="admin-muted">No customer purchases recorded in this period yet.</p>
+          )}
         </div>
       </section>
 
@@ -305,6 +444,12 @@ export function AdminOverview({ onNavigate }: { onNavigate: (tab: AdminTab) => v
   );
 }
 
+function formatFulfillmentTime(hours: number | null) {
+  if (hours === null) return "Not enough data yet";
+  if (hours >= 24) return `${(hours / 24).toFixed(1)} days`;
+  return `${hours.toFixed(1)} hrs`;
+}
+
 function PulseMetric({
   icon,
   label,
@@ -331,22 +476,27 @@ function KpiCard({
   label,
   metric,
   icon,
-  format = (value) => new Intl.NumberFormat("en-BD").format(value)
+  format = (value) => new Intl.NumberFormat("en-BD").format(value),
+  trend
 }: {
   label: string;
   metric: AdminMetric;
   icon: React.ReactNode;
   format?: (value: number) => string;
+  trend?: number[];
 }) {
   const positive = metric.change >= 0;
   return (
     <article className="admin-kpi">
       <div><span>{icon}</span><small>{label}</small></div>
       <strong>{format(metric.value)}</strong>
-      <p className={positive ? "positive" : "negative"}>
-        {positive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-        {Math.abs(metric.change)}% <span>vs previous period</span>
-      </p>
+      <div className="admin-kpi-foot">
+        <p className={positive ? "positive" : "negative"}>
+          {positive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+          {Math.abs(metric.change)}% <span>vs previous period</span>
+        </p>
+        {trend && trend.length > 1 ? <Sparkline values={trend} /> : null}
+      </div>
     </article>
   );
 }

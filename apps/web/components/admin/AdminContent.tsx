@@ -68,7 +68,6 @@ const modes: Array<{ id: ContentMode; label: string; icon: React.ReactNode; perm
   { id: "brands", label: "Brands", icon: <Store size={17} />, permissions: ["brands.manage"] },
   { id: "categories", label: "Categories", icon: <Layers3 size={17} />, permissions: ["categories.manage"] },
   { id: "testimonials", label: "Homepage reviews", icon: <Star size={17} />, permissions: ["content.write"] },
-  { id: "checkout", label: "Checkout methods", icon: <CreditCard size={17} />, permissions: ["checkout.read", "checkout.write", "checkout_policy.write", "payment_methods.read", "payment_methods.write", "delivery_methods.read", "delivery_methods.write", "delivery_zones.read", "delivery_zones.write"] },
   { id: "pages", label: "Info pages", icon: <FileText size={17} />, permissions: ["content.write"] }
 ];
 
@@ -681,7 +680,7 @@ export function AdminContent() {
       <AdminPageTitle
         eyebrow="Storefront management"
         title="Storefront"
-        description="Manage identity, homepage content, taxonomy, reviews, and checkout options."
+        description="Manage identity, homepage content, taxonomy, visitor pages, and customer-facing storytelling."
         actions={
           <>
             <button className="admin-icon-button" type="button" onClick={() => setPreviewOpen((current) => !current)} title="Preview storefront"><Eye size={17} /></button>

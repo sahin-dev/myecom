@@ -41,6 +41,7 @@ export function PackingSlip({
   const generatedAt = new Date().toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" });
   const paymentBreakdown = orderPaymentBreakdown(order);
   const shippingLines = addressLines(order.shippingInfo, order.shippingAddress);
+  const latestShipment = order.courierShipments?.[0];
 
   return (
     <div className="packing-slip-overlay">
@@ -75,6 +76,9 @@ export function PackingSlip({
               <div><dt>Delivery</dt><dd>{order.deliveryMethodName ?? "Standard delivery"}</dd></div>
               {order.courierName ? <div><dt>Courier</dt><dd>{order.courierName}</dd></div> : null}
               {order.trackingCode ? <div><dt>Tracking code</dt><dd>{order.trackingCode}</dd></div> : null}
+              {latestShipment?.deliveryFailedReason ? (
+                <div><dt>Delivery failed</dt><dd>{latestShipment.deliveryFailedReason}</dd></div>
+              ) : null}
             </dl>
           </div>
         </section>

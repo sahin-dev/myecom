@@ -19,8 +19,11 @@ import {
 } from "class-validator";
 import {
   CheckoutMethodType,
+  CourierProvider,
+  CourierShipmentStatus,
   HomeSectionType,
   OrderStatus,
+  PaymentGatewayProvider,
   PaymentStatus,
   ProductStatus
 } from "@prisma/client";
@@ -440,6 +443,10 @@ export class CheckoutDto {
   @IsString()
   idempotencyKey?: string;
 
+  @IsOptional()
+  @IsString()
+  checkoutSource?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CheckoutItemDto)
@@ -549,6 +556,192 @@ export class AdminUpdateOrderDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+export class CreateCourierServiceDto {
+  @IsEnum(CourierProvider)
+  provider!: CourierProvider;
+
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  apiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  apiKey?: string;
+
+  @IsOptional()
+  @IsString()
+  apiSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  clientSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @IsOptional()
+  @IsString()
+  defaultPickupAddress?: string;
+
+  @IsOptional()
+  @IsObject()
+  settings?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
+}
+
+export class UpdateCourierServiceDto {
+  @IsOptional()
+  @IsEnum(CourierProvider)
+  provider?: CourierProvider;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  apiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  apiKey?: string;
+
+  @IsOptional()
+  @IsString()
+  apiSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  clientSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @IsOptional()
+  @IsString()
+  defaultPickupAddress?: string;
+
+  @IsOptional()
+  @IsObject()
+  settings?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
+}
+
+export class DispatchCourierShipmentDto {
+  @IsString()
+  courierServiceId!: string;
+
+  @IsOptional()
+  @IsString()
+  pickupAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  parcelType?: string;
+
+  @IsOptional()
+  @IsString()
+  specialInstruction?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  cashCollectionAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  trackingCode?: string;
+
+  @IsOptional()
+  @IsString()
+  providerOrderId?: string;
+
+  @IsOptional()
+  @IsString()
+  consignmentId?: string;
+}
+
+export class UpdateCourierShipmentDto {
+  @IsEnum(CourierShipmentStatus)
+  status!: CourierShipmentStatus;
+
+  @IsOptional()
+  @IsString()
+  trackingCode?: string;
+
+  @IsOptional()
+  @IsString()
+  providerOrderId?: string;
+
+  @IsOptional()
+  @IsString()
+  consignmentId?: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
+  @IsString()
+  message?: string;
+
+  @IsOptional()
+  @IsString()
+  deliveryFailedReason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  paymentCollected?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  collectedAmount?: number;
 }
 
 export class AdminUpdateProductDto {
@@ -1146,6 +1339,10 @@ export class CreateCheckoutMethodDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  paymentGatewayId?: string;
 }
 
 export class UpdateCheckoutMethodDto {
@@ -1196,4 +1393,146 @@ export class UpdateCheckoutMethodDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  paymentGatewayId?: string;
+}
+
+export class CreatePaymentGatewayDto {
+  @IsEnum(PaymentGatewayProvider)
+  provider!: PaymentGatewayProvider;
+
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  mode?: string;
+
+  @IsOptional()
+  @IsString()
+  apiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  appKey?: string;
+
+  @IsOptional()
+  @IsString()
+  appSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  password?: string;
+
+  @IsOptional()
+  @IsString()
+  callbackUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  webhookUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  merchantId?: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @IsOptional()
+  @IsObject()
+  settings?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
+}
+
+export class UpdatePaymentGatewayDto {
+  @IsOptional()
+  @IsEnum(PaymentGatewayProvider)
+  provider?: PaymentGatewayProvider;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  mode?: string;
+
+  @IsOptional()
+  @IsString()
+  apiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  appKey?: string;
+
+  @IsOptional()
+  @IsString()
+  appSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  password?: string;
+
+  @IsOptional()
+  @IsString()
+  callbackUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  webhookUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  merchantId?: string;
+
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @IsOptional()
+  @IsObject()
+  settings?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  priority?: number;
 }

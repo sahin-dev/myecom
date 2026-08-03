@@ -65,6 +65,13 @@ function checkoutLineId(line: CartLine) {
   return line.variant?.id ?? line.product.id;
 }
 
+type CheckoutSource = "cart" | "buy-now";
+
+function rememberGatewayCheckoutSource(paymentID: string | null | undefined, source: CheckoutSource) {
+  if (!paymentID || typeof window === "undefined") return;
+  window.sessionStorage.setItem(`checkout-source:${paymentID}`, source);
+}
+
 function cleanPaymentCode(value?: string | null) {
   return (value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
@@ -138,6 +145,7 @@ function PaymentMethodLogo({
 export function CheckoutPage() {
   const [catalog, setCatalog] = useState<Catalog>(fallbackCatalog);
   const [directLine, setDirectLine] = useState<CartLine | null>(null);
+  const [checkoutSource, setCheckoutSource] = useState<CheckoutSource>("cart");
   const [directLoading, setDirectLoading] = useState(true);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
@@ -178,6 +186,8 @@ export function CheckoutPage() {
 
     const params = new URLSearchParams(window.location.search);
     const productSlug = params.get("product");
+    const source: CheckoutSource = productSlug || params.get("source") === "buy-now" ? "buy-now" : "cart";
+    setCheckoutSource(source);
     if (!productSlug) {
       setDirectLoading(false);
       return;
@@ -229,8 +239,8 @@ export function CheckoutPage() {
   }, [user]);
 
   const checkoutLines = useMemo(
-    () => directLine ? [directLine] : cart,
-    [cart, directLine]
+    () => checkoutSource === "buy-now" ? (directLine ? [directLine] : []) : cart,
+    [cart, checkoutSource, directLine]
   );
   const subtotal = checkoutLines.reduce(
     (total, line) =>
@@ -292,7 +302,7 @@ export function CheckoutPage() {
       : minimumPayNowAmount;
   const dueOnDeliveryAmount = Math.max(total - payNowAmount, 0);
   const advancePaymentItems = quote?.advancePaymentItems?.filter((item) => item.advancePaymentAmount > 0) ?? [];
-  const ready = !directLoading && (directLine ? true : cartReady);
+  const ready = checkoutSource === "buy-now" ? !directLoading : cartReady;
   const canPlaceOrder =
     !placingOrder &&
     !quoteLoading &&
@@ -514,6 +524,7 @@ export function CheckoutPage() {
         deliveryZoneCode,
         sessionKey: analyticsSessionKey(),
         idempotencyKey: window.crypto.randomUUID(),
+        checkoutSource,
         items: checkoutLines.map((line) => ({
           productId: line.product.id,
           variantId: line.variant?.id,
@@ -522,27 +533,38 @@ export function CheckoutPage() {
       });
       const pendingGateway = created.payments?.find((payment) => payment.status === "PENDING");
       const shouldStartBkash =
-        pendingGateway?.provider === "bkash" ||
-        isBkashPaymentMethod(selectedOnlineMethod);
+        paymentMode === "online" &&
+        (pendingGateway?.provider === "bkash" || isBkashPaymentMethod(selectedOnlineMethod));
 
       if (shouldStartBkash) {
         try {
           setNotice("Opening secure bKash payment...");
-          const { bkashURL } = await initiateBkashPayment(created.id);
+          const preparedUrl =
+            typeof pendingGateway?.providerPayload?.bkashURL === "string"
+              ? pendingGateway.providerPayload.bkashURL
+              : "";
+          let paymentID = pendingGateway?.gatewayReference;
+          let bkashURL = preparedUrl;
+          if (!bkashURL) {
+            const initiated = await initiateBkashPayment(created.id);
+            paymentID = initiated.paymentID;
+            bkashURL = initiated.bkashURL;
+          }
+          rememberGatewayCheckoutSource(paymentID, checkoutSource);
           window.location.href = bkashURL;
           return;
         } catch (bkashError) {
           setNotice(
             bkashError instanceof Error
-              ? `bKash payment could not be started, so the order was cancelled: ${bkashError.message}`
-              : "bKash payment could not be started, so the order was cancelled. Please try again."
+              ? bkashError.message
+              : "This payment method could not be processed right now. Select another payment method or try again."
           );
           return;
         }
       }
 
       setOrder(created);
-      if (!directLine) clearCart();
+      if (checkoutSource === "cart") clearCart();
     } catch (caught) {
       setNotice(
         caught instanceof Error
@@ -558,7 +580,7 @@ export function CheckoutPage() {
     <main className="checkout-page">
       <PageHeader categories={catalog.categories} siteSettings={catalog.siteSettings} />
       <header className="checkout-page-heading">
-        <a href={directLine ? `/products/${directLine.product.slug}` : "/shop"}>
+        <a href={checkoutSource === "buy-now" && directLine ? `/products/${directLine.product.slug}` : "/shop"}>
           <ArrowLeft size={16} /> Continue shopping
         </a>
         <p className="eyebrow">Secure checkout</p>

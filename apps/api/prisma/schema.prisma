@@ -19,8 +19,31 @@ enum OrderStatus {
   PACKED
   SHIPPED
   OUT_FOR_DELIVERY
+  DELIVERY_FAILED
   DELIVERED
   CANCELLED
+}
+
+enum CourierProvider {
+  MANUAL
+  PATHAO
+  STEADFAST
+  SUNDARBAN
+  CUSTOM
+}
+
+enum CourierShipmentStatus {
+  DRAFT
+  CREATED
+  PICKUP_REQUESTED
+  PICKED_UP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RETURNED
+  CANCELLED
+  UNKNOWN
 }
 
 enum UserRole {
@@ -115,6 +138,13 @@ enum PurchaseOrderStatus {
 enum CheckoutMethodType {
   PAYMENT
   DELIVERY
+}
+
+enum PaymentGatewayProvider {
+  BKASH
+  NAGAD
+  CARD
+  OTHER
 }
 
 enum HomeSectionType {
@@ -361,11 +391,37 @@ model CheckoutMethod {
   minDeliveryDays Int?
   maxDeliveryDays Int?
   metadata        Json?
+  paymentGatewayId String?           @db.ObjectId
+  paymentGateway   PaymentGateway?   @relation(fields: [paymentGatewayId], references: [id])
   isActive        Boolean            @default(true)
   priority        Int                @default(0)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   deliveryRates   DeliveryRate[]
+}
+
+model PaymentGateway {
+  id              String                 @id @default(auto()) @map("_id") @db.ObjectId
+  provider        PaymentGatewayProvider
+  name            String
+  code            String                 @unique
+  description     String?
+  mode            String                 @default("sandbox")
+  apiBaseUrl      String?
+  appKey          String?
+  appSecret       String?
+  username        String?
+  password        String?
+  callbackUrl     String?
+  webhookUrl      String?
+  merchantId      String?
+  storeId         String?
+  settings        Json?
+  isActive        Boolean                @default(true)
+  priority        Int                    @default(0)
+  checkoutMethods CheckoutMethod[]
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
 }
 
 model DeliveryZone {
@@ -500,6 +556,7 @@ model Order {
   requiredPaymentPercent Int            @default(0)
   items              OrderItem[]
   trackingEvents     TrackingEvent[]
+  courierShipments   CourierShipment[]
   notifications      Notification[]
   payments           Payment[]
   refunds            Refund[]
@@ -546,6 +603,71 @@ model TrackingEvent {
   location  String
   note      String
   createdAt DateTime    @default(now())
+}
+
+model CourierService {
+  id                   String            @id @default(auto()) @map("_id") @db.ObjectId
+  provider             CourierProvider
+  name                 String
+  code                 String            @unique
+  description          String?
+  apiBaseUrl           String?
+  apiKey               String?
+  apiSecret            String?
+  clientId             String?
+  clientSecret         String?
+  storeId              String?
+  defaultPickupAddress String?
+  settings             Json?
+  isActive             Boolean           @default(true)
+  priority             Int               @default(0)
+  shipments            CourierShipment[]
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+}
+
+model CourierShipment {
+  id                   String                  @id @default(auto()) @map("_id") @db.ObjectId
+  orderId              String                  @db.ObjectId
+  order                Order                   @relation(fields: [orderId], references: [id])
+  courierServiceId     String                  @db.ObjectId
+  courierService       CourierService          @relation(fields: [courierServiceId], references: [id])
+  provider             CourierProvider
+  status               CourierShipmentStatus   @default(CREATED)
+  trackingCode         String?
+  providerOrderId      String?
+  consignmentId        String?
+  deliveryFailedReason String?
+  cashCollectionAmount Float                   @default(0)
+  collectedAmount     Float                    @default(0)
+  paymentCollectedAt  DateTime?
+  dispatchPayload      Json?
+  providerResponse     Json?
+  lastSyncedAt         DateTime?
+  errorMessage         String?
+  events               CourierShipmentEvent[]
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  @@index([orderId])
+  @@index([courierServiceId])
+  @@index([trackingCode])
+}
+
+model CourierShipmentEvent {
+  id                   String                @id @default(auto()) @map("_id") @db.ObjectId
+  shipmentId           String                @db.ObjectId
+  shipment             CourierShipment       @relation(fields: [shipmentId], references: [id])
+  providerStatus       String?
+  normalizedStatus     CourierShipmentStatus @default(UNKNOWN)
+  message              String
+  location             String?
+  deliveryFailedReason String?
+  happenedAt           DateTime              @default(now())
+  rawPayload           Json?
+  createdAt            DateTime              @default(now())
+
+  @@index([shipmentId])
 }
 
 model Notification {
@@ -656,6 +778,7 @@ model ReturnRequest {
   user           User?                 @relation(fields: [userId], references: [id])
   reason         String
   details        String?
+  proofUrls      String[]              @default([])
   resolution     String?
   resolutionType ReturnResolutionType?
   status         ReturnStatus          @default(REQUESTED)

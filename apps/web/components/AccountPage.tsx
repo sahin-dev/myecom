@@ -50,6 +50,8 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   productAdvancePaymentLabel,
+  resolveMediaUrl,
+  uploadReturnProof,
   updateAddress,
   updatePreferences
 } from "../lib/catalog";
@@ -61,6 +63,7 @@ import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
 import { QuickVariantAdd } from "./QuickVariantAdd";
 import { useSiteSettings } from "./SiteSettingsContext";
+import { useConfirm } from "./ui/ConfirmDialog";
 
 const defaultPreferences: NotificationPreferences = {
   id: "",
@@ -76,10 +79,15 @@ function addressText(address: Address) {
     .join(", ");
 }
 
+function deliveredAtForOrder(order: Order) {
+  return order.trackingEvents.find((event) => event.status === "DELIVERED")?.createdAt ?? order.updatedAt;
+}
+
 const standardReturnStages = ["REQUESTED", "APPROVED", "RECEIVED", "RESOLVED"];
 const refundReturnStages = ["REQUESTED", "APPROVED", "RECEIVED", "REFUND_PENDING", "REFUNDED"];
 const accountOrderPageSize = 5;
 const accountReturnPageSize = 4;
+const returnWindowMs = 3 * 24 * 60 * 60 * 1000;
 
 const returnStatusCopy: Record<string, string> = {
   REQUESTED: "Waiting for our team to review your request.",
@@ -95,6 +103,7 @@ const returnStatusCopy: Record<string, string> = {
 export function AccountPage() {
   const { user, loading, logout, updateProfile } = useAuth();
   const { settings } = useSiteSettings();
+  const confirm = useConfirm();
   const [orders, setOrders] = useState<Order[]>([]);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [orderPage, setOrderPage] = useState(1);
@@ -138,12 +147,10 @@ export function AccountPage() {
   const eligibleOrders = useMemo(
     () => orders.filter(
       (order) => {
-        const deliveredAt =
-          order.trackingEvents.find((event) => event.status === "DELIVERED")?.createdAt ??
-          order.updatedAt;
+        const deliveredAt = deliveredAtForOrder(order);
         return (
           order.status === "DELIVERED" &&
-          Date.now() - new Date(deliveredAt).getTime() <= 48 * 60 * 60 * 1000 &&
+          Date.now() - new Date(deliveredAt).getTime() <= returnWindowMs &&
           order.items.some(
             (item) => item.quantity > (activeReturnedQuantities.get(item.id) ?? 0)
           )
@@ -251,7 +258,14 @@ export function AccountPage() {
   }
 
   async function cancelOwnOrder(order: Order) {
-    if (!window.confirm(`Cancel order ${order.orderNumber}? This can't be undone.`)) return;
+    const confirmed = await confirm({
+      title: `Cancel order ${order.orderNumber}?`,
+      description: "Any reserved stock is released back to the store. This can't be undone.",
+      confirmLabel: "Cancel order",
+      cancelLabel: "Keep order",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     try {
       const updated = await cancelOrder(order.orderNumber);
       setOrders((current) => current.map((item) => item.id === order.id ? updated : item));
@@ -278,7 +292,14 @@ export function AccountPage() {
   }
 
   async function deactivateAccount() {
-    if (!window.confirm("Deactivate your account? You will be signed out immediately.")) return;
+    const confirmed = await confirm({
+      title: "Deactivate your account?",
+      description: "You'll be signed out immediately and won't be able to place orders until the account is restored.",
+      confirmLabel: "Deactivate account",
+      cancelLabel: "Stay signed in",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     try {
       await deleteAccount();
       logout();
@@ -315,10 +336,20 @@ export function AccountPage() {
     }
 
     try {
+      const proofFiles = data.getAll("proofs").filter((item): item is File =>
+        item instanceof File && item.size > 0
+      );
+      if (proofFiles.length > 4) {
+        setReturnMessage("Attach up to 4 proof files.");
+        return;
+      }
+      setReturnMessage(proofFiles.length ? "Uploading proof files..." : "");
+      const proofUrls = await Promise.all(proofFiles.map((file) => uploadReturnProof(file)));
       const created = await createReturnRequest({
         orderId: order.id,
         reason: String(data.get("reason")),
         details: String(data.get("details") || ""),
+        proofUrls: proofUrls.map((file) => file.url),
         items
       });
       setReturns((current) => [created, ...current]);
@@ -329,6 +360,24 @@ export function AccountPage() {
     } catch (caught) {
       setReturnMessage(caught instanceof Error ? caught.message : "Could not submit return.");
     }
+  }
+
+  function startReturnForOrder(order: Order) {
+    setReturnOrderId(order.id);
+    setReturnQuantities({});
+    setReturnMessage("");
+    window.setTimeout(() => {
+      document.getElementById("account-returns")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }
+
+  function isOrderReturnable(order: Order) {
+    const deliveredAt = deliveredAtForOrder(order);
+    return (
+      order.status === "DELIVERED" &&
+      Date.now() - new Date(deliveredAt).getTime() <= returnWindowMs &&
+      order.items.some((item) => item.quantity > (activeReturnedQuantities.get(item.id) ?? 0))
+    );
   }
 
   async function readNotification(id: string) {
@@ -518,6 +567,7 @@ export function AccountPage() {
               {pagedOrders.map((order) => {
                 const expanded = expandedOrderId === order.id;
                 const paymentBreakdown = orderPaymentBreakdown(order);
+                const latestShipment = order.courierShipments?.[0];
                 return (
                   <article key={order.id} className={expanded ? "expanded" : ""}>
                     <button
@@ -563,6 +613,13 @@ export function AccountPage() {
                         <div className="account-order-meta">
                           <span><MapPin size={13} /> {order.shippingAddress}</span>
                           {order.deliveryMethodName ? <span><Truck size={13} /> {order.deliveryMethodName}</span> : null}
+                          {latestShipment ? (
+                            <span>
+                              <Truck size={13} />
+                              {latestShipment.courierService?.name ?? order.courierName ?? "Courier"} / {latestShipment.status.replace(/_/g, " ")}
+                              {latestShipment.deliveryFailedReason ? ` / Reason: ${latestShipment.deliveryFailedReason}` : ""}
+                            </span>
+                          ) : null}
                           <span><CreditCard size={13} /> {order.paymentMethod ?? "Cash on delivery"} · {order.paymentStatus ?? "PENDING"}</span>
                         </div>
                         <dl className="account-order-summary">
@@ -592,6 +649,11 @@ export function AccountPage() {
                           ) : null}
                         </dl>
                         <div className="account-order-detail-footer">
+                          {isOrderReturnable(order) ? (
+                            <button type="button" className="secondary-action compact" onClick={() => startReturnForOrder(order)}>
+                              <RotateCcw size={14} /> Return items
+                            </button>
+                          ) : null}
                           <button type="button" className="text-link" onClick={() => setReceiptOrder(order)}>
                             <Download size={14} /> Download receipt
                           </button>
@@ -744,62 +806,87 @@ export function AccountPage() {
             </div>
           </div>
           {eligibleOrders.length ? (
-            <form className="account-form" onSubmit={requestReturn}>
-              <label>
-                <span>Delivered order</span>
-                <select
-                  name="orderId"
-                  value={returnOrderId}
-                  onChange={(event) => {
-                    setReturnOrderId(event.target.value);
-                    setReturnQuantities({});
-                    setReturnMessage("");
-                  }}
-                  required
-                >
-                  <option value="" disabled>Select an order</option>
-                  {eligibleOrders.map((order) => (
-                    <option value={order.id} key={order.id}>
-                      {order.orderNumber} - {new Date(order.createdAt).toLocaleDateString("en-BD")}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {returnOrder ? (
-                <ReturnItemPicker
-                  order={returnOrder}
-                  returnedQuantities={activeReturnedQuantities}
-                  quantities={returnQuantities}
-                  onChange={setReturnQuantities}
-                />
-              ) : null}
-              {returnOrder ? (
-                <>
-                  <label>
-                    <span>Reason</span>
-                    <select name="reason" defaultValue="" required>
-                      <option value="" disabled>Select a reason</option>
-                      <option>Damaged item</option>
-                      <option>Incorrect item</option>
-                      <option>Quality concern</option>
-                      <option>Changed my mind</option>
-                    </select>
-                  </label>
+            <div className="return-request-workspace">
+              {!returnOrder ? (
+                <div className="return-order-starter">
+                  <div>
+                    <strong>Start a return from an order</strong>
+                    <p>Delivered orders stay eligible for 3 days. You can also open an order in purchase history and choose return items there.</p>
+                  </div>
+                  <div className="return-order-options">
+                    {eligibleOrders.map((order) => (
+                      <button type="button" key={order.id} onClick={() => startReturnForOrder(order)}>
+                        <span>
+                          <strong>{order.orderNumber}</strong>
+                          <small>Delivered {new Date(deliveredAtForOrder(order)).toLocaleDateString("en-BD")}</small>
+                        </span>
+                        <b>{order.items.length} items</b>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <form className="account-form return-request-form" onSubmit={requestReturn}>
+                  <input type="hidden" name="orderId" value={returnOrder.id} />
+                  <div className="return-selected-order">
+                    <span>
+                      <strong>{returnOrder.orderNumber}</strong>
+                      <small>Delivered {new Date(deliveredAtForOrder(returnOrder)).toLocaleDateString("en-BD")} / {formatMoney(returnOrder.total)}</small>
+                    </span>
+                    <button type="button" className="text-link" onClick={() => {
+                      setReturnOrderId("");
+                      setReturnQuantities({});
+                      setReturnMessage("");
+                    }}>
+                      Change order
+                    </button>
+                  </div>
+                  <ReturnItemPicker
+                    order={returnOrder}
+                    returnedQuantities={activeReturnedQuantities}
+                    quantities={returnQuantities}
+                    onChange={setReturnQuantities}
+                  />
+                  <div className="return-form-grid">
+                    <label>
+                      <span>Reason</span>
+                      <select name="reason" defaultValue="" required>
+                        <option value="" disabled>Select a reason</option>
+                        <option>Damaged item</option>
+                        <option>Incorrect item</option>
+                        <option>Quality concern</option>
+                        <option>Changed my mind</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Proof photos or videos</span>
+                      <input
+                        name="proofs"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
+                        multiple
+                      />
+                      <small>Up to 4 files. JPG, PNG, WebP, MP4, MOV, or WebM.</small>
+                    </label>
+                  </div>
                   <label>
                     <span>Additional details</span>
-                    <textarea name="details" placeholder="Describe the issue to help us review it faster" />
+                    <textarea name="details" placeholder="Describe the issue, product condition, and what you prefer next." />
                   </label>
-                  <button
-                    className="secondary-action"
-                    type="submit"
-                    disabled={!Object.values(returnQuantities).some((quantity) => quantity > 0)}
-                  >
-                    Submit return request
-                  </button>
-                </>
-              ) : null}
-            </form>
-          ) : <p className="muted-copy">Orders delivered within the 48-hour return window will appear here.</p>}
+                  <div className="return-submit-row">
+                    <small>Our team will review your request and proof before approving pickup or drop-off instructions.</small>
+                    <button
+                      className="primary-action"
+                      type="submit"
+                      disabled={!Object.values(returnQuantities).some((quantity) => quantity > 0)}
+                    >
+                      Submit return request
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          ) : <p className="muted-copy">Orders delivered within the 3-day return window will appear here.</p>}
           {returnMessage ? <p className="detail-notice">{returnMessage}</p> : null}
           <div className="return-list">
             {pagedReturns.map((item) => {
@@ -833,6 +920,19 @@ export function AccountPage() {
                     </div>
                   ) : null}
                   <p>{returnStatusCopy[item.status] ?? "Our team is reviewing this return."}</p>
+                  {item.proofUrls?.length ? (
+                    <div className="return-proof-list">
+                      {item.proofUrls.map((url) => {
+                        const mediaUrl = resolveMediaUrl(url) ?? url;
+                        const isVideo = /\.(mp4|mov|webm)(\?|$)/i.test(mediaUrl);
+                        return (
+                          <a href={mediaUrl} target="_blank" rel="noreferrer" key={url}>
+                            {isVideo ? "Video proof" : "Photo proof"}
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   <ul>
                     {item.items.map((returnItem) => (
                       <li key={returnItem.id}>
@@ -925,8 +1025,8 @@ function ReturnItemPicker({
     <div className="return-item-picker">
       <div className="return-picker-heading">
         <div>
-          <strong>Choose products</strong>
-          <small>Select only the items you want to send back.</small>
+          <strong>Select items to return</strong>
+          <small>Choose the products and quantity you want to send back.</small>
         </div>
         <span>{returnableItems.length} items</span>
       </div>
@@ -945,12 +1045,13 @@ function ReturnItemPicker({
                 }))}
               />
               <span className="return-product-icon"><PackageCheck size={17} /></span>
-              <span>
+              <span className="return-product-copy">
                 <strong>{item.productName}</strong>
                 <small>
                   {item.variantName ? `${item.variantName} / ` : ""}
                   {remaining} of {item.quantity} available to return
                 </small>
+                <small>{formatMoney(item.unitPrice)} each</small>
               </span>
             </label>
             <label className="return-quantity-control">

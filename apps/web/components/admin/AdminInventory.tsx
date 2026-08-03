@@ -24,6 +24,7 @@ import {
   deleteAdminResource,
   deleteProductImage,
   deleteProductVariant,
+  permanentlyDeleteAdminResource,
   fetchAdminCatalog,
   formatMoney,
   unitTypeLabels,
@@ -39,6 +40,7 @@ import {
   AdminMultiUploadField,
   AdminPagination,
   AdminPageTitle,
+  AdminPasswordConfirmDialog,
   AdminSectionHeader,
   AdminToast,
   AdminUploadField,
@@ -196,6 +198,7 @@ export function AdminInventory() {
   );
   const [error, setError] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<Product | null>(null);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Product | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkApplying, setBulkApplying] = useState(false);
   const [bulkArchiveOpen, setBulkArchiveOpen] = useState(false);
@@ -207,6 +210,7 @@ export function AdminInventory() {
   const canManageCatalog =
     hasPermission("products.create") || hasPermission("products.update");
   const canAdjustInventory = hasPermission("inventory.write");
+  const canPermanentlyDelete = hasPermission("products.permanent_delete");
 
   function openProduct(product: Product) {
     setSelected(product);
@@ -607,6 +611,15 @@ export function AdminInventory() {
     }
   }
 
+  async function permanentlyDeleteProduct(password: string) {
+    if (!selected) return;
+    await permanentlyDeleteAdminResource("products", selected.id, password);
+    setPermanentDeleteTarget(null);
+    setSelected(null);
+    await load();
+    notify("Product permanently deleted.");
+  }
+
   function toggleProductSelected(id: string) {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -791,6 +804,15 @@ export function AdminInventory() {
         />
       ) : null}
 
+      {permanentDeleteTarget ? (
+        <AdminPasswordConfirmDialog
+          title={`Permanently delete ${permanentDeleteTarget.name}?`}
+          body="This erases the product, its images, variants, reviews, and cart/wishlist entries for good. Products with order or purchase history can't be permanently deleted — archive them instead."
+          onCancel={() => setPermanentDeleteTarget(null)}
+          onConfirm={permanentlyDeleteProduct}
+        />
+      ) : null}
+
       {bulkArchiveOpen ? (
         <AdminConfirmDialog
           title={`Archive ${selectedIds.size} product${selectedIds.size === 1 ? "" : "s"}?`}
@@ -924,6 +946,11 @@ export function AdminInventory() {
               </div>
               <div className="admin-editor-sticky-actions">
                 <button className="secondary-action" type="button" onClick={() => setArchiveTarget(selected)}><Trash2 size={16} /> Archive</button>
+                {canPermanentlyDelete ? (
+                  <button className="danger-action" type="button" onClick={() => setPermanentDeleteTarget(selected)}>
+                    <Trash2 size={16} /> Permanently delete
+                  </button>
+                ) : null}
                 <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : "Save product"}</button>
               </div>
             </form> : null}

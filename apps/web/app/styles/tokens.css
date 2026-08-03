@@ -1,0 +1,191 @@
+/* ============================================================================
+   TOKENS — primitive layer
+   ----------------------------------------------------------------------------
+   Raw values only. Nothing here describes intent, so nothing here should be
+   referenced directly by a component. Components consume the semantic roles
+   in `semantic.css`, which are the only things that change between themes.
+
+   Ramps are warm-neutral, derived from the existing brand ink (#3a3026) and
+   sand (#e7d2b5) so the established identity is preserved, not replaced.
+   ========================================================================== */
+
+:root {
+  /* --- Neutral: warm grey-brown, the structural ramp -------------------- */
+  --n-0: #ffffff;
+  --n-25: #fdfbf8;
+  --n-50: #fbf7f1;
+  --n-100: #f5efe5;
+  --n-150: #ece3d5;
+  --n-200: #ddd4c8;
+  --n-300: #c6baa8;
+  --n-400: #a89984;
+  --n-500: #8a7a64;
+  --n-600: #6b5c48;
+  --n-700: #524634;
+  --n-800: #3a3026;
+  --n-900: #2a221a;
+  --n-950: #1b1610;
+  --n-1000: #120f0b;
+
+  /* --- Sand: the brand accent ------------------------------------------ */
+  --sand-50: #fdf9f3;
+  --sand-100: #f7eddd;
+  --sand-200: #efdfc6;
+  --sand-300: #e7d2b5;
+  --sand-400: #d4b58d;
+  --sand-500: #bf9a69;
+  --sand-600: #9d7a4d;
+  --sand-700: #765816;
+  --sand-800: #573f10;
+
+  /* --- Blue: interactive / informational signal ------------------------- */
+  --blue-50: #f4f8ff;
+  --blue-100: #e4eefc;
+  --blue-200: #c6dcfa;
+  --blue-300: #9cc3f5;
+  --blue-400: #589df0;
+  --blue-500: #3b82e0;
+  --blue-600: #2a67bd;
+  --blue-700: #245d9f;
+  --blue-800: #1b4576;
+
+  /* --- Green: success --------------------------------------------------- */
+  --green-50: #f1f9f4;
+  --green-100: #e9f6ed;
+  --green-200: #b9dac5;
+  --green-300: #86bd9c;
+  --green-500: #2f6d50;
+  --green-600: #24643a;
+  --green-700: #1b4c2c;
+
+  /* --- Amber: warning --------------------------------------------------- */
+  --amber-50: #fffcf0;
+  --amber-100: #fff7dc;
+  --amber-200: #f2e0ae;
+  --amber-300: #e3cf98;
+  --amber-500: #a96f16;
+  --amber-600: #765816;
+  --amber-700: #5a4211;
+
+  /* --- Red: danger ------------------------------------------------------ */
+  --red-50: #fff7f6;
+  --red-100: #fff0ef;
+  --red-200: #e2b7b4;
+  --red-300: #d9a390;
+  --red-500: #a8443c;
+  --red-600: #8c342f;
+  --red-700: #6f2823;
+
+  /* --- Font stacks ------------------------------------------------------ */
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* --- Type scale -------------------------------------------------------
+     Nine steps. The three smallest are re-declared per density mode in
+     semantic.css, which is how the whole console tightens or relaxes.      */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-3xl: 28px;
+  --text-4xl: 36px;
+
+  /* --- Line heights ----------------------------------------------------- */
+  --leading-none: 1;
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* --- Weights ---------------------------------------------------------- */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-heavy: 800;
+
+  /* --- Letter spacing --------------------------------------------------- */
+  --tracking-tight: -0.014em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+  --tracking-caps: 0.06em;
+
+  /* --- Space: 4pt base -------------------------------------------------- */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+  --space-12: 96px;
+
+  /* --- Radius ----------------------------------------------------------- */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+  --radius-full: 999px;
+
+  /* --- Elevation: four steps, tinted with the brand ink ----------------- */
+  --elevation-0: none;
+  --elevation-1: 0 1px 2px rgba(26, 22, 16, 0.06), 0 1px 1px rgba(26, 22, 16, 0.04);
+  --elevation-2: 0 2px 4px rgba(26, 22, 16, 0.06), 0 4px 12px rgba(26, 22, 16, 0.07);
+  --elevation-3: 0 8px 20px rgba(26, 22, 16, 0.1), 0 2px 6px rgba(26, 22, 16, 0.06);
+  --elevation-4: 0 24px 56px rgba(26, 22, 16, 0.18), 0 8px 20px rgba(26, 22, 16, 0.1);
+
+  /* --- Motion ----------------------------------------------------------- */
+  --duration-instant: 80ms;
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+  --duration-slow: 340ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0.15, 1);
+  --ease-entrance: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* --- Layering --------------------------------------------------------- */
+  --z-base: 0;
+  --z-sticky: 20;
+  --z-header: 40;
+  --z-dropdown: 60;
+  --z-overlay: 80;
+  --z-modal: 100;
+  --z-toast: 120;
+
+  /* --- Layout ----------------------------------------------------------- */
+  --container-max: 1320px;
+  --container-wide: 1500px;
+  --breakpoint-sm: 620px;
+  --breakpoint-md: 860px;
+  --breakpoint-lg: 1180px;
+}
+
+/* Users who ask for less motion get none of it. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

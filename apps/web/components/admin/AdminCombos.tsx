@@ -18,8 +18,10 @@ import {
   createAdminComboDeal,
   fetchAdminCatalog,
   formatMoney,
+  permanentlyDeleteAdminResource,
   updateAdminComboDeal
 } from "../../lib/catalog";
+import { useAuth } from "../AuthContext";
 import {
   AdminConfirmDialog,
   AdminError,
@@ -27,6 +29,7 @@ import {
   AdminMultiUploadField,
   AdminPagination,
   AdminPageTitle,
+  AdminPasswordConfirmDialog,
   AdminSectionHeader,
   AdminToast,
   StatusBadge,
@@ -42,6 +45,10 @@ function imageUrls(product: Product) {
 }
 
 export function AdminCombos() {
+  const { user } = useAuth();
+  const canPermanentlyDelete = Boolean(
+    user?.permissions.includes("*") || user?.permissions.includes("combos.permanent_delete")
+  );
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [selected, setSelected] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
@@ -55,6 +62,7 @@ export function AdminCombos() {
   const { message, kind, notify } = useAdminToast();
   const [error, setError] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<Product | null>(null);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Product | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -262,6 +270,15 @@ export function AdminCombos() {
     }
   }
 
+  async function permanentlyDeleteCombo(password: string) {
+    if (!selected) return;
+    await permanentlyDeleteAdminResource("combo-deals", selected.id, password);
+    setPermanentDeleteTarget(null);
+    closeEditor();
+    notify("Combo deal permanently deleted.");
+    await load();
+  }
+
   if (loading && !catalog) return <AdminLoading label="Loading combo deals..." />;
   if (error && !catalog) return <AdminError message={error} retry={() => void load()} />;
   if (!catalog) return null;
@@ -304,6 +321,15 @@ export function AdminCombos() {
           confirmLabel="Archive"
           onCancel={() => setArchiveTarget(null)}
           onConfirm={() => void archiveCombo()}
+        />
+      ) : null}
+
+      {permanentDeleteTarget ? (
+        <AdminPasswordConfirmDialog
+          title={`Permanently delete ${permanentDeleteTarget.name}?`}
+          body="This erases the combo, its images, and its variants for good. Combos with order or purchase history can't be permanently deleted — archive them instead."
+          onCancel={() => setPermanentDeleteTarget(null)}
+          onConfirm={permanentlyDeleteCombo}
         />
       ) : null}
 
@@ -449,6 +475,11 @@ export function AdminCombos() {
                     <Trash2 size={16} /> Archive
                   </button>
                 ) : <button className="secondary-action" type="button" onClick={closeEditor}>Cancel</button>}
+                {selected && canPermanentlyDelete ? (
+                  <button className="danger-action" type="button" onClick={() => setPermanentDeleteTarget(selected)}>
+                    <Trash2 size={16} /> Permanently delete
+                  </button>
+                ) : null}
                 <button className="primary-action" type="submit" disabled={saving}>
                   {saving ? "Saving..." : selected ? "Save combo" : "Create combo"}
                 </button>

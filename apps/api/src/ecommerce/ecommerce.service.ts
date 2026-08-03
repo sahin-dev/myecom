@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import {
   AnalyticsEventType,
   CheckoutMethodType,
+  CourierShipmentStatus,
   PromotionType,
   OrderStatus,
   PaymentStatus,
@@ -18,26 +19,37 @@ import {
   CreateBrandDto,
   CreateCategoryDto,
   CreateCheckoutMethodDto,
+  CreateCourierServiceDto,
   CreateDeliveryRateDto,
   CreateDeliveryZoneDto,
   CreateHomeSectionDto,
+  CreatePaymentGatewayDto,
   CreateProductDto,
   CreateTestimonialDto,
+  DispatchCourierShipmentDto,
   ProductEligibilityDto,
   UpdateBrandDto,
   UpdateCategoryDto,
   UpdateCheckoutMethodDto,
+  UpdateCourierServiceDto,
+  UpdateCourierShipmentDto,
   UpdateDeliveryRateDto,
   UpdateDeliveryZoneDto,
   UpdateHomeSectionDto,
   UpdateOrderStatusDto,
+  UpdatePaymentGatewayDto,
   UpdateSiteSettingsDto,
   UpdateTestimonialDto
 } from "./ecommerce.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import type { AuthUser } from "../auth/auth.types";
+import { AuthService } from "../auth/auth.service";
 import { ExperienceService, PromotionLine } from "../experience/experience.service";
 import { UpdateCustomerDto } from "../experience/experience.dto";
+import { PaymentStrategyResolver } from "../payments/payment-strategy.service";
+import { CourierAdminService } from "./courier-admin.service";
+import { DeliverySettingsService } from "./delivery-settings.service";
+import { PaymentSettingsService } from "./payment-settings.service";
 
 const slugify = (value: string) =>
   value
@@ -148,17 +160,45 @@ const orderTransitions: Record<OrderStatus, OrderStatus[]> = {
   CONFIRMED: [OrderStatus.PACKED, OrderStatus.CANCELLED],
   PACKED: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
   SHIPPED: [OrderStatus.OUT_FOR_DELIVERY],
-  OUT_FOR_DELIVERY: [OrderStatus.DELIVERED],
+  OUT_FOR_DELIVERY: [OrderStatus.DELIVERED, OrderStatus.DELIVERY_FAILED],
+  DELIVERY_FAILED: [OrderStatus.OUT_FOR_DELIVERY],
   DELIVERED: [],
   CANCELLED: []
 };
-
 @Injectable()
 export class EcommerceService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly experience: ExperienceService
+    private readonly experience: ExperienceService,
+    private readonly paymentStrategies: PaymentStrategyResolver,
+    private readonly couriers: CourierAdminService,
+    private readonly deliverySettings: DeliverySettingsService,
+    private readonly paymentSettings: PaymentSettingsService,
+    private readonly auth: AuthService
   ) {}
+
+  private withEffectiveCourierStatuses<
+    T extends {
+      courierShipments?: Array<{
+        status: CourierShipmentStatus;
+        events?: Array<{ normalizedStatus: CourierShipmentStatus }>;
+      }>;
+    }
+  >(order: T): T {
+    if (!order.courierShipments?.length) return order;
+    return {
+      ...order,
+      courierShipments: order.courierShipments.map((shipment) => {
+        if (shipment.status !== CourierShipmentStatus.UNKNOWN) return shipment;
+        const latestKnownEvent = [...(shipment.events ?? [])]
+          .reverse()
+          .find((event) => event.normalizedStatus !== CourierShipmentStatus.UNKNOWN);
+        return latestKnownEvent
+          ? { ...shipment, status: latestKnownEvent.normalizedStatus }
+          : shipment;
+      })
+    } as T;
+  }
 
   async home() {
     const now = new Date();
@@ -613,6 +653,43 @@ export class EcommerceService {
     });
   }
 
+  async permanentlyDeleteProduct(actorId: string, password: string, id: string) {
+    await this.auth.assertPassword(actorId, password);
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new NotFoundException("Product not found.");
+
+    const [orderItemCount, purchaseOrderItemCount] = await Promise.all([
+      this.prisma.orderItem.count({ where: { productId: id } }),
+      this.prisma.purchaseOrderItem.count({ where: { productId: id } })
+    ]);
+    if (orderItemCount || purchaseOrderItemCount) {
+      throw new BadRequestException(
+        "This product has order or purchase history and can't be permanently deleted. Archive it instead."
+      );
+    }
+
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.cartItem.deleteMany({ where: { productId: id } });
+      await transaction.wishlistItem.deleteMany({ where: { productId: id } });
+      await transaction.stockAlert.deleteMany({ where: { productId: id } });
+      await transaction.review.deleteMany({ where: { productId: id } });
+      await transaction.inventoryMovement.deleteMany({ where: { productId: id } });
+      await transaction.productImage.deleteMany({ where: { productId: id } });
+      await transaction.productVariant.deleteMany({ where: { productId: id } });
+      await transaction.product.delete({ where: { id } });
+      await transaction.auditLog.create({
+        data: {
+          actorId,
+          action: "product.permanent_delete",
+          entity: "Product",
+          entityId: id,
+          metadata: { name: product.name, slug: product.slug }
+        }
+      });
+    });
+    return { deleted: true };
+  }
+
   async createComboDeal(dto: CreateProductDto) {
     return this.createProduct({
       ...dto,
@@ -637,6 +714,12 @@ export class EcommerceService {
       include: { brand: true, category: true, images: true, variants: true }
     });
     return { archived: true, combo: archived };
+  }
+
+  async permanentlyDeleteComboDeal(actorId: string, password: string, id: string) {
+    const combo = await this.prisma.product.findUnique({ where: { id } });
+    if (!combo || !combo.isCombo) throw new NotFoundException("Combo deal not found.");
+    return this.permanentlyDeleteProduct(actorId, password, id);
   }
 
   private async validateComboProducts(ids: string[]) {
@@ -697,132 +780,51 @@ export class EcommerceService {
   }
 
   async createCheckoutMethod(dto: CreateCheckoutMethodDto) {
-    return this.prisma.checkoutMethod.create({
-      data: {
-        ...dto,
-        code: dto.code.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_"),
-        fee: dto.fee ?? 0,
-        metadata: dto.metadata as Prisma.InputJsonValue | undefined,
-        priority: dto.priority ?? 0,
-        isActive: dto.isActive ?? true
-      }
-    });
+    return this.paymentSettings.createCheckoutMethod(dto);
   }
 
   async updateCheckoutMethod(id: string, dto: UpdateCheckoutMethodDto) {
-    return this.prisma.checkoutMethod.update({
-      where: { id },
-      data: {
-        ...dto,
-        code: dto.code
-          ? dto.code.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_")
-          : undefined,
-        metadata: dto.metadata as Prisma.InputJsonValue | undefined
-      }
-    });
+    return this.paymentSettings.updateCheckoutMethod(id, dto);
   }
 
   async deleteCheckoutMethod(id: string) {
-    await this.prisma.deliveryRate.deleteMany({ where: { deliveryMethodId: id } });
-    await this.prisma.checkoutMethod.delete({ where: { id } });
-    return { deleted: true };
+    return this.paymentSettings.deleteCheckoutMethod(id);
+  }
+
+  async createPaymentGateway(dto: CreatePaymentGatewayDto) {
+    return this.paymentSettings.createPaymentGateway(dto);
+  }
+
+  async updatePaymentGateway(id: string, dto: UpdatePaymentGatewayDto) {
+    return this.paymentSettings.updatePaymentGateway(id, dto);
+  }
+
+  async deletePaymentGateway(id: string) {
+    return this.paymentSettings.deletePaymentGateway(id);
   }
 
   async createDeliveryZone(dto: CreateDeliveryZoneDto) {
-    return this.prisma.deliveryZone.create({
-      data: {
-        name: dto.name.trim(),
-        code: cleanCode(dto.code || dto.name),
-        city: dto.city?.trim() || null,
-        areas: compactStrings(dto.areas),
-        postalCodes: compactStrings(dto.postalCodes),
-        isActive: dto.isActive ?? true,
-        priority: dto.priority ?? 0
-      },
-      include: { rates: { include: { deliveryMethod: true } } }
-    });
+    return this.deliverySettings.createDeliveryZone(dto);
   }
 
   async updateDeliveryZone(id: string, dto: UpdateDeliveryZoneDto) {
-    return this.prisma.deliveryZone.update({
-      where: { id },
-      data: {
-        name: dto.name?.trim(),
-        code: dto.code === undefined ? undefined : cleanCode(dto.code),
-        city: dto.city === undefined ? undefined : dto.city.trim() || null,
-        areas: dto.areas === undefined ? undefined : compactStrings(dto.areas),
-        postalCodes: dto.postalCodes === undefined ? undefined : compactStrings(dto.postalCodes),
-        isActive: dto.isActive,
-        priority: dto.priority
-      },
-      include: { rates: { include: { deliveryMethod: true } } }
-    });
+    return this.deliverySettings.updateDeliveryZone(id, dto);
   }
 
   async deleteDeliveryZone(id: string) {
-    await this.prisma.deliveryRate.deleteMany({ where: { zoneId: id } });
-    await this.prisma.deliveryZone.delete({ where: { id } });
-    return { deleted: true };
+    return this.deliverySettings.deleteDeliveryZone(id);
   }
 
   async createDeliveryRate(dto: CreateDeliveryRateDto) {
-    return this.prisma.deliveryRate.create({
-      data: {
-        zoneId: dto.zoneId,
-        deliveryMethodId: dto.deliveryMethodId,
-        baseFee: dto.baseFee ?? 0,
-        freeThreshold: dto.freeThreshold,
-        minOrder: dto.minOrder ?? 0,
-        maxOrder: dto.maxOrder,
-        minDeliveryDays: dto.minDeliveryDays,
-        maxDeliveryDays: dto.maxDeliveryDays,
-        isActive: dto.isActive ?? true,
-        priority: dto.priority ?? 0
-      },
-      include: { zone: true, deliveryMethod: true }
-    });
+    return this.deliverySettings.createDeliveryRate(dto);
   }
 
   async updateDeliveryRate(id: string, dto: UpdateDeliveryRateDto) {
-    return this.prisma.deliveryRate.update({
-      where: { id },
-      data: {
-        zoneId: dto.zoneId,
-        deliveryMethodId: dto.deliveryMethodId,
-        baseFee: dto.baseFee,
-        freeThreshold: dto.freeThreshold,
-        minOrder: dto.minOrder,
-        maxOrder: dto.maxOrder,
-        minDeliveryDays: dto.minDeliveryDays,
-        maxDeliveryDays: dto.maxDeliveryDays,
-        isActive: dto.isActive,
-        priority: dto.priority
-      },
-      include: { zone: true, deliveryMethod: true }
-    });
+    return this.deliverySettings.updateDeliveryRate(id, dto);
   }
 
   async deleteDeliveryRate(id: string) {
-    await this.prisma.deliveryRate.delete({ where: { id } });
-    return { deleted: true };
-  }
-
-  private isCashPayment(code?: string | null, name?: string | null) {
-    const value = `${cleanCode(code)} ${cleanCode(name)}`;
-    return value.includes("COD") || value.includes("CASH_ON_DELIVERY") || value.includes("CASH");
-  }
-
-  private paymentProviderFor(code?: string | null, name?: string | null, metadata?: unknown) {
-    if (this.isCashPayment(code, name)) return "cash";
-    const provider =
-      metadata && typeof metadata === "object" && "provider" in metadata
-        ? String((metadata as { provider?: unknown }).provider ?? "")
-        : "";
-    const value = `${cleanCode(code)} ${cleanCode(name)} ${cleanCode(provider)}`;
-    if (value.includes("BKASH") || value.includes("ONLINE_PAYMENT")) return "bkash";
-    if (value.includes("NAGAD")) return "nagad";
-    if (value.includes("CARD")) return "card";
-    return "pending-gateway";
+    return this.deliverySettings.deleteDeliveryRate(id);
   }
 
   private resolveDeliveryZone<T extends { code: string; city?: string | null; areas: string[]; postalCodes: string[] }>(
@@ -927,7 +929,7 @@ export class EcommerceService {
       const onlinePaymentCodes = policy.onlineOnly
         ? productPaymentCodes.filter((code) => {
             const method = paymentMethods.find((candidate) => cleanCode(candidate.code) === code);
-            return !this.isCashPayment(method?.code, method?.name);
+            return !this.paymentStrategies.isCashPayment(method?.code, method?.name);
           })
         : productPaymentCodes;
       allowedPaymentCodes = intersects(allowedPaymentCodes, onlinePaymentCodes);
@@ -989,7 +991,7 @@ export class EcommerceService {
     if (requiresAdvancePayment) {
       allowedPaymentCodes = allowedPaymentCodes.filter((code) => {
         const method = paymentMethods.find((candidate) => cleanCode(candidate.code) === code);
-        return !this.isCashPayment(method?.code, method?.name);
+        return !this.paymentStrategies.isCashPayment(method?.code, method?.name);
       });
     }
     const availablePaymentMethods = paymentMethods.filter((method) =>
@@ -1116,6 +1118,10 @@ export class EcommerceService {
               payments: true,
               promotion: { select: { code: true, name: true } },
               trackingEvents: { orderBy: { createdAt: "asc" } },
+              courierShipments: {
+                include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+                orderBy: { createdAt: "desc" }
+              },
               notifications: true
             }
           }
@@ -1129,6 +1135,10 @@ export class EcommerceService {
           payments: true,
           promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } },
+          courierShipments: {
+            include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+            orderBy: { createdAt: "desc" }
+          },
           notifications: true
         }
       });
@@ -1205,7 +1215,7 @@ export class EcommerceService {
     const shippingAddress = shippingInfo ? formatAddressInfo(shippingInfo) : dto.shippingAddress;
     const total = quote.total;
     const minimumPayNowAmount = roundMoney(quote.amountDueNow);
-    const usesOnlinePayment = !this.isCashPayment(paymentConfig?.code, paymentMethod);
+    const usesOnlinePayment = !this.paymentStrategies.isCashPayment(paymentConfig?.code, paymentMethod);
     const defaultPayNowAmount = usesOnlinePayment
       ? minimumPayNowAmount || total
       : minimumPayNowAmount;
@@ -1225,6 +1235,20 @@ export class EcommerceService {
     const amountDueNow = roundMoney(requestedPayNowAmount);
     const amountDueOnDelivery = roundMoney(Math.max(total - amountDueNow, 0));
     const paymentRecordAmount = usesOnlinePayment ? amountDueNow : total;
+    const preparedPayment = await this.paymentStrategies.prepareForCheckout({
+      usesOnlinePayment,
+      method: {
+        code: paymentConfig?.code,
+        name: paymentMethod,
+        metadata: paymentConfig?.metadata
+      },
+      orderNumber,
+      amount: paymentRecordAmount
+    });
+    const paymentProvider = preparedPayment.provider;
+    const gatewayPayment = preparedPayment.gatewayPayment;
+    const gatewayReference =
+      typeof gatewayPayment?.paymentID === "string" ? gatewayPayment.paymentID : undefined;
     const paymentStatus = PaymentStatus.PENDING;
 
     try {
@@ -1324,10 +1348,12 @@ export class EcommerceService {
           },
           payments: {
             create: {
-              provider: this.paymentProviderFor(paymentConfig?.code, paymentMethod, paymentConfig?.metadata),
+              provider: paymentProvider,
               method: paymentMethod,
               amount: paymentRecordAmount,
-              status: "PENDING"
+              status: "PENDING",
+              gatewayReference,
+              providerPayload: gatewayPayment as Prisma.InputJsonValue | undefined
             }
           },
           ...(promotion
@@ -1359,6 +1385,10 @@ export class EcommerceService {
           payments: true,
           promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } },
+          courierShipments: {
+            include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+            orderBy: { createdAt: "desc" }
+          },
           notifications: true
         }
       });
@@ -1374,7 +1404,7 @@ export class EcommerceService {
           }
         });
       }
-      if (authUser?.id) {
+      if (authUser?.id && dto.checkoutSource !== "buy-now") {
         const cart = await transaction.cart.findFirst({ where: { userId: authUser.id } });
         if (cart) await transaction.cartItem.deleteMany({ where: { cartId: cart.id } });
       }
@@ -1400,6 +1430,10 @@ export class EcommerceService {
                 payments: true,
                 promotion: { select: { code: true, name: true } },
                 trackingEvents: { orderBy: { createdAt: "asc" } },
+                courierShipments: {
+                  include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+                  orderBy: { createdAt: "desc" }
+                },
                 notifications: true
               }
             }
@@ -1459,6 +1493,10 @@ export class EcommerceService {
         payments: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
+        courierShipments: {
+          include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+          orderBy: { createdAt: "desc" }
+        },
         notifications: { orderBy: { createdAt: "desc" } }
       }
     });
@@ -1467,7 +1505,7 @@ export class EcommerceService {
       throw new NotFoundException("Order not found.");
     }
 
-    return order;
+    return this.withEffectiveCourierStatuses(order);
   }
 
   async updateOrderStatus(
@@ -1578,6 +1616,10 @@ export class EcommerceService {
           payments: true,
           promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } },
+          courierShipments: {
+            include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+            orderBy: { createdAt: "desc" }
+          },
           notifications: { orderBy: { createdAt: "desc" } }
         }
       });
@@ -1974,7 +2016,11 @@ export class EcommerceService {
         include: {
           items: true,
           promotion: { select: { code: true, name: true } },
-          trackingEvents: { orderBy: { createdAt: "asc" } }
+          trackingEvents: { orderBy: { createdAt: "asc" } },
+          courierShipments: {
+            include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+            orderBy: { createdAt: "desc" }
+          }
         },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
@@ -1984,7 +2030,7 @@ export class EcommerceService {
     ]);
 
     return {
-      orders,
+      orders: orders.map((order) => this.withEffectiveCourierStatuses(order)),
       pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) }
     };
   }
@@ -1999,11 +2045,15 @@ export class EcommerceService {
         payments: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
+        courierShipments: {
+          include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+          orderBy: { createdAt: "desc" }
+        },
         notifications: { orderBy: { createdAt: "desc" } }
       }
     });
     if (!order) throw new NotFoundException("Order not found.");
-    return order;
+    return this.withEffectiveCourierStatuses(order);
   }
 
   async adminUpdateOrder(idOrNumber: string, dto: AdminUpdateOrderDto, actorId: string) {
@@ -2051,6 +2101,10 @@ export class EcommerceService {
         payments: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
+        courierShipments: {
+          include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+          orderBy: { createdAt: "desc" }
+        },
         notifications: { orderBy: { createdAt: "desc" } }
       }
     });
@@ -2084,6 +2138,93 @@ export class EcommerceService {
     }, true);
   }
 
+  async permanentlyDeleteOrder(actorId: string, password: string, idOrNumber: string) {
+    await this.auth.assertPassword(actorId, password);
+    const identifiers: Prisma.OrderWhereInput[] = [{ orderNumber: idOrNumber }];
+    if (/^[a-f\d]{24}$/i.test(idOrNumber)) identifiers.push({ id: idOrNumber });
+    const order = await this.prisma.order.findFirst({ where: { OR: identifiers } });
+    if (!order) throw new NotFoundException("Order not found.");
+
+    await this.prisma.$transaction(async (transaction) => {
+      const returnRequests = await transaction.returnRequest.findMany({
+        where: { orderId: order.id },
+        select: { id: true }
+      });
+      const returnRequestIds = returnRequests.map((item) => item.id);
+      if (returnRequestIds.length) {
+        await transaction.returnItem.deleteMany({ where: { returnRequestId: { in: returnRequestIds } } });
+      }
+      await transaction.refund.deleteMany({ where: { orderId: order.id } });
+      await transaction.returnRequest.deleteMany({ where: { orderId: order.id } });
+
+      const shipments = await transaction.courierShipment.findMany({
+        where: { orderId: order.id },
+        select: { id: true }
+      });
+      const shipmentIds = shipments.map((item) => item.id);
+      if (shipmentIds.length) {
+        await transaction.courierShipmentEvent.deleteMany({ where: { shipmentId: { in: shipmentIds } } });
+      }
+      await transaction.courierShipment.deleteMany({ where: { orderId: order.id } });
+
+      await transaction.notification.deleteMany({ where: { orderId: order.id } });
+      await transaction.payment.deleteMany({ where: { orderId: order.id } });
+      await transaction.review.deleteMany({ where: { orderId: order.id } });
+      await transaction.attribution.deleteMany({ where: { orderId: order.id } });
+      await transaction.analyticsEvent.deleteMany({ where: { orderId: order.id } });
+      await transaction.couponRedemption.deleteMany({ where: { orderId: order.id } });
+      await transaction.checkoutRequest.deleteMany({ where: { orderId: order.id } });
+      await transaction.orderItem.deleteMany({ where: { orderId: order.id } });
+      await transaction.order.delete({ where: { id: order.id } });
+
+      await transaction.auditLog.create({
+        data: {
+          actorId,
+          action: "order.permanent_delete",
+          entity: "Order",
+          entityId: order.id,
+          metadata: { orderNumber: order.orderNumber }
+        }
+      });
+    });
+    return { deleted: true };
+  }
+
+  async adminCourierServices() {
+    return this.couriers.adminCourierServices();
+  }
+
+  async createCourierService(dto: CreateCourierServiceDto) {
+    return this.couriers.createCourierService(dto);
+  }
+
+  async updateCourierService(id: string, dto: UpdateCourierServiceDto) {
+    return this.couriers.updateCourierService(id, dto);
+  }
+
+  async deleteCourierService(id: string) {
+    return this.couriers.deleteCourierService(id);
+  }
+
+  async dispatchCourierShipment(
+    idOrNumber: string,
+    dto: DispatchCourierShipmentDto,
+    actorId: string
+  ) {
+    const orderId = await this.couriers.dispatchCourierShipment(idOrNumber, dto, actorId);
+    return this.adminOrder(orderId);
+  }
+
+  async updateCourierShipment(id: string, dto: UpdateCourierShipmentDto) {
+    const orderId = await this.couriers.updateCourierShipment(id, dto);
+    return this.adminOrder(orderId);
+  }
+
+  async syncCourierShipment(id: string) {
+    const orderId = await this.couriers.syncCourierShipment(id);
+    return this.adminOrder(orderId);
+  }
+
   async customerCancelOrder(idOrNumber: string, authUser: AuthUser) {
     const identifiers: Prisma.OrderWhereInput[] = [{ orderNumber: idOrNumber }];
     if (/^[a-f\d]{24}$/i.test(idOrNumber)) identifiers.push({ id: idOrNumber });
@@ -2105,7 +2246,8 @@ export class EcommerceService {
   }
 
   async adminCatalog() {
-    const [products, brands, categories, banners, homeSections, testimonials, checkoutMethods, deliveryZones, deliveryRates, siteSettings] =
+    await this.paymentSettings.ensureEnvBackedPaymentGateways();
+    const [products, brands, categories, banners, homeSections, testimonials, checkoutMethods, paymentGateways, deliveryZones, deliveryRates, siteSettings] =
       await Promise.all([
       this.prisma.product.findMany({
         include: {
@@ -2122,7 +2264,12 @@ export class EcommerceService {
       this.prisma.homeSection.findMany({ orderBy: [{ priority: "asc" }, { createdAt: "asc" }] }),
       this.prisma.testimonial.findMany({ orderBy: [{ priority: "asc" }, { createdAt: "desc" }] }),
       this.prisma.checkoutMethod.findMany({
+        include: { paymentGateway: true },
         orderBy: [{ type: "asc" }, { priority: "asc" }, { name: "asc" }]
+      }),
+      this.prisma.paymentGateway.findMany({
+        include: { _count: { select: { checkoutMethods: true } } },
+        orderBy: [{ priority: "asc" }, { name: "asc" }]
       }),
       this.prisma.deliveryZone.findMany({
         include: { rates: { include: { deliveryMethod: true } } },
@@ -2141,7 +2288,13 @@ export class EcommerceService {
       banners,
       homeSections,
       testimonials,
-      checkoutMethods,
+      checkoutMethods: checkoutMethods.map((method) => ({
+        ...method,
+        paymentGateway: method.paymentGateway
+          ? this.paymentSettings.maskPaymentGateway(method.paymentGateway)
+          : null
+      })),
+      paymentGateways: paymentGateways.map((gateway) => this.paymentSettings.maskPaymentGateway(gateway)),
       deliveryZones,
       deliveryRates,
       siteSettings

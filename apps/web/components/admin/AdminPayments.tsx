@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, CreditCard, RefreshCw, Search } from "lucide-react";
+import { Check, Copy, CreditCard, RefreshCw, Search, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../AuthContext";
@@ -8,6 +8,7 @@ import {
   Payment,
   fetchAdminPayments,
   formatMoney,
+  permanentlyDeleteAdminResource,
   recheckAdminPayment
 } from "../../lib/catalog";
 import {
@@ -15,6 +16,7 @@ import {
   AdminLoading,
   AdminPagination,
   AdminPageTitle,
+  AdminPasswordConfirmDialog,
   AdminSectionHeader,
   AdminToast,
   StatusBadge,
@@ -48,6 +50,7 @@ export function AdminPayments() {
   const [provider, setProvider] = useState("ALL");
   const [page, setPage] = useState(1);
   const [recheckingPaymentId, setRecheckingPaymentId] = useState("");
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Payment | null>(null);
   const [copiedValue, setCopiedValue] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -79,6 +82,14 @@ export function AdminPayments() {
     } finally {
       setRecheckingPaymentId("");
     }
+  }
+
+  async function permanentlyDeletePayment(password: string) {
+    if (!permanentDeleteTarget) return;
+    await permanentlyDeleteAdminResource("payments", permanentDeleteTarget.id, password);
+    setPayments((current) => current.filter((entry) => entry.id !== permanentDeleteTarget.id));
+    notify(`Payment for ${permanentDeleteTarget.order.orderNumber} was permanently deleted.`);
+    setPermanentDeleteTarget(null);
   }
 
   async function copyValue(value: string, label: string) {
@@ -174,6 +185,15 @@ export function AdminPayments() {
       />
       <AdminToast message={message} kind={kind} />
 
+      {permanentDeleteTarget ? (
+        <AdminPasswordConfirmDialog
+          title={`Permanently delete this payment?`}
+          body={`This erases the ${formatMoney(permanentDeleteTarget.amount)} ${permanentDeleteTarget.provider} payment for order ${permanentDeleteTarget.order.orderNumber} and any of its refunds, then recalculates the order's payment status.`}
+          onCancel={() => setPermanentDeleteTarget(null)}
+          onConfirm={permanentlyDeletePayment}
+        />
+      ) : null}
+
       <div className="admin-return-summary payment-record-summary">
         <article><span>Matching records</span><strong>{summary.total}</strong></article>
         <article><span>Paid</span><strong>{summary.paid}</strong></article>
@@ -263,11 +283,18 @@ export function AdminPayments() {
                   <td>{new Date(item.createdAt).toLocaleString("en-BD")}<small>{item.updatedAt ? `Updated ${new Date(item.updatedAt).toLocaleString("en-BD")}` : ""}</small></td>
                   <td><StatusBadge value={item.status} kind="payment" /></td>
                   <td>
-                    {canRecheck ? (
+                    {canRecheck || can("payments.permanent_delete") ? (
                       <div className="admin-row-actions">
-                        <button type="button" onClick={() => void recheckPayment(item)} disabled={recheckingPaymentId === item.id}>
-                          <RefreshCw size={14} /> {recheckingPaymentId === item.id ? "Checking..." : "Re-check"}
-                        </button>
+                        {canRecheck ? (
+                          <button type="button" onClick={() => void recheckPayment(item)} disabled={recheckingPaymentId === item.id}>
+                            <RefreshCw size={14} /> {recheckingPaymentId === item.id ? "Checking..." : "Re-check"}
+                          </button>
+                        ) : null}
+                        {can("payments.permanent_delete") ? (
+                          <button type="button" title="Permanently delete" onClick={() => setPermanentDeleteTarget(item)}>
+                            <Trash2 size={14} />
+                          </button>
+                        ) : null}
                       </div>
                     ) : <CreditCard size={16} aria-hidden="true" />}
                   </td>

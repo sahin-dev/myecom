@@ -1,0 +1,505 @@
+/* ============================================================================
+   PRIMITIVES — component layer
+   ----------------------------------------------------------------------------
+   The shared vocabulary every screen builds from. Namespaced `ui-` so it can
+   coexist with the legacy class names while surfaces are migrated one at a time.
+
+   Rules: no raw values, no !important, no per-screen overrides. If a screen
+   needs something different, it needs a variant here — not a local exception.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- Button -- */
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height-md);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-none);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.ui-button:disabled,
+.ui-button[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ui-button--sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.ui-button--lg {
+  height: var(--control-height-lg);
+  padding: 0 var(--space-5);
+  font-size: var(--text-base);
+}
+
+.ui-button--block {
+  width: 100%;
+}
+
+/* Primary — the single highest-emphasis action on a view. */
+.ui-button--primary {
+  background: var(--fill-solid);
+  border-color: var(--fill-solid);
+  color: var(--fill-solid-text);
+  box-shadow: var(--elevation-1);
+}
+
+.ui-button--primary:hover:not(:disabled) {
+  background: var(--fill-solid-hover);
+  border-color: var(--fill-solid-hover);
+}
+
+/* Secondary — the default for everything else. */
+.ui-button--secondary {
+  background: var(--surface-raised);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.ui-button--secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+/* Ghost — toolbar and inline actions. */
+.ui-button--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ui-button--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Danger — destructive, and visibly so. */
+.ui-button--danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+/* Deepen the tint rather than flipping to a solid fill: --danger-solid is a
+   light red in dark mode, so white-on-solid would invert into a contrast fail. */
+.ui-button--danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: var(--danger-text);
+  color: var(--danger-text);
+}
+
+.ui-button--icon {
+  width: var(--control-height-md);
+  padding: 0;
+}
+
+.ui-button--icon.ui-button--sm {
+  width: var(--control-height-sm);
+}
+
+.ui-button__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-full);
+  animation: ui-spin var(--duration-slow) linear infinite;
+}
+
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ----------------------------------------------------------------- Field -- */
+
+.ui-field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ui-field__label {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.ui-field__required {
+  margin-left: var(--space-1);
+  color: var(--danger-text);
+}
+
+.ui-field__control,
+.ui-input,
+.ui-select,
+.ui-textarea {
+  width: 100%;
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.ui-textarea {
+  min-height: 96px;
+  padding: var(--space-3);
+  line-height: var(--leading-normal);
+  resize: vertical;
+}
+
+.ui-input::placeholder,
+.ui-textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+.ui-input:hover:not(:disabled),
+.ui-select:hover:not(:disabled),
+.ui-textarea:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.ui-input:disabled,
+.ui-select:disabled,
+.ui-textarea:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.ui-field--invalid .ui-input,
+.ui-field--invalid .ui-select,
+.ui-field--invalid .ui-textarea {
+  border-color: var(--danger-border);
+}
+
+.ui-field__hint {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+
+.ui-field__error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--danger-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+/* ------------------------------------------------------------------ Card -- */
+
+.ui-card {
+  padding: var(--card-padding);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.ui-card--raised {
+  box-shadow: var(--shadow-card);
+}
+
+.ui-card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ui-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.ui-card__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.ui-card__description {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+
+/* ----------------------------------------------------------------- Badge -- */
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 22px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-wide);
+  white-space: nowrap;
+}
+
+.ui-badge--success {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.ui-badge--warning {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.ui-badge--danger {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.ui-badge--info {
+  border-color: var(--info-border);
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.ui-badge--solid {
+  border-color: var(--fill-solid);
+  background: var(--fill-solid);
+  color: var(--fill-solid-text);
+}
+
+/* ----------------------------------------------------------------- Modal -- */
+
+.ui-modal__scrim {
+  position: fixed;
+  z-index: var(--z-modal);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: var(--surface-scrim);
+  backdrop-filter: blur(2px);
+  animation: ui-fade-in var(--duration-fast) var(--ease-entrance);
+}
+
+.ui-modal {
+  width: min(480px, 100%);
+  max-height: calc(100vh - var(--space-10));
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-modal);
+  animation: ui-modal-in var(--duration-base) var(--ease-entrance);
+}
+
+.ui-modal--sm { width: min(380px, 100%); }
+.ui-modal--lg { width: min(680px, 100%); }
+.ui-modal--xl { width: min(920px, 100%); }
+
+.ui-modal__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-5) var(--space-3);
+}
+
+.ui-modal__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+
+.ui-modal__icon-glyph {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.ui-modal__icon-glyph.is-danger {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.ui-modal__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.ui-modal__description {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.ui-modal__body {
+  padding: 0 var(--space-5) var(--space-4);
+}
+
+.ui-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+@keyframes ui-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ui-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ------------------------------------------------------------ EmptyState -- */
+
+.ui-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-10) var(--space-5);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  text-align: center;
+}
+
+.ui-empty__icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+}
+
+.ui-empty__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.ui-empty__description {
+  max-width: 44ch;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* -------------------------------------------------------------- Skeleton -- */
+
+.ui-skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-sunken) 25%,
+    var(--surface-hover) 37%,
+    var(--surface-sunken) 63%
+  );
+  background-size: 400% 100%;
+  animation: ui-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes ui-shimmer {
+  from { background-position: 100% 50%; }
+  to { background-position: 0 50%; }
+}
+
+/* --------------------------------------------------------------- Segment --
+   Used for theme/density switches and any small exclusive choice.           */
+
+.ui-segment {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.ui-segment button {
+  display: grid;
+  min-width: 30px;
+  height: 26px;
+  place-items: center;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.ui-segment button:hover {
+  color: var(--text-primary);
+}
+
+.ui-segment button[aria-pressed="true"] {
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-1);
+  color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------- Screen reader -- */
+
+.ui-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -1,0 +1,235 @@
+/* ============================================================================
+   SEMANTIC — role layer
+   ----------------------------------------------------------------------------
+   Every role describes intent ("the colour of a subtle border"), never a value.
+   Theming is re-pointing these roles at different primitives; components never
+   change. This is what makes dark mode a config change rather than a project.
+   ========================================================================== */
+
+:root {
+  /* --- Surfaces --------------------------------------------------------- */
+  --surface-base: var(--n-50);
+  --surface-raised: var(--n-0);
+  --surface-sunken: var(--n-100);
+  --surface-overlay: var(--n-0);
+  --surface-wash: var(--sand-50);
+  --surface-hover: rgba(58, 48, 38, 0.04);
+  --surface-active: rgba(58, 48, 38, 0.08);
+  --surface-selected: var(--sand-100);
+  --surface-scrim: rgba(26, 22, 16, 0.45);
+  /* Translucent "frosted" surfaces — sticky headers, nav bars, overlay chips.
+     These sit over content, so they need alpha; without a themed token they
+     were hardcoded white and never inverted. */
+  --surface-glass: rgba(255, 255, 255, 0.96);
+  --surface-glass-soft: rgba(255, 255, 255, 0.74);
+  --surface-glass-faint: rgba(255, 255, 255, 0.13);
+  /* Zero-alpha twin of --surface-glass. Fading to plain `transparent` fades
+     toward rgba(0,0,0,0) and can grey the midpoint; matching the hue keeps the
+     ramp clean. */
+  --surface-glass-fade: rgba(255, 255, 255, 0);
+
+  /* --- Text ------------------------------------------------------------- */
+  --text-primary: var(--n-800);
+  /* 0.74 rather than 0.66: secondary text routinely sits on --surface-sunken,
+     and the lighter value landed at 4.2:1 there — just under the 4.5 floor. */
+  --text-secondary: rgba(58, 48, 38, 0.74);
+  --text-tertiary: rgba(58, 48, 38, 0.6);
+  --text-disabled: rgba(58, 48, 38, 0.38);
+  --text-inverse: var(--n-0);
+  --text-link: var(--blue-700);
+
+  /* --- Borders ---------------------------------------------------------- */
+  --border-subtle: rgba(58, 48, 38, 0.1);
+  --border-default: rgba(58, 48, 38, 0.16);
+  --border-strong: rgba(58, 48, 38, 0.3);
+  --border-inverse: rgba(255, 255, 255, 0.18);
+
+  /* --- Solid fill (the "ink" used for primary buttons, bars, badges) ----- */
+  --fill-solid: var(--n-800);
+  --fill-solid-hover: var(--n-900);
+  --fill-solid-text: var(--n-0);
+
+  /* --- Accent / interactive signal --------------------------------------- */
+  --accent-solid: var(--blue-400);
+  --accent-strong-role: var(--blue-700);
+  --accent-bg: rgba(88, 157, 240, 0.1);
+  --accent-border: rgba(88, 157, 240, 0.36);
+  /* A solid blue dark enough to carry white text. --accent-solid is tuned for
+     borders and small marks and only reaches 2.8:1 against white. */
+  --accent-fill: var(--blue-600);
+  --accent-fill-text: var(--n-0);
+
+  /* --- Brand ------------------------------------------------------------ */
+  --brand-base: var(--sand-300);
+  --brand-strong-role: var(--sand-400);
+  /* Brand sand stays light in both themes, so anything printed on it must
+     stay dark in both themes. Never use --text-primary on a brand fill. */
+  --on-brand: var(--n-800);
+
+  /* --- Status ----------------------------------------------------------- */
+  --success-bg: var(--green-100);
+  --success-border: var(--green-200);
+  --success-text: var(--green-600);
+  --success-solid: var(--green-500);
+
+  --warning-bg: var(--amber-100);
+  --warning-border: var(--amber-300);
+  --warning-text: var(--amber-600);
+  --warning-solid: var(--amber-500);
+
+  --danger-bg: var(--red-100);
+  --danger-border: var(--red-200);
+  --danger-text: var(--red-600);
+  --danger-solid: var(--red-500);
+
+  --info-bg: var(--blue-50);
+  --info-border: var(--blue-200);
+  --info-text: var(--blue-700);
+  --info-solid: var(--blue-400);
+
+  /* --- Focus ------------------------------------------------------------ */
+  --focus-ring-color: var(--blue-400);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Tells the browser to render native widgets (scrollbars, date pickers,
+     select popups) in the matching scheme. */
+  color-scheme: light;
+
+  /* --- Elevation aliases ------------------------------------------------ */
+  --shadow-card: var(--elevation-1);
+  --shadow-raised: var(--elevation-2);
+  --shadow-popover: var(--elevation-3);
+  --shadow-modal: var(--elevation-4);
+}
+
+/* ============================================================================
+   DARK THEME
+   The inline boot script in the document head resolves "system" to an explicit
+   value before first paint, so this attribute is always present when JS runs.
+   ========================================================================== */
+
+:root[data-theme="dark"] {
+  --surface-base: var(--n-1000);
+  --surface-raised: var(--n-950);
+  --surface-sunken: #171310;
+  --surface-overlay: var(--n-900);
+  --surface-wash: rgba(231, 210, 181, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --surface-active: rgba(255, 255, 255, 0.09);
+  --surface-selected: rgba(231, 210, 181, 0.1);
+  --surface-scrim: rgba(0, 0, 0, 0.65);
+  --surface-glass: rgba(24, 19, 14, 0.94);
+  --surface-glass-soft: rgba(24, 19, 14, 0.74);
+  --surface-glass-faint: rgba(255, 255, 255, 0.08);
+  --surface-glass-fade: rgba(24, 19, 14, 0);
+
+  --text-primary: #f2ece2;
+  --text-secondary: rgba(242, 236, 226, 0.72);
+  --text-tertiary: rgba(242, 236, 226, 0.56);
+  --text-disabled: rgba(242, 236, 226, 0.34);
+  --text-inverse: var(--n-950);
+  --text-link: var(--blue-300);
+
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-default: rgba(255, 255, 255, 0.15);
+  --border-strong: rgba(255, 255, 255, 0.28);
+  --border-inverse: rgba(0, 0, 0, 0.3);
+
+  /* In dark mode the "ink" fill inverts to a light chip on a dark field. */
+  --fill-solid: #ede5d8;
+  --fill-solid-hover: #ffffff;
+  --fill-solid-text: var(--n-950);
+
+  --accent-solid: var(--blue-400);
+  --accent-strong-role: var(--blue-300);
+  --accent-bg: rgba(88, 157, 240, 0.16);
+  --accent-border: rgba(88, 157, 240, 0.42);
+  /* On a dark field the accent chip reads better as a light blue carrying dark
+     text than as a dark blue carrying white — and it clears contrast easily. */
+  --accent-fill: var(--blue-300);
+  --accent-fill-text: var(--n-950);
+
+  --brand-base: var(--sand-400);
+  --brand-strong-role: var(--sand-300);
+  --on-brand: var(--n-900);
+
+  --success-bg: rgba(47, 109, 80, 0.2);
+  --success-border: rgba(134, 189, 156, 0.34);
+  --success-text: #8fd3aa;
+  --success-solid: var(--green-300);
+
+  --warning-bg: rgba(169, 111, 22, 0.2);
+  --warning-border: rgba(227, 207, 152, 0.32);
+  --warning-text: #e6c98a;
+  --warning-solid: var(--amber-300);
+
+  --danger-bg: rgba(168, 68, 60, 0.22);
+  --danger-border: rgba(226, 183, 180, 0.32);
+  --danger-text: #f0a9a2;
+  --danger-solid: var(--red-300);
+
+  --info-bg: rgba(88, 157, 240, 0.16);
+  --info-border: rgba(156, 195, 245, 0.34);
+  --info-text: var(--blue-300);
+  --info-solid: var(--blue-400);
+
+  /* Shadows read as noise on dark fields; depth comes from surface steps. */
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --elevation-2: 0 2px 8px rgba(0, 0, 0, 0.55);
+  --elevation-3: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --elevation-4: 0 24px 56px rgba(0, 0, 0, 0.7);
+
+  color-scheme: dark;
+}
+
+/* ============================================================================
+   DENSITY
+   Comfortable is the default. Compact tightens type and control heights for
+   power users working long sessions in dense tables.
+   ========================================================================== */
+
+:root,
+:root[data-density="comfortable"] {
+  --control-height-sm: 30px;
+  --control-height-md: 38px;
+  --control-height-lg: 44px;
+  --control-padding-x: var(--space-3);
+  --table-cell-py: 12px;
+  --table-cell-px: 12px;
+  --card-padding: var(--space-6);
+  --section-gap: var(--space-6);
+}
+
+:root[data-density="compact"] {
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+
+  --control-height-sm: 26px;
+  --control-height-md: 32px;
+  --control-height-lg: 38px;
+  --control-padding-x: var(--space-2);
+  --table-cell-py: 7px;
+  --table-cell-px: 9px;
+  --card-padding: var(--space-4);
+  --section-gap: var(--space-4);
+}
+
+/* ============================================================================
+   GLOBAL FOCUS SYSTEM
+   One ring, everywhere, keyboard-only. Replaces the ad-hoc per-component
+   outlines that were previously inconsistent or missing entirely.
+   ========================================================================== */
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-xs);
+}
+
+/* Never strip focus for keyboard users, even where a component sets its own. */
+:where(a, button, input, select, textarea):focus:not(:focus-visible) {
+  outline: none;
+}

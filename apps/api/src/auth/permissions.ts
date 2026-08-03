@@ -35,11 +35,13 @@ export const permissionCatalogue: PermissionGroup[] = [
       permission("products.create", "Add products", "Create products and upload product media."),
       permission("products.update", "Update products", "Edit product details, variants, and media."),
       permission("products.delete", "Archive products", "Remove products from sale.", "high"),
+      permission("products.permanent_delete", "Permanently delete products", "Irreversibly erase a product and its images, variants, reviews, and cart/wishlist entries.", "high"),
       permission("inventory.read", "View inventory", "View stock levels and inventory history."),
       permission("inventory.write", "Adjust inventory", "Change stock quantities and record adjustments.", "high"),
       permission("brands.manage", "Manage brands", "Create, update, and remove brands."),
       permission("categories.manage", "Manage categories", "Create, update, and remove categories."),
       permission("combos.manage", "Manage combo deals", "Create and maintain product bundles."),
+      permission("combos.permanent_delete", "Permanently delete combo deals", "Irreversibly erase a combo deal and its images and variants.", "high"),
       permission("uploads.write", "Upload files", "Upload images and other store media.")
     ]
   },
@@ -51,11 +53,16 @@ export const permissionCatalogue: PermissionGroup[] = [
       permission("orders.create", "Create orders", "Create a customer order from the dashboard.", "high"),
       permission("orders.update", "Update orders", "Change fulfillment, payment, courier, and notes.", "high"),
       permission("orders.delete", "Cancel orders", "Cancel eligible orders and release inventory.", "high"),
+      permission("orders.permanent_delete", "Permanently delete orders", "Irreversibly erase an order and all of its items, payments, refunds, and shipment records.", "high"),
       permission("orders.export", "Export orders", "Download order records."),
       permission("customers.read", "View customers", "View customer profiles and purchase history."),
       permission("customers.write", "Update customers", "Update customer details and account access.", "high"),
       permission("payments.read", "View payments", "View transaction records, methods, and status for orders."),
-      permission("payments.write", "Manage payments", "Re-check gateway status and reconcile payment records.", "high")
+      permission("payments.write", "Manage payments", "Re-check gateway status and reconcile payment records.", "high"),
+      permission("payments.permanent_delete", "Permanently delete payments", "Irreversibly erase a payment record and its refunds.", "high"),
+      permission("couriers.read", "View couriers", "View courier services, shipment records, and parcel status."),
+      permission("couriers.write", "Manage couriers", "Create, configure, enable, and disable courier services.", "high"),
+      permission("couriers.dispatch", "Dispatch parcels", "Send order parcel requests and update courier delivery status.", "high")
     ]
   },
   {
@@ -87,6 +94,7 @@ export const permissionCatalogue: PermissionGroup[] = [
       permission("content.write", "Manage storefront", "Manage banners, homepage sections, testimonials, and site identity."),
       permission("promotions.read", "View promotions", "View coupon performance and configuration."),
       permission("promotions.write", "Manage promotions", "Create, update, and remove coupons.", "high"),
+      permission("promotions.permanent_delete", "Permanently delete promotions", "Irreversibly erase a coupon and its redemption history, even if it has been used.", "high"),
       permission("checkout.read", "View checkout settings", "View payment methods, delivery methods, zones, and platform checkout policy."),
       permission("checkout_policy.write", "Manage checkout policy", "Configure platform payment requirements and allowed delivery areas.", "high"),
       permission("payment_methods.read", "View payment methods", "View cash, online payment, and gateway provider setup."),
@@ -126,6 +134,7 @@ export const rolePermissions: Record<UserRole, string[]> = {
     "dashboard.read", "orders.read", "orders.create", "orders.update", "orders.delete",
     "orders.export", "customers.read", "customers.write", "returns.read", "returns.write",
     "refunds.read", "refunds.write", "payments.read", "payments.write", "suppliers.read", "suppliers.write",
+    "couriers.read", "couriers.write", "couriers.dispatch",
     "purchase_orders.read", "purchase_orders.write", "inventory.read", "inventory.write",
     "catalog.read", "uploads.write", "checkout.read", "delivery_methods.read",
     "delivery_zones.read"
@@ -142,13 +151,14 @@ export const rolePermissions: Record<UserRole, string[]> = {
   SUPPORT: [
     "dashboard.read", "orders.read", "orders.update", "customers.read",
     "customers.write", "returns.read", "returns.write", "refunds.read",
-    "payments.read", "reviews.read", "reviews.write"
+    "payments.read", "reviews.read", "reviews.write", "couriers.read",
+    "couriers.dispatch"
   ],
   ANALYST: [
     "dashboard.read", "orders.read", "orders.export", "customers.read",
     "growth.read", "inventory.read", "catalog.read", "promotions.read",
     "payments.read", "checkout.read", "payment_methods.read", "delivery_methods.read",
-    "delivery_zones.read"
+    "delivery_zones.read", "couriers.read"
   ]
 };
 

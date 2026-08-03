@@ -5,6 +5,8 @@ import { WishlistProvider } from "../components/WishlistContext";
 import { AnalyticsBootstrap } from "../components/AnalyticsBootstrap";
 import { HorizontalDragScroll } from "../components/HorizontalDragScroll";
 import { SiteSettingsProvider } from "../components/SiteSettingsContext";
+import { ThemeProvider, themeBootScript } from "../components/ThemeContext";
+import { ConfirmProvider } from "../components/ui/ConfirmDialog";
 import {
   fallbackCatalog,
   fetchCatalog,
@@ -29,22 +31,34 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export const viewport: Viewport = {
-  themeColor: "#e7d2b5"
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#e7d2b5" },
+    { media: "(prefers-color-scheme: dark)", color: "#120f0b" }
+  ]
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Stamps the resolved theme on <html> before first paint so the page
+            never flashes light on its way to dark. */}
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+      </head>
       <body>
-        <AuthProvider>
-          <SiteSettingsProvider>
-            <AnalyticsBootstrap />
-            <HorizontalDragScroll />
-            <WishlistProvider>
-              <CartProvider>{children}</CartProvider>
-            </WishlistProvider>
-          </SiteSettingsProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <ConfirmProvider>
+            <AuthProvider>
+              <SiteSettingsProvider>
+                <AnalyticsBootstrap />
+                <HorizontalDragScroll />
+                <WishlistProvider>
+                  <CartProvider>{children}</CartProvider>
+                </WishlistProvider>
+              </SiteSettingsProvider>
+            </AuthProvider>
+          </ConfirmProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

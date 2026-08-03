@@ -1,5 +1,6 @@
 import { Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -241,6 +242,12 @@ export class CreateReturnDto {
   @IsOptional()
   @IsString()
   details?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @IsString({ each: true })
+  proofUrls?: string[];
 
   @IsArray()
   @ArrayMinSize(1)

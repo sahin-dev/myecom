@@ -1,8 +1,21 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, ImagePlus, Images, Plus, Trash2, UploadCloud, X } from "lucide-react";
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  ImagePlus,
+  Images,
+  Plus,
+  ShieldAlert,
+  Trash2,
+  UploadCloud,
+  X
+} from "lucide-react";
+import { FormEvent, ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { uploadAdminImage } from "../../lib/catalog";
+import { Button } from "../ui/Button";
+import { Modal } from "../ui/Modal";
 
 export function useAdminToast() {
   const [message, setMessage] = useState("");
@@ -39,17 +52,117 @@ export function AdminConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  // Same public API as before; the shell is now the shared Modal, so this
+  // dialog gains the focus trap, Escape handling and focus restoration the
+  // hand-rolled overlay never had.
   return (
-    <div className="admin-confirm-overlay" role="dialog" aria-modal="true">
-      <div className="admin-confirm-card">
-        <h3>{title}</h3>
-        {body ? <p>{body}</p> : null}
-        <div className="admin-confirm-actions">
-          <button type="button" className="secondary-action" onClick={onCancel}>Cancel</button>
-          <button type="button" className="danger-action" onClick={onConfirm}><Trash2 size={16} /> {confirmLabel}</button>
-        </div>
-      </div>
-    </div>
+    <Modal
+      open
+      onClose={onCancel}
+      title={title}
+      description={body}
+      size="sm"
+      icon={
+        <span className="ui-modal__icon-glyph is-danger">
+          <AlertTriangle size={19} />
+        </span>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onConfirm} leadingIcon={<Trash2 size={16} />}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    />
+  );
+}
+
+export function AdminPasswordConfirmDialog({
+  title,
+  body,
+  confirmLabel = "Permanently delete",
+  onConfirm,
+  onCancel
+}: {
+  title: string;
+  body?: string;
+  confirmLabel?: string;
+  onConfirm: (password: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const formId = useId();
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!password || submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await onConfirm(password);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Something went wrong.");
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={() => {
+        if (!submitting) onCancel();
+      }}
+      title={title}
+      description={body}
+      size="sm"
+      icon={
+        <span className="ui-modal__icon-glyph is-danger">
+          <ShieldAlert size={19} />
+        </span>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={submitting}>
+            Cancel
+          </Button>
+          {/* Lives outside the <form>, so it submits via the form attribute. */}
+          <Button
+            type="submit"
+            form={formId}
+            variant="danger"
+            disabled={!password}
+            loading={submitting}
+            leadingIcon={<Trash2 size={16} />}
+          >
+            {submitting ? "Deleting..." : confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} onSubmit={(event) => void handleSubmit(event)}>
+        <p className="admin-confirm-warning">
+          <ShieldAlert size={15} /> This action is permanent and cannot be undone.
+        </p>
+        <label className="admin-confirm-password-field">
+          <span>Confirm your password to continue</span>
+          <input
+            type="password"
+            autoFocus
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Your account password"
+          />
+        </label>
+        {error ? <p className="admin-confirm-error">{error}</p> : null}
+      </form>
+    </Modal>
   );
 }
 
@@ -59,6 +172,7 @@ export const orderStatuses = [
   "PACKED",
   "SHIPPED",
   "OUT_FOR_DELIVERY",
+  "DELIVERY_FAILED",
   "DELIVERED",
   "CANCELLED"
 ];
@@ -113,17 +227,22 @@ export function AdminPageTitle({
 export function AdminSectionHeader({
   title,
   description,
-  action
+  action,
+  icon
 }: {
   title: string;
   description?: string;
   action?: ReactNode;
+  icon?: ReactNode;
 }) {
   return (
     <div className="admin-section-header">
-      <div>
-        <h2>{title}</h2>
-        {description ? <p>{description}</p> : null}
+      <div className={icon ? "admin-section-header-text" : undefined}>
+        {icon ? <span className="admin-section-icon">{icon}</span> : null}
+        <div>
+          <h2>{title}</h2>
+          {description ? <p>{description}</p> : null}
+        </div>
       </div>
       {action}
     </div>

@@ -1,10 +1,24 @@
 import { BadRequestException, Injectable, InternalServerErrorException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PaymentGatewayProvider } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
 
 type BkashToken = {
   idToken: string;
   refreshToken: string;
   expiresAt: number;
+  key: string;
+};
+
+type BkashConnection = {
+  appKey: string;
+  appSecret: string;
+  username: string;
+  password: string;
+  baseUrl: string;
+  callbackUrl: string;
+  webhookUrl: string;
+  source: "admin" | "env";
 };
 
 type BkashCreateResponse = {
@@ -36,46 +50,63 @@ type BkashExecuteResponse = {
 export class BkashService {
   private token: BkashToken | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService
+  ) {}
 
-  private credentials() {
-    const appKey = this.config.get<string>("BKASH_APP_KEY");
-    const appSecret = this.config.get<string>("BKASH_APP_SECRET");
-    const username = this.config.get<string>("BKASH_USERNAME");
-    const password = this.config.get<string>("BKASH_PASSWORD");
+  async connection(): Promise<BkashConnection> {
+    const gateway = await this.prisma.paymentGateway.findFirst({
+      where: { provider: PaymentGatewayProvider.BKASH, isActive: true },
+      orderBy: [{ priority: "asc" }, { updatedAt: "desc" }]
+    });
+    const appKey = gateway?.appKey || this.config.get<string>("BKASH_APP_KEY");
+    const appSecret = gateway?.appSecret || this.config.get<string>("BKASH_APP_SECRET");
+    const username = gateway?.username || this.config.get<string>("BKASH_USERNAME");
+    const password = gateway?.password || this.config.get<string>("BKASH_PASSWORD");
     if (!appKey || !appSecret || !username || !password) {
       throw new BadRequestException(
-        "bKash is not configured. Set BKASH_APP_KEY, BKASH_APP_SECRET, BKASH_USERNAME, and BKASH_PASSWORD."
+        "bKash is not configured. Add a bKash payment gateway or set BKASH_APP_KEY, BKASH_APP_SECRET, BKASH_USERNAME, and BKASH_PASSWORD."
       );
     }
-    return { appKey, appSecret, username, password };
-  }
-
-  private baseUrl() {
-    return this.config.get<string>("BKASH_BASE_URL") ?? "https://tokenized.sandbox.bka.sh/v1.2.0-beta";
-  }
-
-  private callbackUrl() {
-    const configured = this.config.get<string>("BKASH_CALLBACK_URL");
-    if (configured) return configured;
+    const apiOrigin = this.config.get<string>("API_PUBLIC_URL")?.replace(/\/+$/, "") ?? "http://localhost:4000";
     const webOrigin = this.config.get<string>("WEB_ORIGINS")?.split(",")[0]?.trim() ?? "http://localhost:3000";
-    return `${webOrigin}/checkout/bkash/return`;
+    return {
+      appKey,
+      appSecret,
+      username,
+      password,
+      baseUrl:
+        gateway?.apiBaseUrl ||
+        this.config.get<string>("BKASH_BASE_URL") ||
+        "https://tokenized.sandbox.bka.sh/v1.2.0-beta",
+      callbackUrl:
+        gateway?.callbackUrl ||
+        this.config.get<string>("BKASH_CALLBACK_URL") ||
+        `${webOrigin}/checkout/bkash/return`,
+      webhookUrl:
+        gateway?.webhookUrl ||
+        this.config.get<string>("BKASH_WEBHOOK_URL") ||
+        `${apiOrigin}/api/checkout/bkash/webhook`,
+      source: gateway ? "admin" : "env"
+    };
   }
 
   private async grantToken(): Promise<string> {
-    if (this.token && this.token.expiresAt > Date.now() + 30_000) {
+    const connection = await this.connection();
+    const tokenKey = `${connection.baseUrl}:${connection.appKey}:${connection.username}`;
+    if (this.token && this.token.key === tokenKey && this.token.expiresAt > Date.now() + 30_000) {
       return this.token.idToken;
     }
-    const { appKey, appSecret, username, password } = this.credentials();
-    const response = await fetch(`${this.baseUrl()}/tokenized/checkout/token/grant`, {
+    const response = await fetch(`${connection.baseUrl}/tokenized/checkout/token/grant`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        username,
-        password
+        username: connection.username,
+        password: connection.password
       },
-      body: JSON.stringify({ app_key: appKey, app_secret: appSecret })
+      body: JSON.stringify({ app_key: connection.appKey, app_secret: connection.appSecret })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.id_token) {
@@ -84,21 +115,22 @@ export class BkashService {
     this.token = {
       idToken: data.id_token,
       refreshToken: data.refresh_token,
-      expiresAt: Date.now() + Number(data.expires_in ?? 3600) * 1000
+      expiresAt: Date.now() + Number(data.expires_in ?? 3600) * 1000,
+      key: tokenKey
     };
     return this.token.idToken;
   }
 
   private async authorizedPost<T>(path: string, body: unknown): Promise<{ ok: boolean; data: T }> {
+    const connection = await this.connection();
     const idToken = await this.grantToken();
-    const { appKey } = this.credentials();
-    const response = await fetch(`${this.baseUrl()}${path}`, {
+    const response = await fetch(`${connection.baseUrl}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
         Authorization: idToken,
-        "X-App-Key": appKey
+        "X-App-Key": connection.appKey
       },
       body: JSON.stringify(body)
     });
@@ -107,10 +139,11 @@ export class BkashService {
   }
 
   async createPayment(params: { orderNumber: string; amount: number }): Promise<BkashCreateResponse> {
+    const connection = await this.connection();
     const { ok, data } = await this.authorizedPost<BkashCreateResponse>("/tokenized/checkout/create", {
       mode: "0011",
       payerReference: params.orderNumber,
-      callbackURL: this.callbackUrl(),
+      callbackURL: connection.callbackUrl,
       amount: params.amount.toFixed(2),
       currency: "BDT",
       intent: "sale",

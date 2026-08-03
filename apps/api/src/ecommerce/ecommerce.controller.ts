@@ -20,6 +20,7 @@ import type {
   OptionalAuthenticatedRequest
 } from "../auth/auth.types";
 import { RequirePermission } from "../auth/permissions";
+import { PermanentDeleteDto } from "../auth/auth.dto";
 import { UpdateCustomerDto } from "../experience/experience.dto";
 import {
   AdminUpdateBannerDto,
@@ -31,19 +32,25 @@ import {
   CreateBrandDto,
   CreateCategoryDto,
   CreateCheckoutMethodDto,
+  CreateCourierServiceDto,
   CreateDeliveryRateDto,
   CreateDeliveryZoneDto,
   CreateHomeSectionDto,
+  CreatePaymentGatewayDto,
   CreateProductDto,
   CreateTestimonialDto,
+  DispatchCourierShipmentDto,
   ProductEligibilityDto,
   UpdateBrandDto,
   UpdateCategoryDto,
   UpdateCheckoutMethodDto,
+  UpdateCourierServiceDto,
+  UpdateCourierShipmentDto,
   UpdateDeliveryRateDto,
   UpdateDeliveryZoneDto,
   UpdateHomeSectionDto,
   UpdateOrderStatusDto,
+  UpdatePaymentGatewayDto,
   UpdateSiteSettingsDto,
   UpdateTestimonialDto
 } from "./ecommerce.dto";
@@ -177,11 +184,33 @@ export class EcommerceController {
     return this.ecommerce.archiveComboDeal(id);
   }
 
+  @Post("admin/combo-deals/:id/permanent-delete")
+  @UseGuards(AdminGuard)
+  @RequirePermission("combos.permanent_delete")
+  permanentlyDeleteComboDeal(
+    @Param("id") id: string,
+    @Body() dto: PermanentDeleteDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.permanentlyDeleteComboDeal(request.user.id, dto.password, id);
+  }
+
   @Delete("admin/products/:id")
   @UseGuards(AdminGuard)
   @RequirePermission("products.delete")
   archiveProduct(@Param("id") id: string) {
     return this.ecommerce.archiveProduct(id);
+  }
+
+  @Post("admin/products/:id/permanent-delete")
+  @UseGuards(AdminGuard)
+  @RequirePermission("products.permanent_delete")
+  permanentlyDeleteProduct(
+    @Param("id") id: string,
+    @Body() dto: PermanentDeleteDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.permanentlyDeleteProduct(request.user.id, dto.password, id);
   }
 
   @Get("admin/dashboard")
@@ -237,6 +266,70 @@ export class EcommerceController {
   @RequirePermission("orders.delete")
   adminCancelOrder(@Param("idOrNumber") idOrNumber: string) {
     return this.ecommerce.adminCancelOrder(idOrNumber);
+  }
+
+  @Post("admin/orders/:idOrNumber/permanent-delete")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.permanent_delete")
+  permanentlyDeleteOrder(
+    @Param("idOrNumber") idOrNumber: string,
+    @Body() dto: PermanentDeleteDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.permanentlyDeleteOrder(request.user.id, dto.password, idOrNumber);
+  }
+
+  @Get("admin/courier-services")
+  @UseGuards(AdminGuard)
+  @RequirePermission("couriers.read")
+  courierServices() {
+    return this.ecommerce.adminCourierServices();
+  }
+
+  @Post("admin/courier-services")
+  @UseGuards(AdminGuard)
+  @RequirePermission("couriers.write")
+  createCourierService(@Body() dto: CreateCourierServiceDto) {
+    return this.ecommerce.createCourierService(dto);
+  }
+
+  @Patch("admin/courier-services/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("couriers.write")
+  updateCourierService(@Param("id") id: string, @Body() dto: UpdateCourierServiceDto) {
+    return this.ecommerce.updateCourierService(id, dto);
+  }
+
+  @Delete("admin/courier-services/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("couriers.write")
+  deleteCourierService(@Param("id") id: string) {
+    return this.ecommerce.deleteCourierService(id);
+  }
+
+  @Post("admin/orders/:idOrNumber/courier-shipments")
+  @UseGuards(AdminGuard)
+  @RequirePermission("couriers.dispatch", "orders.update")
+  dispatchCourierShipment(
+    @Param("idOrNumber") idOrNumber: string,
+    @Body() dto: DispatchCourierShipmentDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.dispatchCourierShipment(idOrNumber, dto, request.user.id);
+  }
+
+  @Patch("admin/courier-shipments/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("couriers.dispatch", "orders.update")
+  updateCourierShipment(@Param("id") id: string, @Body() dto: UpdateCourierShipmentDto) {
+    return this.ecommerce.updateCourierShipment(id, dto);
+  }
+
+  @Post("admin/courier-shipments/:id/sync")
+  @UseGuards(AdminGuard)
+  @RequirePermission("couriers.dispatch", "orders.update")
+  syncCourierShipment(@Param("id") id: string) {
+    return this.ecommerce.syncCourierShipment(id);
   }
 
   @Get("admin/catalog")
@@ -347,6 +440,27 @@ export class EcommerceController {
   @RequirePermission("payment_methods.write", "delivery_methods.write", "checkout.write")
   deleteCheckoutMethod(@Param("id") id: string) {
     return this.ecommerce.deleteCheckoutMethod(id);
+  }
+
+  @Post("admin/payment-gateways")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payment_methods.write", "checkout.write")
+  createPaymentGateway(@Body() dto: CreatePaymentGatewayDto) {
+    return this.ecommerce.createPaymentGateway(dto);
+  }
+
+  @Patch("admin/payment-gateways/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payment_methods.write", "checkout.write")
+  updatePaymentGateway(@Param("id") id: string, @Body() dto: UpdatePaymentGatewayDto) {
+    return this.ecommerce.updatePaymentGateway(id, dto);
+  }
+
+  @Delete("admin/payment-gateways/:id")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payment_methods.write", "checkout.write")
+  deletePaymentGateway(@Param("id") id: string) {
+    return this.ecommerce.deletePaymentGateway(id);
   }
 
   @Post("admin/delivery-zones")

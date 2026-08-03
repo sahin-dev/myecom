@@ -22,6 +22,7 @@ import type {
   OptionalAuthenticatedRequest
 } from "../auth/auth.types";
 import { RequirePermission } from "../auth/permissions";
+import { PermanentDeleteDto } from "../auth/auth.dto";
 import {
   AddProductImageDto,
   CreateAccessRoleDto,
@@ -326,6 +327,17 @@ export class ExperienceController {
     return this.experience.deletePromotion(request.user.id, id);
   }
 
+  @Post("admin/promotions/:id/permanent-delete")
+  @UseGuards(AdminGuard)
+  @RequirePermission("promotions.permanent_delete")
+  permanentlyDeletePromotion(
+    @Param("id") id: string,
+    @Body() dto: PermanentDeleteDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.experience.permanentlyDeletePromotion(request.user.id, dto.password, id);
+  }
+
   @Get("admin/reviews")
   @UseGuards(AdminGuard)
   @RequirePermission("reviews.read")
@@ -545,6 +557,17 @@ export class ExperienceController {
   @RequirePermission("payments.write")
   recheckPayment(@Param("id") id: string) {
     return this.experience.requeryPayment(id);
+  }
+
+  @Post("admin/payments/:id/permanent-delete")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.permanent_delete")
+  permanentlyDeletePayment(
+    @Param("id") id: string,
+    @Body() dto: PermanentDeleteDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.experience.permanentlyDeletePayment(request.user.id, dto.password, id);
   }
 
   @Patch("admin/refunds/:id")

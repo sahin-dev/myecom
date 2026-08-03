@@ -140,6 +140,13 @@ export class AuthService {
     return { updated: true };
   }
 
+  async assertPassword(userId: string, password: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!(await verifyPassword(password, user.passwordHash))) {
+      throw new UnauthorizedException("Password is incorrect.");
+    }
+  }
+
   async deleteAccount(userId: string) {
     await this.prisma.user.update({
       where: { id: userId },

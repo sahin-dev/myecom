@@ -68,6 +68,11 @@ export class ChangePasswordDto {
   newPassword!: string;
 }
 
+export class PermanentDeleteDto {
+  @IsString()
+  password!: string;
+}
+
 export class ForgotPasswordDto {
   @IsEmail()
   @Transform(({ value }) => String(value).trim().toLowerCase())

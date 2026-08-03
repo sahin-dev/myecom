@@ -29,6 +29,7 @@ import {
   fetchPurchaseOrders,
   fetchSuppliers,
   formatMoney,
+  resolveMediaUrl,
   updateAdminReturn,
   updateAdminRefund,
   updatePurchaseOrder,
@@ -446,6 +447,27 @@ export function AdminOperations() {
                 <div className="admin-return-customer-note">
                   <strong>Customer details</strong>
                   <p>{selectedReturn.details}</p>
+                </div>
+              ) : null}
+              {selectedReturn.proofUrls?.length ? (
+                <div className="admin-return-proofs">
+                  <strong>Customer proof</strong>
+                  <div>
+                    {selectedReturn.proofUrls.map((url) => {
+                      const mediaUrl = resolveMediaUrl(url) ?? url;
+                      const isVideo = /\.(mp4|mov|webm)(\?|$)/i.test(mediaUrl);
+                      return (
+                        <a href={mediaUrl} target="_blank" rel="noreferrer" key={url}>
+                          {isVideo ? (
+                            <video src={mediaUrl} muted playsInline />
+                          ) : (
+                            <img src={mediaUrl} alt="Return proof" />
+                          )}
+                          <span>{isVideo ? "Open video" : "Open image"}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : null}
               <div className="admin-return-items">

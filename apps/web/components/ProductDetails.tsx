@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   BadgeCheck,
   Bell,
@@ -147,6 +148,7 @@ export function ProductDetails({
   const [myReview, setMyReview] = useState<Review | null>(null);
   const [reviewNotice, setReviewNotice] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
+  const router = useRouter();
   const { addItem } = useCart();
   const { user, requireAuth } = useAuth();
   const { isSaved, toggle } = useWishlist();
@@ -633,10 +635,11 @@ export function ProductDetails({
                   onClick={() => {
                     const query = new URLSearchParams({
                       product: product.slug,
-                      quantity: String(quantity)
+                      quantity: String(quantity),
+                      source: "buy-now"
                     });
                     if (selectedVariant) query.set("variant", selectedVariant.id);
-                    window.location.assign(`/checkout?${query.toString()}`);
+                    router.push(`/checkout?${query.toString()}`);
                   }}
                 >
                   <CreditCard size={18} />

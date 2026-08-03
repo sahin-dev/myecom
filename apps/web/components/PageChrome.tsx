@@ -22,6 +22,7 @@ import { useCart } from "./CartContext";
 import { useSiteSettings } from "./SiteSettingsContext";
 import { useWishlist } from "./WishlistContext";
 import { SearchAutocomplete } from "./SearchAutocomplete";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function PageHeader({
   categories,
@@ -81,6 +82,7 @@ export function PageHeader({
             <span>Saved</span>
             {savedCount ? <b className="nav-count">{savedCount > 99 ? "99+" : savedCount}</b> : null}
           </Link>
+          <ThemeToggle />
           <button
             className="cart-button"
             type="button"
