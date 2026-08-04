@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Facebook,
   Home,
@@ -17,11 +18,13 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Category, SiteSettings, resolveMediaUrl } from "../lib/catalog";
+import { AppLocale, localizedHref, localizeCategory, localizeEntity } from "../lib/i18n";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
 import { useSiteSettings } from "./SiteSettingsContext";
 import { useWishlist } from "./WishlistContext";
 import { SearchAutocomplete } from "./SearchAutocomplete";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
 
 export function PageHeader({
@@ -37,7 +40,12 @@ export function PageHeader({
   const { savedCount } = useWishlist();
   const { user, loading: authLoading } = useAuth();
   const { settings: defaultSettings } = useSiteSettings();
-  const settings = siteSettings ?? defaultSettings;
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Header");
+  const common = useTranslations("Common");
+  const href = (value: string) => localizedHref(value, locale);
+  const settings = localizeEntity(siteSettings ?? defaultSettings, locale);
+  const localizedCategories = categories.map((category) => localizeCategory(category, locale));
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const categoryNavRef = useRef<HTMLElement | null>(null);
 
@@ -56,45 +64,53 @@ export function PageHeader({
     <>
       <div className="top-note">
         <span>{settings.announcement}</span>
-        <Link href={settings.announcementLinkHref}>{settings.announcementLinkLabel}</Link>
+        <Link href={href(settings.announcementLinkHref)}>{settings.announcementLinkLabel}</Link>
       </div>
       <header className={`site-header ${home ? "home-header" : "inner-header"}`}>
         <BrandIdentity settings={settings} />
-        <SearchAutocomplete categories={categories} />
-        <nav className="header-actions" aria-label="Primary navigation">
-          <Link href="/shop" title="Shop">
+        <SearchAutocomplete categories={localizedCategories} />
+        <nav className="header-actions" aria-label={t("primaryNavigation")}>
+          <Link href={href("/shop")} title={common("shop")}>
             <Grid2X2 size={20} />
-            <span>Shop</span>
+            <span>{common("shop")}</span>
           </Link>
-          <Link href="/track-order" title="Track order">
+          <Link href={href("/track-order")} title={t("trackOrder")}>
             <Truck size={20} />
-            <span>Track</span>
+            <span>{t("track")}</span>
           </Link>
           <Link
-            href={user || authLoading ? "/account" : "/login"}
-            title={user || authLoading ? "Account" : "Sign in to account"}
+            href={href(user || authLoading ? "/account" : "/login")}
+            title={user || authLoading ? common("account") : t("signIn")}
           >
             <UserRound size={20} />
-            <span>Account</span>
+            <span>{common("account")}</span>
           </Link>
-          <Link className="saved-link" href="/wishlist" title={`${savedCount} saved products`}>
+          <Link className="saved-link" href={href("/wishlist")} title={t("savedProducts", { count: savedCount })}>
             <Heart size={20} />
-            <span>Saved</span>
+            <span>{common("saved")}</span>
             {savedCount ? <b className="nav-count">{savedCount > 99 ? "99+" : savedCount}</b> : null}
           </Link>
-          <ThemeToggle />
+          {/* Cart sits with the destinations it belongs to and mirrors their
+              icon-over-label shape; the badge is the shared .nav-count used by
+              Saved, so the two read the same way. */}
           <button
             className="cart-button"
             type="button"
             onClick={() => setIsOpen(true)}
-            aria-label={`Open cart with ${cartCount} items`}
+            aria-label={t("openCart", { count: cartCount })}
           >
             <ShoppingBag size={20} />
-            <span>{cartCount}</span>
+            <span>{common("cart")}</span>
+            {cartCount ? <b className="nav-count">{cartCount > 99 ? "99+" : cartCount}</b> : null}
           </button>
+          {/* Separates destinations from utilities so the right side reads as
+              two small groups rather than one long row of controls. */}
+          <span className="header-actions-divider" aria-hidden="true" />
+          <LanguageSwitcher />
+          <ThemeToggle />
         </nav>
       </header>
-      <nav ref={categoryNavRef} className={`category-nav ${home ? "home-category-nav" : ""}`} aria-label="Shop categories">
+      <nav ref={categoryNavRef} className={`category-nav ${home ? "home-category-nav" : ""}`} aria-label={t("shopCategories")}>
         <button
           className="mobile-category-toggle"
           type="button"
@@ -102,14 +118,14 @@ export function PageHeader({
           aria-expanded={categoriesOpen}
         >
           {categoriesOpen ? <X size={17} /> : <Menu size={17} />}
-          Categories
+          {t("categories")}
         </button>
         <div className={categoriesOpen ? "category-nav-links open" : "category-nav-links"}>
-          <Link href="/shop" onClick={() => setCategoriesOpen(false)}>Shop all</Link>
-          {categories.map((category) => (
+          <Link href={href("/shop")} onClick={() => setCategoriesOpen(false)}>{t("shopAll")}</Link>
+          {localizedCategories.map((category) => (
             <Link
               key={category.id}
-              href={`/shop?category=${category.slug}`}
+              href={href(`/shop?category=${category.slug}`)}
               onClick={() => setCategoriesOpen(false)}
             >
               {category.name}
@@ -117,17 +133,17 @@ export function PageHeader({
           ))}
         </div>
       </nav>
-      <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-        <Link href="/"><Home size={19} /><span>Home</span></Link>
-        <Link href="/shop"><Grid2X2 size={19} /><span>Shop</span></Link>
-        <Link href="/wishlist">
+      <nav className="mobile-bottom-nav" aria-label={t("mobileNavigation")}>
+        <Link href={href("/")}><Home size={19} /><span>{common("home")}</span></Link>
+        <Link href={href("/shop")}><Grid2X2 size={19} /><span>{common("shop")}</span></Link>
+        <Link href={href("/wishlist")}>
           <Heart size={19} />
-          <span>Saved</span>
+          <span>{common("saved")}</span>
           {savedCount ? <b>{savedCount > 99 ? "99+" : savedCount}</b> : null}
         </Link>
-        <Link href={user || authLoading ? "/account" : "/login"}><UserRound size={19} /><span>Account</span></Link>
-        <button type="button" onClick={() => setIsOpen(true)} aria-label={`Open cart with ${cartCount} items`}>
-          <ShoppingBag size={19} /><span>Cart</span><b>{cartCount}</b>
+        <Link href={href(user || authLoading ? "/account" : "/login")}><UserRound size={19} /><span>{common("account")}</span></Link>
+        <button type="button" onClick={() => setIsOpen(true)} aria-label={t("openCart", { count: cartCount })}>
+          <ShoppingBag size={19} /><span>{common("cart")}</span><b>{cartCount}</b>
         </button>
       </nav>
     </>
@@ -142,7 +158,13 @@ export function PageFooter({
   siteSettings?: SiteSettings;
 }) {
   const { settings: defaultSettings } = useSiteSettings();
-  const settings = siteSettings ?? defaultSettings;
+  const locale = useLocale() as AppLocale;
+  const common = useTranslations("Common");
+  const t = useTranslations("Footer");
+  const header = useTranslations("Header");
+  const href = (value: string) => localizedHref(value, locale);
+  const settings = localizeEntity(siteSettings ?? defaultSettings, locale);
+  const localizedCategories = categories.map((category) => localizeCategory(category, locale));
   const socialLinks: Array<{ label: string; href: string; icon: React.ReactNode }> = [];
   if (settings.facebookUrl) socialLinks.push({ label: "Facebook", href: settings.facebookUrl, icon: <Facebook size={18} /> });
   if (settings.instagramUrl) socialLinks.push({ label: "Instagram", href: settings.instagramUrl, icon: <Instagram size={18} /> });
@@ -153,9 +175,9 @@ export function PageFooter({
     <footer className="site-footer">
       <div className="footer-brand">
         <BrandIdentity settings={settings} />
-        <p>Better pantry shopping for everyday homes.</p>
+        <p>{t("tagline")}</p>
         {socialLinks.length ? (
-          <div className="footer-socials" aria-label="Social media">
+          <div className="footer-socials" aria-label={t("socialMedia")}>
             {socialLinks.map((item) => (
               <a href={item.href} key={item.label} target="_blank" rel="noreferrer" aria-label={item.label} title={item.label}>
                 {item.icon}
@@ -165,33 +187,33 @@ export function PageFooter({
         ) : null}
       </div>
       <FooterColumn
-        title="Shop"
-        items={categories.slice(0, 5).map((category) => ({
+        title={common("shop")}
+        items={localizedCategories.slice(0, 5).map((category) => ({
           label: category.name,
-          href: `/shop?category=${category.slug}`
+          href: href(`/shop?category=${category.slug}`)
         }))}
       />
       <FooterColumn
-        title="Help"
+        title={t("help")}
         items={[
-          { label: "Track order", href: "/track-order" },
-          { label: "Delivery", href: "/delivery" },
-          { label: "Returns", href: "/returns" },
-          { label: "Contact", href: "/contact" }
+          { label: header("trackOrder"), href: href("/track-order") },
+          { label: t("delivery"), href: href("/delivery") },
+          { label: t("returns"), href: href("/returns") },
+          { label: t("contact"), href: href("/contact") }
         ]}
       />
       <FooterColumn
-        title="Company"
+        title={t("company")}
         items={[
-          { label: "About", href: "/about" },
-          { label: "Our brands", href: "/#brands" },
-          { label: "Privacy", href: "/privacy" },
-          { label: "Terms", href: "/terms" }
+          { label: t("about"), href: href("/about") },
+          { label: t("brands"), href: href("/#brands") },
+          { label: t("privacy"), href: href("/privacy") },
+          { label: t("terms"), href: href("/terms") }
         ]}
       />
       <div className="footer-bottom">
         <span>{new Date().getFullYear()} {settings.title}</span>
-        <span>Made for thoughtful shopping.</span>
+        <span>{t("thoughtful")}</span>
       </div>
     </footer>
   );
@@ -204,6 +226,7 @@ export function BrandIdentity({
   settings: SiteSettings;
   className?: string;
 }) {
+  const locale = useLocale() as AppLocale;
   const initials = settings.title
     .split(/\s+/)
     .filter(Boolean)
@@ -214,7 +237,7 @@ export function BrandIdentity({
   const logo = resolveMediaUrl(settings.logoUrl);
 
   return (
-    <Link className={`brand-word ${className}`} href="/" aria-label={`${settings.title} home`}>
+    <Link className={`brand-word ${className}`} href={localizedHref("/", locale)} aria-label={`${settings.title} home`}>
       {logo ? <img src={logo} alt="" /> : <span>{initials || "ME"}</span>}
       <strong>{settings.title}</strong>
     </Link>

@@ -3,8 +3,11 @@
 import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
+import { AppLocale, localizedHref } from "../lib/i18n";
 import { useAuth } from "./AuthContext";
 import { BrandIdentity } from "./PageChrome";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useSiteSettings } from "./SiteSettingsContext";
 
 function destination(role: string, requested?: string | null) {
@@ -14,6 +17,8 @@ function destination(role: string, requested?: string | null) {
 }
 
 export function AuthPage({ mode }: { mode: "login" | "register" }) {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Auth");
   const router = useRouter();
   const { user, login, register } = useAuth();
   const { settings } = useSiteSettings();
@@ -24,9 +29,10 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
   useEffect(() => {
     if (user) {
       const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(destination(user.role, next));
+      const target = destination(user.role, next);
+      router.replace(user.role === "CUSTOMER" ? localizedHref(target, locale) : target);
     }
-  }, [router, user]);
+  }, [locale, router, user]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,7 +51,8 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
               phone: String(form.get("phone") || "") || undefined
             });
       const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(destination(signedIn.role, next));
+      const target = destination(signedIn.role, next);
+      router.replace(signedIn.role === "CUSTOMER" ? localizedHref(target, locale) : target);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Authentication failed.");
     } finally {
@@ -60,44 +67,45 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
         <a href={settings.announcementLinkHref}>{settings.announcementLinkLabel}</a>
       </div>
       <BrandIdentity settings={settings} className="auth-brand" />
+      <div className="auth-language"><LanguageSwitcher /></div>
       <div className="auth-visual">
-        <img src="/images/auth-pantry.png" alt="A calm, organized home pantry" />
+        <img src="/images/auth-pantry.png" alt={t("visualAlt")} />
         <div>
-          <p className="eyebrow">Thoughtful grocery shopping</p>
-          <h1>Your pantry, remembered.</h1>
-          <p>Save time at checkout, keep orders together, and follow every delivery.</p>
+          <p className="eyebrow">{t("visualEyebrow")}</p>
+          <h1>{t("visualTitle")}</h1>
+          <p>{t("visualDetail")}</p>
         </div>
       </div>
       <section className="auth-form-panel">
         <div className="auth-form-heading">
           <LockKeyhole size={24} />
-          <p className="eyebrow">{mode === "login" ? "Welcome back" : "Create an account"}</p>
-          <h2>{mode === "login" ? "Sign in" : `Join ${settings.title}`}</h2>
+          <p className="eyebrow">{mode === "login" ? t("welcome") : t("create")}</p>
+          <h2>{mode === "login" ? t("signIn") : t("join", { brand: settings.title })}</h2>
           <p>
             {mode === "login"
-              ? "Access your orders and saved items."
-              : "A faster checkout starts here."}
+              ? t("loginDetail")
+              : t("registerDetail")}
           </p>
         </div>
         <form className="auth-form" onSubmit={submit}>
           {mode === "register" ? (
             <label>
-              <span>Full name</span>
+              <span>{t("fullName")}</span>
               <input name="name" autoComplete="name" required />
             </label>
           ) : null}
           <label>
-            <span>Email address</span>
+            <span>{t("email")}</span>
             <input name="email" type="email" autoComplete="email" required suppressHydrationWarning />
           </label>
           {mode === "register" ? (
             <label>
-              <span>Phone number</span>
+              <span>{t("phone")}</span>
               <input name="phone" autoComplete="tel" />
             </label>
           ) : null}
           <label>
-            <span>Password</span>
+            <span>{t("password")}</span>
             <div className="password-input">
               <input
                 name="password"
@@ -109,30 +117,30 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
               <button
                 type="button"
                 onClick={() => setShowPassword((current) => !current)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-label={showPassword ? t("hidePassword") : t("showPassword")}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
           </label>
           {mode === "login" ? (
-            <a className="text-link" href="/reset-password">Forgot password?</a>
+            <a className="text-link" href={localizedHref("/reset-password", locale)}>{t("forgot")}</a>
           ) : null}
           {error ? <p className="form-error">{error}</p> : null}
           <button className="primary-action full" type="submit" disabled={submitting}>
-            {submitting ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}
+            {submitting ? t("waiting") : mode === "login" ? t("signIn") : t("create")}
             <ArrowRight size={18} />
           </button>
         </form>
         <div className="auth-switch">
-          <span>{mode === "login" ? "New to My Ecom?" : "Already have an account?"}</span>
-          <a href={mode === "login" ? "/register" : "/login"}>
-            {mode === "login" ? "Create account" : "Sign in"}
+          <span>{mode === "login" ? t("newCustomer") : t("existingCustomer")}</span>
+          <a href={localizedHref(mode === "login" ? "/register" : "/login", locale)}>
+            {mode === "login" ? t("create") : t("signIn")}
           </a>
         </div>
         <p className="auth-secure">
           <ShieldCheck size={16} />
-          Passwords are securely hashed and never stored as plain text.
+          {t("secure")}
         </p>
       </section>
     </main>

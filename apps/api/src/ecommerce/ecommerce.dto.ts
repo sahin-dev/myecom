@@ -7,14 +7,17 @@ import {
   IsEmail,
   IsEnum,
   IsInt,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsObject,
   IsOptional,
   IsPositive,
   IsString,
+  Matches,
   Max,
   Min,
+  ValidateIf,
   ValidateNested
 } from "class-validator";
 import {
@@ -121,6 +124,10 @@ export class PlatformCheckoutPolicyDto {
 }
 
 export class CreateBrandDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsString()
   name!: string;
 
@@ -134,6 +141,10 @@ export class CreateBrandDto {
 }
 
 export class UpdateBrandDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsOptional()
   @IsString()
   name?: string;
@@ -152,6 +163,10 @@ export class UpdateBrandDto {
 }
 
 export class CreateCategoryDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsString()
   name!: string;
 
@@ -174,6 +189,10 @@ export class CreateCategoryDto {
 
 export class UpdateCategoryDto {
   @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
+  @IsOptional()
   @IsString()
   name?: string;
 
@@ -195,6 +214,10 @@ export class UpdateCategoryDto {
 }
 
 export class CreateBannerDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsOptional()
   @IsString()
   eyebrow?: string;
@@ -244,6 +267,33 @@ export class CreateBannerDto {
   isActive?: boolean;
 }
 
+/**
+ * Promotional clips are referenced, never uploaded, so the URL has to be
+ * trustworthy on its own: https only, and an extension the browser can
+ * actually decode in a <video> element.
+ *
+ * .mov is deliberately excluded. The uploads pipeline accepts video/quicktime
+ * for return proofs, but most browsers cannot play it — accepting one here
+ * would store a URL that silently fails on the storefront.
+ */
+/*
+ * Requiring a .mp4/.webm suffix turned out to be too strict: direct-file URLs
+ * from Dropbox, R2 and Cloudflare Stream frequently carry no extension at all.
+ * So the rule is inverted — allow any https URL, but reject the two forms that
+ * are known not to play:
+ *
+ *   .mov          most browsers cannot decode QuickTime
+ *   drive.google  Drive has no dependable direct video stream; its share link
+ *                 is an HTML page and `uc?export` hits an interstitial. It is
+ *                 fine for images (see normalizeMediaUrl) but not for video.
+ */
+export const PROMO_VIDEO_URL_PATTERN =
+  /^https:\/\/(?!(?:drive|docs)\.google\.com\/)(?![^\s]*\.mov(?:[?#]|$))[^\s]+$/i;
+export const PROMO_VIDEO_URL_MESSAGE =
+  "Use a direct https link to the video file (.mp4 or .webm content). QuickTime (.mov) will not " +
+  "play in most browsers, and Google Drive cannot serve video directly — upload the clip to " +
+  "Dropbox, R2, or another host that returns the file itself.";
+
 export class ProductDetailDto {
   @IsString()
   type!: string;
@@ -256,6 +306,10 @@ export class ProductDetailDto {
 }
 
 export class CreateProductDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsString()
   name!: string;
 
@@ -296,6 +350,12 @@ export class CreateProductDto {
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
+
+  @IsOptional()
+  @IsString()
+  @ValidateIf((o: { videoUrl?: string }) => o.videoUrl !== "")
+  @Matches(PROMO_VIDEO_URL_PATTERN, { message: PROMO_VIDEO_URL_MESSAGE })
+  videoUrl?: string;
 
   @IsOptional()
   @IsEnum(ProductStatus)
@@ -380,6 +440,10 @@ export class CheckoutItemDto {
 }
 
 export class CheckoutDto {
+  @IsOptional()
+  @IsIn(["en", "bn"])
+  locale?: string;
+
   @IsString()
   customerName!: string;
 
@@ -746,6 +810,10 @@ export class UpdateCourierShipmentDto {
 
 export class AdminUpdateProductDto {
   @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
+  @IsOptional()
   @IsString()
   name?: string;
 
@@ -784,6 +852,12 @@ export class AdminUpdateProductDto {
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
+
+  @IsOptional()
+  @IsString()
+  @ValidateIf((o: { videoUrl?: string }) => o.videoUrl !== "")
+  @Matches(PROMO_VIDEO_URL_PATTERN, { message: PROMO_VIDEO_URL_MESSAGE })
+  videoUrl?: string;
 
   @IsOptional()
   @IsEnum(ProductStatus)
@@ -856,6 +930,10 @@ export class AdminUpdateProductDto {
 
 export class AdminUpdateBannerDto {
   @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
+  @IsOptional()
   @IsString()
   eyebrow?: string;
 
@@ -914,6 +992,10 @@ export class AdminUpdateBannerDto {
 
 export class UpdateSiteSettingsDto {
   @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   title?: string;
@@ -965,6 +1047,10 @@ export class UpdateSiteSettingsDto {
 }
 
 export class CreateHomeSectionDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsString()
   key!: string;
 
@@ -1017,6 +1103,10 @@ export class CreateHomeSectionDto {
 }
 
 export class UpdateHomeSectionDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsOptional()
   @IsString()
   key?: string;
@@ -1295,6 +1385,10 @@ export class UpdateDeliveryRateDto {
 }
 
 export class CreateCheckoutMethodDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsEnum(CheckoutMethodType)
   type!: CheckoutMethodType;
 
@@ -1346,6 +1440,10 @@ export class CreateCheckoutMethodDto {
 }
 
 export class UpdateCheckoutMethodDto {
+  @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
   @IsOptional()
   @IsEnum(CheckoutMethodType)
   type?: CheckoutMethodType;

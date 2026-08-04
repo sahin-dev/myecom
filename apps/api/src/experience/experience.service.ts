@@ -1806,7 +1806,8 @@ export class ExperienceService {
         eyebrow: dto.eyebrow,
         title: dto.title,
         intro: dto.intro,
-        points: dto.points as unknown as Prisma.InputJsonValue | undefined
+        points: dto.points as unknown as Prisma.InputJsonValue | undefined,
+        translations: dto.translations as Prisma.InputJsonValue | undefined
       }
     });
     await this.audit(actorId, "info_page.updated", "InfoPage", updated.id, { slug });

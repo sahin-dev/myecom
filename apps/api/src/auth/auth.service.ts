@@ -122,7 +122,8 @@ export class AuthService {
       data: {
         name: dto.name?.trim(),
         phone: dto.phone?.trim(),
-        avatarUrl: dto.avatarUrl
+        avatarUrl: dto.avatarUrl,
+        preferredLocale: dto.preferredLocale
       }
     });
     return this.publicUser(user);
@@ -231,6 +232,7 @@ export class AuthService {
       role: user.role,
       phone: user.phone,
       avatarUrl: user.avatarUrl,
+      preferredLocale: user.preferredLocale,
       createdAt: user.createdAt,
       ...access
     };

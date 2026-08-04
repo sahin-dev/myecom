@@ -33,6 +33,7 @@ type AuthContextValue = {
     name?: string;
     phone?: string;
     avatarUrl?: string;
+    preferredLocale?: "en" | "bn";
   }) => Promise<AuthUser>;
   logout: () => void;
   requireAuth: (onAuthenticated: () => void | Promise<void>) => void;
@@ -83,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     name?: string;
     phone?: string;
     avatarUrl?: string;
+    preferredLocale?: "en" | "bn";
   }) {
     const updated = await updateMe(input);
     setUser(updated);

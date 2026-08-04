@@ -1,9 +1,12 @@
+export type LocalizedTranslations = Record<string, Record<string, unknown>>;
+
 export type Brand = {
   id: string;
   name: string;
   logoUrl?: string | null;
   story?: string | null;
   isActive?: boolean;
+  translations?: LocalizedTranslations | null;
 };
 
 export type Category = {
@@ -14,6 +17,7 @@ export type Category = {
   imageUrl?: string | null;
   priority: number;
   isActive?: boolean;
+  translations?: LocalizedTranslations | null;
 };
 
 export type Product = {
@@ -29,6 +33,8 @@ export type Product = {
   baseOptionLabel?: string | null;
   status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
   imageUrl?: string | null;
+  /** Optional promo clip (CDN URL). Null keeps the original card behaviour. */
+  videoUrl?: string | null;
   isNew: boolean;
   isTrending: boolean;
   isBestSelling?: boolean;
@@ -57,6 +63,7 @@ export type Product = {
   reviews?: Review[];
   rating?: number;
   reviewCount?: number;
+  translations?: LocalizedTranslations | null;
 };
 
 export type ProductImage = {
@@ -94,6 +101,7 @@ export type ProductVariant = {
   unitValue?: number | null;
   attributes?: Record<string, string> | null;
   isActive: boolean;
+  translations?: LocalizedTranslations | null;
 };
 
 export function isBaseProductEnabled(product: Pick<Product, "baseOptionEnabled">) {
@@ -144,6 +152,7 @@ export type Banner = {
   startsAt?: string | null;
   endsAt?: string | null;
   priority: number;
+  translations?: LocalizedTranslations | null;
 };
 
 export type SiteSettings = {
@@ -160,6 +169,7 @@ export type SiteSettings = {
   youtubeUrl?: string | null;
   whatsappUrl?: string | null;
   checkoutPolicy?: PlatformCheckoutPolicy | null;
+  translations?: LocalizedTranslations | null;
 };
 
 export type CheckoutPolicy = {
@@ -222,6 +232,7 @@ export type HomeSection = {
     announcement?: string;
     items?: Array<{ title: string; detail: string }>;
   } | null;
+  translations?: LocalizedTranslations | null;
 };
 
 export type Testimonial = {
@@ -231,8 +242,10 @@ export type Testimonial = {
   role?: string | null;
   rating: number;
   avatarUrl?: string | null;
+  preferredLocale?: "en" | "bn";
   isActive: boolean;
   priority: number;
+  translations?: LocalizedTranslations | null;
 };
 
 export type CheckoutMethod = {
@@ -250,6 +263,7 @@ export type CheckoutMethod = {
   paymentGateway?: PaymentGateway | null;
   isActive: boolean;
   priority: number;
+  translations?: LocalizedTranslations | null;
 };
 
 export type PaymentGateway = {
@@ -401,6 +415,7 @@ export type InfoPageContent = {
   intro: string;
   points: Array<{ title: string; detail: string }>;
   updatedAt?: string;
+  translations?: LocalizedTranslations | null;
 };
 
 export type Catalog = {
@@ -1014,8 +1029,8 @@ export type AuthSession = {
   user: AuthUser;
 };
 
-export const formatMoney = (value: number) =>
-  `\u09F3${new Intl.NumberFormat("en-BD").format(value)}`;
+export const formatMoney = (value: number, locale = "en-BD") =>
+  `\u09F3${new Intl.NumberFormat(locale).format(value)}`;
 
 const brands: Brand[] = [
   { id: "brand-naturamart", name: "NaturaMart", story: "Everyday pantry essentials." },
@@ -1677,6 +1692,7 @@ export async function fetchComboDeals() {
 }
 
 export async function createCheckout(input: {
+  locale?: "en" | "bn";
   customerName: string;
   email: string;
   phone: string;
@@ -2209,6 +2225,8 @@ export async function updateAdminProduct(id: string, input: {
   baseOptionEnabled?: boolean;
   baseOptionLabel?: string;
   imageUrl?: string;
+  /** Empty string clears the promo clip; omit the key to leave it unchanged. */
+  videoUrl?: string;
   status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
   isNew?: boolean;
   isTrending?: boolean;
@@ -2223,6 +2241,7 @@ export async function updateAdminProduct(id: string, input: {
   categoryId?: string;
   tags?: string[];
   details?: ProductDetailSection[];
+  translations?: LocalizedTranslations;
   checkoutPolicy?: CheckoutPolicy;
 }) {
   return request<Product>(`/admin/products/${encodeURIComponent(id)}`, {
@@ -2461,7 +2480,7 @@ export async function fetchInfoPages() {
 
 export async function updateInfoPage(
   slug: string,
-  input: { eyebrow?: string; title?: string; intro?: string; points?: Array<{ title: string; detail: string }> }
+  input: { eyebrow?: string; title?: string; intro?: string; points?: Array<{ title: string; detail: string }>; translations?: LocalizedTranslations }
 ) {
   return request<InfoPageContent>(`/admin/info-pages/${encodeURIComponent(slug)}`, {
     method: "PATCH",
@@ -2717,6 +2736,7 @@ export async function updateMe(input: {
   name?: string;
   phone?: string;
   avatarUrl?: string;
+  preferredLocale?: "en" | "bn";
 }) {
   return request<AuthUser>("/auth/me", {
     method: "PATCH",

@@ -177,6 +177,7 @@ model User {
   role                   UserRole                @default(CUSTOMER)
   phone                  String?
   avatarUrl              String?
+  preferredLocale        String                  @default("en")
   isActive               Boolean                 @default(true)
   addresses              Address[]
   carts                  Cart[]
@@ -215,6 +216,7 @@ model Brand {
   name      String
   logoUrl   String?
   story     String?
+  translations Json?
   isActive  Boolean   @default(true)
   products  Product[]
   createdAt DateTime  @default(now())
@@ -227,6 +229,7 @@ model Category {
   slug      String    @unique
   icon      String?
   imageUrl  String?
+  translations Json?
   priority  Int       @default(0)
   isActive  Boolean   @default(true)
   products  Product[]
@@ -239,6 +242,7 @@ model Product {
   name               String
   slug               String              @unique
   description        String
+  translations       Json?
   price              Float
   costPrice          Float?
   compareAt          Float?
@@ -246,6 +250,9 @@ model Product {
   baseOptionEnabled  Boolean?            @default(true)
   baseOptionLabel    String?
   imageUrl           String?
+  /// Single promotional clip, referenced by public URL (CDN-hosted).
+  /// Null means the card and detail page behave exactly as before.
+  videoUrl           String?
   isNew              Boolean             @default(false)
   isTrending         Boolean             @default(false)
   isBestSelling      Boolean             @default(false)
@@ -302,6 +309,7 @@ model ProductVariant {
   unitType           String?
   unitValue          Float?
   attributes         Json?
+  translations       Json?
   isActive           Boolean             @default(true)
   cartItems          CartItem[]
   orderItems         OrderItem[]
@@ -319,6 +327,7 @@ model Banner {
   ctaLabel    String
   ctaHref     String
   imageUrl    String?
+  translations Json?
   focalX      Int       @default(50)
   focalY      Int       @default(50)
   startsAt    DateTime?
@@ -344,6 +353,7 @@ model SiteSettings {
   youtubeUrl            String?
   whatsappUrl           String?
   checkoutPolicy        Json?
+  translations          Json?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }
@@ -363,6 +373,7 @@ model HomeSection {
   priority     Int             @default(0)
   isActive     Boolean         @default(true)
   metadata     Json?
+  translations Json?
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 }
@@ -391,6 +402,7 @@ model CheckoutMethod {
   minDeliveryDays Int?
   maxDeliveryDays Int?
   metadata        Json?
+  translations    Json?
   paymentGatewayId String?           @db.ObjectId
   paymentGateway   PaymentGateway?   @relation(fields: [paymentGatewayId], references: [id])
   isActive        Boolean            @default(true)
@@ -531,6 +543,7 @@ model Order {
   customerName       String
   email              String
   phone              String
+  locale             String             @default("en")
   shippingAddress    String
   shippingInfo       Json?
   billingInfo        Json?
@@ -964,6 +977,7 @@ model InfoPage {
   title     String
   intro     String
   points    Json
+  translations Json?
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }

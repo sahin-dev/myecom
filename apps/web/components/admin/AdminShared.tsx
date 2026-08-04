@@ -311,9 +311,22 @@ export function AdminUploadField({
             onChange={(event) => void upload(event.target.files?.[0])}
           />
         </label>
+        {/* The stored value is just a string, so a CDN link works exactly as an
+            uploaded file does — this only exposes what the model already had. */}
+        <div className="admin-upload-url">
+          <span>or paste a link</span>
+          <input
+            type="url"
+            inputMode="url"
+            placeholder="https://cdn.example.com/image.jpg"
+            value={value.startsWith("/uploads/") ? "" : value}
+            onChange={(event) => onChange(event.target.value.trim())}
+          />
+        </div>
       </div>
       <small className="admin-upload-hint">
-        Recommended size: {recommendedDimensions}. Accepted formats: JPG, PNG, or WebP, up to 5 MB.
+        Recommended size: {recommendedDimensions}. Upload JPG, PNG, or WebP up to 5 MB, or paste an
+        https link to an image already hosted on your CDN.
       </small>
       {value ? (
         <button type="button" onClick={() => onChange("")}>
@@ -411,10 +424,72 @@ export function AdminMultiUploadField({
           }}
         />
       </label>
+      <AdminUrlAdder
+        placeholder="https://cdn.example.com/product.jpg"
+        buttonLabel="Add link"
+        disabled={values.length >= maxFiles}
+        onAdd={(url) => {
+          if (values.includes(url)) {
+            onMessage("That image link is already in the list.");
+            return;
+          }
+          onChange([...values, url]);
+        }}
+      />
       <p className="form-note">
         Recommended size: {recommendedDimensions}. Use the same aspect ratio for every image.
         The first image is the primary product image and ordering follows the selection order.
+        You can upload files or add images already hosted on your CDN by link.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Small paired input + button for appending a media URL to a list. Kept
+ * separate from the upload fields because both of them need it and the
+ * "type then commit" interaction has its own local state.
+ */
+function AdminUrlAdder({
+  placeholder,
+  buttonLabel,
+  disabled,
+  onAdd
+}: {
+  placeholder: string;
+  buttonLabel: string;
+  disabled?: boolean;
+  onAdd: (url: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const trimmed = draft.trim();
+
+  function commit() {
+    if (!trimmed) return;
+    onAdd(trimmed);
+    setDraft("");
+  }
+
+  return (
+    <div className="admin-upload-url">
+      <input
+        type="url"
+        inputMode="url"
+        placeholder={placeholder}
+        value={draft}
+        disabled={disabled}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          // Enter would otherwise submit the surrounding product form.
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          }
+        }}
+      />
+      <button type="button" className="secondary-action" disabled={disabled || !trimmed} onClick={commit}>
+        {buttonLabel}
+      </button>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, CreditCard, Heart, ShoppingBag } from "lucide-react";
+import { ChevronLeft, ChevronRight, Heart, ShoppingBag } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Catalog,
   Product,
@@ -10,9 +11,10 @@ import {
   fetchAccountWishlist,
   fetchCatalog,
   formatMoney,
-  productAdvancePaymentLabel,
   searchCatalog
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizedHref, localizeCatalog, localizeProduct } from "../lib/i18n";
+import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
@@ -23,6 +25,9 @@ import { useWishlist } from "./WishlistContext";
 const wishlistPageSize = 12;
 
 export function WishlistPage() {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Wishlist");
+  const common = useTranslations("Common");
   const [catalog, setCatalog] = useState<Catalog>(fallbackCatalog);
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
@@ -31,8 +36,8 @@ export function WishlistPage() {
   const { addItem } = useCart();
 
   useEffect(() => {
-    fetchCatalog().then(setCatalog).catch(() => setCatalog(fallbackCatalog));
-  }, []);
+    fetchCatalog().then((result) => setCatalog(localizeCatalog(result, locale))).catch(() => setCatalog(localizeCatalog(fallbackCatalog, locale)));
+  }, [locale]);
 
   useEffect(() => {
     if (!slugs.length) {
@@ -45,8 +50,8 @@ export function WishlistPage() {
       : searchCatalog({ limit: 100 }).then((result) =>
           result.products.filter((product) => slugs.includes(product.slug))
         );
-    request.then(setProducts).catch(() => setProducts([]));
-  }, [slugs, user]);
+    request.then((items) => setProducts(items.map((product) => localizeProduct(product, locale)))).catch(() => setProducts([]));
+  }, [locale, slugs, user]);
   const pages = Math.max(1, Math.ceil(products.length / wishlistPageSize));
   const pagedProducts = products.slice((page - 1) * wishlistPageSize, page * wishlistPageSize);
 
@@ -62,9 +67,9 @@ export function WishlistPage() {
     <main>
       <PageHeader categories={catalog.categories} siteSettings={catalog.siteSettings} />
       <section className="wishlist-hero">
-        <p className="eyebrow">Saved for later</p>
-        <h1>Your wishlist</h1>
-        <p>Keep useful pantry picks close while you decide.</p>
+        <p className="eyebrow">{t("eyebrow")}</p>
+        <h1>{t("title")}</h1>
+        <p>{t("subtitle")}</p>
       </section>
       <section className="wishlist-content">
         {products.length ? (
@@ -81,17 +86,17 @@ export function WishlistPage() {
               ))}
             </div>
             <div className="shop-pagination">
-              <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={17} /> Previous</button>
-              <span>Page {page} of {pages}</span>
-              <button type="button" disabled={page >= pages} onClick={() => setPage((current) => Math.min(pages, current + 1))}>Next <ChevronRight size={17} /></button>
+              <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={17} /> {common("previous")}</button>
+              <span>{common("page", { page, pages })}</span>
+              <button type="button" disabled={page >= pages} onClick={() => setPage((current) => Math.min(pages, current + 1))}>{common("next")} <ChevronRight size={17} /></button>
             </div>
           </>
         ) : (
           <div className="wishlist-empty">
             <Heart size={40} strokeWidth={1.4} />
-            <h2>Nothing saved yet</h2>
-            <p>Use the heart button on a product to keep it here.</p>
-            <a className="primary-action" href="/shop">Browse products</a>
+            <h2>{t("emptyTitle")}</h2>
+            <p>{t("emptyDetail")}</p>
+            <a className="primary-action" href={localizedHref("/shop", locale)}>{t("browse")}</a>
           </div>
         )}
       </section>
@@ -111,38 +116,35 @@ function WishlistProductCard({
   onRemove: () => void;
   onAdd: () => void;
 }) {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Product");
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const price = selectedVariant?.price ?? product.price;
   const compareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
-  const advanceLabel = productAdvancePaymentLabel(product, platformPolicy);
 
   return (
     <article className="product-card">
       <div className="card-topline">
-        <span>{product.category?.name ?? "Pantry"}</span>
-        <button type="button" onClick={onRemove} aria-label="Remove from wishlist">
+        <span>{product.category?.name ?? t("pantry")}</span>
+        <button type="button" onClick={onRemove} aria-label={t("removeWishlist")}>
           <Heart size={17} fill="currentColor" />
         </button>
       </div>
-      <a href={`/products/${product.slug}`}><ProductArt product={product} /></a>
+      <a href={localizedHref(`/products/${product.slug}`, locale)}><ProductArt product={product} /></a>
       <div className="product-meta">
-        <h3><a href={`/products/${product.slug}`}>{product.name}</a></h3>
+        <h3><a href={localizedHref(`/products/${product.slug}`, locale)}>{product.name}</a></h3>
         <div className="price-row">
-          <strong>{formatMoney(price)}</strong>
-          {compareAt && compareAt > price ? <small>{formatMoney(compareAt)}</small> : null}
+          <strong>{formatMoney(price, localeCode(locale))}</strong>
+          {compareAt && compareAt > price ? <small>{formatMoney(compareAt, localeCode(locale))}</small> : null}
         </div>
       </div>
-      {advanceLabel ? (
-        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
-          <CreditCard size={14} />
-        </span>
-      ) : null}
+      <AdvancePaymentBadge product={product} policy={platformPolicy} />
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (
         <button className="add-button full" type="button" onClick={onAdd}>
           <ShoppingBag size={17} />
-          Add to bag
+          {t("addToBag")}
         </button>
       )}
     </article>

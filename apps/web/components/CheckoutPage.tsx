@@ -12,6 +12,7 @@ import {
   Truck
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Address,
   AddressInfo,
@@ -34,6 +35,7 @@ import {
   trackAnalyticsEvent,
   validatePromotion
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizedHref, localizeCatalog, localizeProduct } from "../lib/i18n";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
@@ -143,6 +145,11 @@ function PaymentMethodLogo({
 }
 
 export function CheckoutPage() {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Checkout");
+  const common = useTranslations("Common");
+  const cartText = useTranslations("Cart");
+  const money = (value: number) => formatMoney(value, localeCode(locale));
   const [catalog, setCatalog] = useState<Catalog>(fallbackCatalog);
   const [directLine, setDirectLine] = useState<CartLine | null>(null);
   const [checkoutSource, setCheckoutSource] = useState<CheckoutSource>("cart");
@@ -174,15 +181,16 @@ export function CheckoutPage() {
   useEffect(() => {
     fetchCatalog()
       .then((result) => {
-        setCatalog(result);
+        const localized = localizeCatalog(result, locale);
+        setCatalog(localized);
         setPaymentMethodCode(
-          result.checkoutMethods.find((method) => method.type === "PAYMENT" && method.isActive)?.code ?? ""
+          localized.checkoutMethods.find((method) => method.type === "PAYMENT" && method.isActive)?.code ?? ""
         );
         setDeliveryMethodCode(
-          result.checkoutMethods.find((method) => method.type === "DELIVERY" && method.isActive)?.code ?? ""
+          localized.checkoutMethods.find((method) => method.type === "DELIVERY" && method.isActive)?.code ?? ""
         );
       })
-      .catch(() => setCatalog(fallbackCatalog));
+      .catch(() => setCatalog(localizeCatalog(fallbackCatalog, locale)));
 
     const params = new URLSearchParams(window.location.search);
     const productSlug = params.get("product");
@@ -194,7 +202,8 @@ export function CheckoutPage() {
     }
 
     fetchProduct(productSlug)
-      .then((product) => {
+      .then((rawProduct) => {
+        const product = localizeProduct(rawProduct, locale);
         const activeVariants = (product.variants ?? []).filter((variant) => variant.isActive);
         const requestedVariant = params.get("variant");
         const variant = activeVariants.find((item) => item.id === requestedVariant) ?? null;
@@ -214,7 +223,7 @@ export function CheckoutPage() {
         setNotice(caught instanceof Error ? caught.message : "This product could not be prepared for checkout.");
       })
       .finally(() => setDirectLoading(false));
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     if (!user) {
@@ -509,6 +518,7 @@ export function CheckoutPage() {
             postalCode: String(form.get("billingPostalCode") || "") || undefined
           };
       const created = await createCheckout({
+        locale,
         customerName: String(form.get("customerName")),
         email: String(form.get("email")),
         phone: String(form.get("phone")),
@@ -580,12 +590,12 @@ export function CheckoutPage() {
     <main className="checkout-page">
       <PageHeader categories={catalog.categories} siteSettings={catalog.siteSettings} />
       <header className="checkout-page-heading">
-        <a href={checkoutSource === "buy-now" && directLine ? `/products/${directLine.product.slug}` : "/shop"}>
-          <ArrowLeft size={16} /> Continue shopping
+        <a href={localizedHref(checkoutSource === "buy-now" && directLine ? `/products/${directLine.product.slug}` : "/shop", locale)}>
+          <ArrowLeft size={16} /> {common("continueShopping")}
         </a>
-        <p className="eyebrow">Secure checkout</p>
-        <h1>Complete your order</h1>
-        <p>Review your items, choose delivery, and confirm your details.</p>
+        <p className="eyebrow">{t("eyebrow")}</p>
+        <h1>{t("title")}</h1>
+        <p>{t("subtitle")}</p>
       </header>
 
       {!ready ? (
@@ -593,15 +603,15 @@ export function CheckoutPage() {
       ) : !checkoutLines.length ? (
         <section className="checkout-empty">
           <ShoppingBag size={32} />
-          <h2>Your bag is empty</h2>
-          <p>Add products before continuing to checkout.</p>
-          <a className="primary-action" href="/shop">Browse products</a>
+          <h2>{t("emptyTitle")}</h2>
+          <p>{t("emptyDetail")}</p>
+          <a className="primary-action" href={localizedHref("/shop", locale)}>{common("shop")}</a>
         </section>
       ) : (
         <section className="product-checkout-section checkout-page-shell">
           <div className="checkout-summary">
-            <p className="eyebrow">Order summary</p>
-            <h2>{checkoutLines.length} {checkoutLines.length === 1 ? "item" : "items"}</h2>
+            <p className="eyebrow">{t("summary")}</p>
+            <h2>{cartText("itemCount", { count: checkoutLines.length })}</h2>
             <div className="checkout-lines">
               {checkoutLines.map((line) => (
                 <div
@@ -613,7 +623,7 @@ export function CheckoutPage() {
                     <strong>{line.product.name}</strong>
                     <span>
                       {line.variant ? `${line.variant.name} / ` : ""}
-                      Quantity: {line.quantity}
+                      {common("quantity")}: {line.quantity}
                     </span>
                     <div className="checkout-line-controls" onClick={(event) => event.stopPropagation()}>
                       <button
@@ -643,31 +653,31 @@ export function CheckoutPage() {
                     </div>
                   </div>
                   <strong>
-                    {formatMoney((line.variant?.price ?? line.product.price) * line.quantity)}
+                    {money((line.variant?.price ?? line.product.price) * line.quantity)}
                   </strong>
                 </div>
               ))}
             </div>
             <form className="promotion-form" onSubmit={applyPromotion}>
               <input
-                aria-label="Promotion code"
+                aria-label={t("promotionCode")}
                 value={promotionCode}
                 onChange={(event) => setPromotionCode(event.target.value.toUpperCase())}
-                placeholder="Promotion code"
+                placeholder={t("promotionCode")}
                 required
               />
-              <button className="secondary-action" type="submit">Apply</button>
+              <button className="secondary-action" type="submit">{common("apply")}</button>
             </form>
             {promotionNotice ? <p className="form-note">{promotionNotice}</p> : null}
-            <div className="cost-line"><span>Subtotal</span><strong>{formatMoney(subtotal)}</strong></div>
+            <div className="cost-line"><span>{common("subtotal")}</span><strong>{money(subtotal)}</strong></div>
             {discount > 0 ? (
               <div className="cost-line discount"><span>Offer</span><strong>-{formatMoney(discount)}</strong></div>
             ) : null}
             <div className="cost-line">
-              <span>Delivery</span>
-              <strong>{quoteLoading ? "Checking..." : shippingFee ? formatMoney(shippingFee) : "Free"}</strong>
+              <span>{common("delivery")}</span>
+              <strong>{quoteLoading ? t("placingOrder") : shippingFee ? money(shippingFee) : "Free"}</strong>
             </div>
-            <div className="cost-line grand-total"><span>Total</span><strong>{formatMoney(total)}</strong></div>
+            <div className="cost-line grand-total"><span>{common("total")}</span><strong>{money(total)}</strong></div>
             {paymentMode === "online" ? (
               <>
                 {advancePaymentItems.length ? (
@@ -689,8 +699,8 @@ export function CheckoutPage() {
                       className={paymentAmountMode === "minimum" ? "active" : ""}
                       onClick={() => setPaymentAmountMode("minimum")}
                     >
-                      <span>Minimum advance</span>
-                      <strong>{formatMoney(minimumPayNowAmount)}</strong>
+                      <span>{t("minimumAdvance")}</span>
+                      <strong>{money(minimumPayNowAmount)}</strong>
                       <small>Pay the required amount now</small>
                     </button>
                     <button
@@ -698,14 +708,14 @@ export function CheckoutPage() {
                       className={paymentAmountMode === "full" ? "active" : ""}
                       onClick={() => setPaymentAmountMode("full")}
                     >
-                      <span>Full payment</span>
-                      <strong>{formatMoney(total)}</strong>
+                      <span>{t("fullPayment")}</span>
+                      <strong>{money(total)}</strong>
                       <small>Clear the full order online</small>
                     </button>
                   </div>
                 ) : null}
-                <div className="cost-line"><span>Pay now</span><strong>{formatMoney(payNowAmount)}</strong></div>
-                <div className="cost-line"><span>Due on delivery</span><strong>{formatMoney(dueOnDeliveryAmount)}</strong></div>
+                <div className="cost-line"><span>{t("payNow")}</span><strong>{money(payNowAmount)}</strong></div>
+                <div className="cost-line"><span>{t("dueDelivery")}</span><strong>{money(dueOnDeliveryAmount)}</strong></div>
                 {quote?.advancePaymentSubtotal ? (
                   <p className="form-note">
                     Minimum advance is calculated only on products that require upfront payment.
@@ -735,10 +745,10 @@ export function CheckoutPage() {
             <form className="checkout-panel product-checkout-form" onSubmit={checkout}>
               <header className="checkout-details-head">
                 <div>
-                  <p className="eyebrow">Delivery details</p>
-                  <h2>Where should we send it?</h2>
+                  <p className="eyebrow">{t("deliveryDetails")}</p>
+                  <h2>{t("sendTo")}</h2>
                 </div>
-                <span>{deliveryZoneCode ? "Area selected" : "Area required"}</span>
+                <span>{deliveryZoneCode ? t("deliveryArea") : t("areaRequired")}</span>
               </header>
               {!user ? (
                 <div className="checkout-guest-prompt">
@@ -755,10 +765,10 @@ export function CheckoutPage() {
                     <div><strong>Contact</strong><small>For delivery updates and confirmation</small></div>
                   </header>
                   <div className="form-grid">
-                    <label className="field-label">Full name<input name="customerName" placeholder="Person receiving the order" defaultValue={user?.name ?? ""} required /></label>
-                    <label className="field-label">Phone number<input name="phone" placeholder="Delivery contact number" defaultValue={user?.phone ?? ""} required /></label>
+                    <label className="field-label">{t("fullName")}<input name="customerName" placeholder={t("fullName")} defaultValue={user?.name ?? ""} required /></label>
+                    <label className="field-label">{t("phone")}<input name="phone" placeholder={t("phone")} defaultValue={user?.phone ?? ""} required /></label>
                   </div>
-                  <label className="field-label">Email address<input name="email" type="email" placeholder="Order confirmation email" defaultValue={user?.email ?? ""} required /></label>
+                  <label className="field-label">{t("email")}<input name="email" type="email" placeholder={t("email")} defaultValue={user?.email ?? ""} required /></label>
                 </section>
 
                 <section className="checkout-field-card">
@@ -768,7 +778,7 @@ export function CheckoutPage() {
                   </header>
                   {activeDeliveryZones.length ? (
                     <label className="field-label">
-                      Delivery area
+                      {t("deliveryArea")}
                       <select value={deliveryZoneCode} onChange={(event) => setDeliveryZoneCode(event.target.value)} required>
                         <option value="">Choose delivery area</option>
                         {activeDeliveryZones.map((zone) => (
@@ -783,7 +793,7 @@ export function CheckoutPage() {
                   ) : null}
                   {addresses.length ? (
                     <label className="field-label">
-                      Saved address
+                      {t("savedAddress")}
                       <select value={selectedAddressId} onChange={(event) => chooseAddress(event.target.value)}>
                         {addresses.map((address) => (
                           <option value={address.id} key={address.id}>
@@ -793,8 +803,8 @@ export function CheckoutPage() {
                       </select>
                     </label>
                   ) : null}
-                  <label className="field-label">Address line 1<input name="shippingLine1" placeholder="House, road, building" value={shippingLine1} onChange={(event) => setShippingLine1(event.target.value)} required /></label>
-                  <label className="field-label">Address line 2<input name="shippingLine2" placeholder="Apartment, floor, landmark" value={shippingLine2} onChange={(event) => setShippingLine2(event.target.value)} /></label>
+                  <label className="field-label">{t("address1")}<input name="shippingLine1" placeholder={t("address1")} value={shippingLine1} onChange={(event) => setShippingLine1(event.target.value)} required /></label>
+                  <label className="field-label">{t("address2")}<input name="shippingLine2" placeholder={t("address2")} value={shippingLine2} onChange={(event) => setShippingLine2(event.target.value)} /></label>
                   <div className="form-grid">
                     <label className="field-label">Area<input name="shippingArea" placeholder="Dhanmondi" value={shippingArea} onChange={(event) => setShippingArea(event.target.value)} /></label>
                     <label className="field-label">City<input name="shippingCity" placeholder="Dhaka" value={shippingCity} onChange={(event) => setShippingCity(event.target.value)} required /></label>
@@ -816,7 +826,7 @@ export function CheckoutPage() {
                       checked={billingSameAsShipping}
                       onChange={(event) => setBillingSameAsShipping(event.target.checked)}
                     />
-                    Billing information is same as shipping
+                    {t("billingSame")}
                   </label>
                   {!billingSameAsShipping ? (
                     <fieldset className="checkout-billing-fields">
@@ -839,13 +849,13 @@ export function CheckoutPage() {
               </div>
               <section className="checkout-options-panel">
                 <header>
-                  <strong>Delivery and payment</strong>
+                  <strong>{t("deliveryPayment")}</strong>
                   <small>Choose the service and checkout method for this order</small>
                 </header>
                 <div className="checkout-options-grid">
                   {deliveryMethods.length ? (
                     <label className="field-label checkout-method-card">
-                      Delivery method
+                      {t("deliveryMethod")}
                       <select value={deliveryMethodCode || deliveryMethods[0].code} onChange={(event) => setDeliveryMethodCode(event.target.value)}>
                         {deliveryMethods.map((method) => (
                           <option value={method.code} key={method.id}>
@@ -858,7 +868,7 @@ export function CheckoutPage() {
                   ) : null}
                   {paymentMethods.length ? (
                     <label className="field-label checkout-method-card">
-                      Payment method
+                      {t("paymentMethod")}
                       <select
                         value={paymentMode === "online" ? "ONLINE" : selectedCashMethod?.code ?? ""}
                         onChange={(event) => {
@@ -886,7 +896,7 @@ export function CheckoutPage() {
                 </div>
                 {paymentMode === "online" && onlinePaymentMethods.length ? (
                   <div className="online-payment-options">
-                    <span>Pay online with</span>
+                    <span>{t("payOnlineWith")}</span>
                     <div className="form-grid">
                       {onlinePaymentMethods.map((method) => (
                         paymentLogoUrl(method) ? (
@@ -930,10 +940,10 @@ export function CheckoutPage() {
               >
                 <CreditCard size={18} />
                 {placingOrder
-                  ? "Placing order..."
+                  ? t("placingOrder")
                   : paymentMode === "online"
-                    ? `Pay ${formatMoney(payNowAmount)} now`
-                    : `Place order - ${formatMoney(total)}`}
+                    ? `${t("payNow")} ${money(payNowAmount)}`
+                    : `${t("placeOrder")} - ${money(total)}`}
               </button>
               <p className="form-note">Payment and delivery availability is checked from your selected delivery area.</p>
             </form>

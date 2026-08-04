@@ -14,6 +14,7 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AdminCatalog,
+  LocalizedTranslations,
   Product,
   ProductDetailSection,
   UnitType,
@@ -59,6 +60,22 @@ const productDetailTypes = [
   { value: "warnings", label: "Warnings", placeholder: "Safety, allergy, medical, or age-related warnings." },
   { value: "custom", label: "Custom detail", placeholder: "Any other useful product detail." }
 ] as const;
+
+function readBengaliProductTranslation(
+  form: FormData,
+  current?: LocalizedTranslations | null
+): LocalizedTranslations {
+  const translated: Record<string, unknown> = {};
+  const name = String(form.get("nameBn") || "").trim();
+  const description = String(form.get("descriptionBn") || "").trim();
+  const badge = String(form.get("badgeBn") || "").trim();
+  const tags = String(form.get("tagsBn") || "").split(",").map((tag) => tag.trim()).filter(Boolean);
+  if (name) translated.name = name;
+  if (description) translated.description = description;
+  if (badge) translated.badge = badge;
+  if (tags.length) translated.tags = tags;
+  return { ...(current ?? {}), bn: translated };
+}
 
 function composeVariantName(unitType: string, unitValue: string, customName: string) {
   if (!unitType) return customName.trim();
@@ -284,6 +301,7 @@ export function AdminInventory() {
       const updated = await updateAdminProduct(selected.id, {
         name: String(form.get("name")),
         description: String(form.get("description")),
+        translations: readBengaliProductTranslation(form, selected.translations),
         price: Number(form.get("price")),
         costPrice: costPrice ? Number(costPrice) : undefined,
         compareAt: Number(form.get("compareAt") || 0) || undefined,
@@ -388,6 +406,31 @@ export function AdminInventory() {
     }
   }
 
+  async function savePromoVideo(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    try {
+      // Empty string is meaningful here: it clears the video and returns the
+      // card to its original behaviour.
+      const updated = await updateAdminProduct(selected.id, {
+        videoUrl: String(form.get("videoUrl") || "").trim()
+      });
+      setCatalog((current) =>
+        current
+          ? { ...current, products: current.products.map((item) => item.id === updated.id ? updated : item) }
+          : current
+      );
+      setSelected(updated);
+      notify(updated.videoUrl ? "Promotional video saved." : "Promotional video removed.");
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Promotional video could not be saved.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function createProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -398,6 +441,7 @@ export function AdminInventory() {
       const product = await createAdminResource<Product>("products", {
         name: String(form.get("name")),
         description: String(form.get("description")),
+        translations: readBengaliProductTranslation(form),
         price: Number(form.get("price")),
         costPrice: Number(form.get("costPrice") || 0) || undefined,
         compareAt: Number(form.get("compareAt") || 0) || undefined,
@@ -406,6 +450,7 @@ export function AdminInventory() {
         baseOptionLabel: String(form.get("baseOptionLabel") || "") || undefined,
         imageUrl: productImages[0],
         imageUrls: productImages,
+        videoUrl: String(form.get("videoUrl") || "").trim() || undefined,
         isNew: form.get("isNew") === "on",
         isTrending: form.get("isTrending") === "on",
         isBestSelling: form.get("isBestSelling") === "on",
@@ -918,6 +963,16 @@ export function AdminInventory() {
             {canManageCatalog && editorSection === "general" ? <form className="admin-editor-form admin-product-core-form" id="product-editor-general" onSubmit={saveProduct} key={`${selected.id}-${selected.costPrice}`}>
               <label>Product name<input name="name" defaultValue={selected.name} required /></label>
               <label>Description<textarea name="description" defaultValue={selected.description} required /></label>
+              <fieldset className="admin-translation-fields">
+                <legend>Bengali storefront translation</legend>
+                <p>Optional. Empty fields fall back to the English product content.</p>
+                <label>Product name (Bengali)<input name="nameBn" lang="bn" defaultValue={String(selected.translations?.bn?.name ?? "")} /></label>
+                <label>Description (Bengali)<textarea name="descriptionBn" lang="bn" defaultValue={String(selected.translations?.bn?.description ?? "")} /></label>
+                <div className="form-grid">
+                  <label>Badge (Bengali)<input name="badgeBn" lang="bn" defaultValue={String(selected.translations?.bn?.badge ?? "")} /></label>
+                  <label>Tags (Bengali)<input name="tagsBn" lang="bn" defaultValue={Array.isArray(selected.translations?.bn?.tags) ? selected.translations.bn.tags.join(", ") : ""} /></label>
+                </div>
+              </fieldset>
               <div className="form-grid">
                 <label>Selling price<input type="number" name="price" min="1" step="0.01" defaultValue={selected.price} required /></label>
                 <label>Unit cost<input type="number" name="costPrice" min="0" step="0.01" defaultValue={selected.costPrice ?? ""} placeholder="Required for margin" /></label>
@@ -1145,6 +1200,41 @@ export function AdminInventory() {
               <AdminUploadField label="Gallery image" value={galleryImage} onChange={setGalleryImage} onMessage={notifyUpload} recommendedDimensions="1200 x 1200 px" />
               <label>Alternative text<input name="alt" placeholder={selected.name} /></label>
               <button className="secondary-action full" type="submit">Add to gallery</button>
+            </form>
+
+            <div className="admin-editor-divider" id="product-editor-video">
+              <span>Promotional video</span>
+            </div>
+            <form className="admin-editor-form" key={`video-${selected.id}`} onSubmit={savePromoVideo}>
+              <label>
+                Video link
+                <input
+                  name="videoUrl"
+                  type="url"
+                  inputMode="url"
+                  defaultValue={selected.videoUrl ?? ""}
+                  placeholder="https://cdn.example.com/promo.mp4"
+                />
+              </label>
+              <p className="form-note">
+                One clip per product, hosted on your CDN. Must be an https link ending in .mp4 or
+                .webm — QuickTime (.mov) will not play in most browsers. Keep it short and silent:
+                it plays muted on hover on desktop, and behind a play button on mobile. Leave empty
+                to remove it.
+              </p>
+              {selected.videoUrl ? (
+                <video
+                  className="admin-video-preview"
+                  src={selected.videoUrl}
+                  controls
+                  muted
+                  playsInline
+                  preload="metadata"
+                />
+              ) : null}
+              <button className="secondary-action full" type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Save promotional video"}
+              </button>
             </form></> : null}
           </aside>
         ) : null}
@@ -1158,6 +1248,16 @@ export function AdminInventory() {
             <form className="admin-editor-form" onSubmit={createProduct}>
               <label>Product name<input name="name" required /></label>
               <label>Description<textarea name="description" required /></label>
+              <fieldset className="admin-translation-fields">
+                <legend>Bengali storefront translation</legend>
+                <p>Optional. You can also add this after creating the product.</p>
+                <label>Product name (Bengali)<input name="nameBn" lang="bn" /></label>
+                <label>Description (Bengali)<textarea name="descriptionBn" lang="bn" /></label>
+                <div className="form-grid">
+                  <label>Badge (Bengali)<input name="badgeBn" lang="bn" /></label>
+                  <label>Tags (Bengali)<input name="tagsBn" lang="bn" /></label>
+                </div>
+              </fieldset>
               <div className="form-grid">
                 <label>Price<input name="price" type="number" step="0.01" min="1" required /></label>
                 <label>Unit cost<input name="costPrice" type="number" step="0.01" min="0" /></label>
@@ -1178,6 +1278,14 @@ export function AdminInventory() {
               <label>Brand<select name="brandId" defaultValue=""><option value="">No brand</option>{catalog.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label>
               <label>Category<select name="categoryId" defaultValue=""><option value="">No category</option>{catalog.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
               <AdminMultiUploadField label="Product images" values={productImages} onChange={setProductImages} onMessage={notifyUpload} recommendedDimensions="1200 x 1200 px" />
+              <label>
+                Promotional video link (optional)
+                <input name="videoUrl" type="url" inputMode="url" placeholder="https://cdn.example.com/promo.mp4" />
+              </label>
+              <p className="form-note">
+                One short, silent .mp4 or .webm hosted on your CDN. Plays on hover on desktop cards
+                and behind a play button on mobile. Leave empty to keep the current behaviour.
+              </p>
               <label>Badge<input name="badge" /></label>
               <label>Tags<input name="tags" placeholder="honey, organic, gift" /></label>
               <div className="admin-create-detail-block">

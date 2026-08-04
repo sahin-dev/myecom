@@ -25,6 +25,7 @@ export class PaymentSettingsService {
         code: cleanCode(dto.code),
         fee: dto.fee ?? 0,
         metadata: dto.metadata as Prisma.InputJsonValue | undefined,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         paymentGatewayId,
         priority: dto.priority ?? 0,
         isActive: dto.isActive ?? true
@@ -46,6 +47,7 @@ export class PaymentSettingsService {
         ...dto,
         code: dto.code ? cleanCode(dto.code) : undefined,
         metadata: dto.metadata as Prisma.InputJsonValue | undefined,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         paymentGatewayId
       },
       include: { paymentGateway: true }

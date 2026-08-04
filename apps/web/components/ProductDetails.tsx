@@ -18,6 +18,7 @@ import {
   Truck
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Catalog,
   Product,
@@ -31,16 +32,18 @@ import {
   fetchStockAlertSubscription,
   isBaseProductEnabled,
   productAdvancePaymentLabel,
-  productAdvancePaymentPercent,
   resolveMediaUrl,
   submitProductReview,
   subscribeStockAlert,
   trackAnalyticsEvent
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizedHref, localizeCatalog, localizeProduct } from "../lib/i18n";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
+import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
 import { ProductArt } from "./ProductArt";
+import { ProductVideo } from "./ProductVideo";
 import { useWishlist } from "./WishlistContext";
 
 const money = (value: number) => `\u09F3${new Intl.NumberFormat("en-BD").format(value)}`;
@@ -128,15 +131,19 @@ export function ProductDetails({
   initialVariantId?: string;
   initialQuantity?: number;
 }) {
-  const product = initialProduct;
-  const catalog = initialCatalog;
-  const initialVariant = preferredVariant(initialProduct, initialVariantId);
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Product");
+  const common = useTranslations("Common");
+  const money = (value: number) => `\u09F3${new Intl.NumberFormat(localeCode(locale)).format(value)}`;
+  const product = localizeProduct(initialProduct, locale);
+  const catalog = localizeCatalog(initialCatalog, locale);
+  const initialVariant = preferredVariant(product, initialVariantId);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(initialVariant);
   const [activeImage, setActiveImage] = useState<string | null>(
-    resolveMediaUrl(initialProduct.images?.[0]?.url ?? initialProduct.imageUrl) || null
+    resolveMediaUrl(product.images?.[0]?.url ?? product.imageUrl) || null
   );
   const [quantity, setQuantity] = useState(
-    availableQuantity(initialProduct, initialVariant, initialQuantity)
+    availableQuantity(product, initialVariant, initialQuantity)
   );
   const [notice, setNotice] = useState("");
   const [noticeTone, setNoticeTone] = useState<"info" | "success" | "error">("info");
@@ -154,16 +161,17 @@ export function ProductDetails({
   const { isSaved, toggle } = useWishlist();
 
   useEffect(() => {
-    const variant = preferredVariant(initialProduct, initialVariantId);
+    const localizedInitialProduct = localizeProduct(initialProduct, locale);
+    const variant = preferredVariant(localizedInitialProduct, initialVariantId);
     setSelectedVariant(variant);
-    setActiveImage(resolveMediaUrl(initialProduct.images?.[0]?.url ?? initialProduct.imageUrl) || null);
-    setQuantity(availableQuantity(initialProduct, variant, initialQuantity));
+    setActiveImage(resolveMediaUrl(localizedInitialProduct.images?.[0]?.url ?? localizedInitialProduct.imageUrl) || null);
+    setQuantity(availableQuantity(localizedInitialProduct, variant, initialQuantity));
     setNotice("");
     setNoticeTone("info");
     setStockAlertRequested(false);
     setStockAlertChecking(false);
     setReviews(initialProduct.reviews ?? []);
-  }, [initialProduct, initialQuantity, initialVariantId, slug]);
+  }, [initialProduct, initialQuantity, initialVariantId, locale, slug]);
 
   useEffect(() => {
     let active = true;
@@ -215,7 +223,6 @@ export function ProductDetails({
     if (firstSentence && firstSentence.length <= 180) return firstSentence;
     return `${description.slice(0, 165).trim()}...`;
   }, [product.description]);
-  const advancePercent = productAdvancePaymentPercent(product, catalog.siteSettings.checkoutPolicy);
   const advanceLabel = productAdvancePaymentLabel(product, catalog.siteSettings.checkoutPolicy);
   const productDetailSections = useMemo(
     () =>
@@ -443,11 +450,18 @@ export function ProductDetails({
           </div>
           <div className="main-product-art">
             <div className="main-product-image-frame" key={activeImage ?? "generated-art"}>
-              {activeImage ? (
-                <img src={activeImage} alt={product.name} />
-              ) : (
-                <ProductArt product={product} />
-              )}
+              <ProductVideo
+                src={product.videoUrl}
+                poster={activeImage}
+                mode="click"
+                label={t("playPromo")}
+              >
+                {activeImage ? (
+                  <img src={activeImage} alt={product.name} />
+                ) : (
+                  <ProductArt product={product} />
+                )}
+              </ProductVideo>
             </div>
             {galleryImages.length > 1 ? (
               <>
@@ -473,20 +487,20 @@ export function ProductDetails({
         </div>
 
         <div className="product-purchase">
-          <p className="eyebrow">{product.category?.name ?? "Pantry selection"}</p>
+          <p className="eyebrow">{product.category?.name ?? t("pantrySelection")}</p>
           <div className="product-title-row">
             <h1>{product.name}</h1>
             <button
               className="icon-button"
               type="button"
               onClick={() => toggle(product)}
-              aria-label={isSaved(product.slug) ? "Remove from wishlist" : "Add to wishlist"}
+              aria-label={isSaved(product.slug) ? t("removeWishlist") : t("saveProduct")}
             >
               <Heart size={20} fill={isSaved(product.slug) ? "currentColor" : "none"} />
             </button>
           </div>
           <div className="product-summary-line">
-            <a href="#customer-reviews" aria-label={`Read ${reviews.length} customer reviews`}>
+            <a href="#customer-reviews" aria-label={t("readReviews", { count: reviews.length })}>
               <span className="stars" aria-hidden="true">
                 {Array.from({ length: 5 }).map((_, index) => (
                   <Star
@@ -497,10 +511,10 @@ export function ProductDetails({
                 ))}
               </span>
               <strong>{averageRating.toFixed(1)}</strong>
-              <span>{reviews.length} {reviews.length === 1 ? "review" : "reviews"}</span>
+              <span>{t("reviewCount", { count: reviews.length })}</span>
             </a>
             <span className={`stock-status ${availableInventory > 0 ? "available" : "unavailable"}`}>
-              {availableInventory > 0 ? `${availableInventory} in stock` : "Out of stock"}
+              {availableInventory > 0 ? t("available", { count: availableInventory }) : common("outOfStock")}
             </span>
           </div>
           <div className="detail-price">
@@ -509,25 +523,23 @@ export function ProductDetails({
           </div>
           {advanceLabel ? (
             <div className="product-advance-panel">
-              <span><CreditCard size={18} /></span>
-              <div>
-                <strong>{advanceLabel}</strong>
-                <p>
-                  Pay {advancePercent}% of this product value online now. The remaining product amount and delivery fee are due later.
-                </p>
-              </div>
+              <CreditCard size={16} />
+              <strong>{advanceLabel}</strong>
             </div>
           ) : null}
           <p className="product-description">{productSummary}</p>
 
           {product.variants?.length ? (
             <div className="variant-picker">
-              <span>Choose an option</span>
-              <div>
+              <span>{t("chooseOption")}</span>
+              {/* Selection is otherwise conveyed by fill and weight alone, which
+                  assistive tech cannot read — aria-pressed makes it explicit. */}
+              <div role="group" aria-label={t("chooseOption")}>
                 {baseEnabled ? (
                   <button
                     className={selectedVariant === null ? "active" : ""}
                     type="button"
+                    aria-pressed={selectedVariant === null}
                     onClick={() => chooseVariant(null)}
                     disabled={product.inventory < 1}
                   >
@@ -540,6 +552,7 @@ export function ProductDetails({
                     <button
                       className={selectedVariant?.id === variant.id ? "active" : ""}
                       type="button"
+                      aria-pressed={selectedVariant?.id === variant.id}
                       key={variant.id}
                       onClick={() => chooseVariant(variant)}
                       disabled={variant.inventory < 1}
@@ -553,21 +566,20 @@ export function ProductDetails({
 
           <div className="product-facts">
             <span>
-              <ShieldCheck size={18} /> Quality checked
+              <ShieldCheck size={18} /> {t("qualityChecked")}
             </span>
             <span>
               <Truck size={18} /> {selectedDelivery
                 ? `${selectedDelivery.name}${selectedDelivery.minDeliveryDays ? ` in ${selectedDelivery.minDeliveryDays}-${selectedDelivery.maxDeliveryDays ?? selectedDelivery.minDeliveryDays} days` : ""}`
-                : "Delivery configured at checkout"}
+                : t("deliveryCheckout")}
             </span>
-            <span>
-              <PackageCheck size={18} /> {availableInventory > 0
-                ? `${availableInventory} items available`
-                : "Restock alert available"}
-            </span>
-            {advanceLabel ? (
+            {/* Availability and the advance-payment notice are both already
+                shown above — the stock badge beside the title and the advance
+                panel under the price. Repeating them here padded the column
+                without adding information. */}
+            {availableInventory < 1 ? (
               <span>
-                <CreditCard size={18} /> Advance payment applies
+                <PackageCheck size={18} /> {t("restockAvailable")}
               </span>
             ) : null}
           </div>
@@ -576,11 +588,11 @@ export function ProductDetails({
               <div className="stock-alert-copy">
                 <span><Bell size={19} /></span>
                 <div>
-                  <strong>{stockAlertRequested ? "Restock alert is active" : "Get a restock alert"}</strong>
+                  <strong>{stockAlertRequested ? t("alertActive") : t("alertTitle")}</strong>
                   <p>
                     {stockAlertRequested
                       ? "You are on the list. We will email you when this option is available again."
-                      : "We will email you as soon as this option is available again."}
+                      : t("alertDetail")}
                   </p>
                 </div>
               </div>
@@ -597,19 +609,19 @@ export function ProductDetails({
                   ? "Setting up alert..."
                   : stockAlertRequested
                     ? "You are on the list"
-                    : "Notify me when available"}
+                    : t("notify")}
               </button>
             </div>
           ) : (
             <>
               <div className="quantity-row">
-                <span>Quantity</span>
+                <span>{common("quantity")}</span>
                 <div className="detail-quantity">
-                  <button type="button" onClick={() => changeQuantity(-1)} aria-label="Decrease quantity">
+                  <button type="button" onClick={() => changeQuantity(-1)} aria-label={t("decrease")}>
                     <Minus size={17} />
                   </button>
                   <strong>{quantity}</strong>
-                  <button type="button" onClick={() => changeQuantity(1)} aria-label="Increase quantity">
+                  <button type="button" onClick={() => changeQuantity(1)} aria-label={t("increase")}>
                     <Plus size={17} />
                   </button>
                 </div>
@@ -626,7 +638,7 @@ export function ProductDetails({
                 }}
               >
                 <ShoppingBag size={18} />
-                Add to cart
+                {t("addToCart")}
               </button>
                 <button
                   className={`primary-action ${canPurchase ? "" : "disabled-link"}`}
@@ -639,18 +651,18 @@ export function ProductDetails({
                       source: "buy-now"
                     });
                     if (selectedVariant) query.set("variant", selectedVariant.id);
-                    router.push(`/checkout?${query.toString()}`);
+                    router.push(localizedHref(`/checkout?${query.toString()}`, locale));
                   }}
                 >
                   <CreditCard size={18} />
-                  Buy now
+                  {t("buyNow")}
                 </button>
               </div>
             </>
           )}
           {product.brand ? (
             <div className="brand-chip">
-              <span>Brand</span>
+              <span>{t("brand")}</span>
               <strong>{product.brand.name}</strong>
             </div>
           ) : null}
@@ -660,8 +672,8 @@ export function ProductDetails({
 
       <section className="detail-info-band">
         <div>
-          <p className="eyebrow">Product details</p>
-          <h2>About {product.name}</h2>
+          <p className="eyebrow">{t("description")}</p>
+          <h2>{t("detailsTitle", { product: product.name })}</h2>
         </div>
         <div className="detail-info-copy">
           <p>{product.description}</p>
@@ -697,11 +709,11 @@ export function ProductDetails({
         <section className="product-extra-details" aria-labelledby="product-guidance-title">
           <header className="product-guidance-head">
             <div>
-              <p className="eyebrow">Product guidance</p>
-              <h2 id="product-guidance-title">Use, care, and product facts</h2>
-              <p>Clear instructions and safety notes from the product team.</p>
+              <p className="eyebrow">{t("guidance")}</p>
+              <h2 id="product-guidance-title">{t("factsTitle")}</h2>
+              <p>{t("guidanceDetail")}</p>
             </div>
-            <span>{productDetailSections.length} detail{productDetailSections.length === 1 ? "" : "s"}</span>
+            <span>{t("detailCount", { count: productDetailSections.length })}</span>
           </header>
           <div className="product-guidance-panel">
             <nav className="product-detail-index" aria-label="Product detail sections">
@@ -898,15 +910,7 @@ export function ProductDetails({
                   {item.compareAt ? <small>{money(item.compareAt)}</small> : null}
                 </div>
               </div>
-              {productAdvancePaymentLabel(item, catalog.siteSettings.checkoutPolicy) ? (
-                <span
-                  className="advance-payment-badge"
-                  title={productAdvancePaymentLabel(item, catalog.siteSettings.checkoutPolicy)}
-                  aria-label={productAdvancePaymentLabel(item, catalog.siteSettings.checkoutPolicy)}
-                >
-                  <CreditCard size={14} />
-                </span>
-              ) : null}
+              <AdvancePaymentBadge product={item} policy={catalog.siteSettings.checkoutPolicy} />
               <Link className="secondary-action full" href={`/products/${item.slug}`}>
                 View details
               </Link>

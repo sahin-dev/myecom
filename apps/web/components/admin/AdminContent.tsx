@@ -84,6 +84,22 @@ function value(form: FormData, key: string) {
   return String(form.get(key) ?? "").trim();
 }
 
+function bengaliTranslations(form: FormData, fields: string[], current?: Record<string, Record<string, unknown>> | null) {
+  const translated: Record<string, unknown> = {};
+  for (const field of fields) {
+    const translatedValue = value(form, `${field}Bn`);
+    if (translatedValue) translated[field] = translatedValue;
+  }
+  return { ...(current ?? {}), bn: translated };
+}
+
+function translatedValue(item: unknown, field: string) {
+  if (!item || typeof item !== "object" || !("translations" in item)) return "";
+  const translations = (item as { translations?: Record<string, Record<string, unknown>> | null }).translations;
+  const translated = translations?.bn?.[field];
+  return typeof translated === "string" ? translated : "";
+}
+
 function isoDate(value: string) {
   return value ? new Date(value).toISOString() : null;
 }
@@ -347,6 +363,7 @@ export function AdminContent() {
       .filter(([title, detail]) => title && detail)
       .map(([title, detail]) => ({ title, detail }));
     try {
+      const currentTranslations = selected && "translations" in selected ? selected.translations : null;
       await save("home-sections", {
         key: value(form, "key"),
         type: value(form, "type"),
@@ -360,6 +377,7 @@ export function AdminContent() {
         productLimit: Number(form.get("productLimit") || 8),
         priority: Number(form.get("priority") || 0),
         isActive: form.get("isActive") === "on",
+        translations: bengaliTranslations(form, ["eyebrow", "title", "subtitle", "ctaLabel"], currentTranslations),
         metadata: {
           ...(selected && "metadata" in selected ? selected.metadata ?? {} : {}),
           announcement: value(form, "announcement"),
@@ -377,6 +395,7 @@ export function AdminContent() {
     const form = new FormData(event.currentTarget);
     if (!image) return notify("Upload a campaign image first.", "error");
     try {
+      const currentTranslations = selected && "translations" in selected ? selected.translations : null;
       await save("banners", {
         eyebrow: value(form, "eyebrow"),
         title: value(form, "title"),
@@ -390,6 +409,7 @@ export function AdminContent() {
         endsAt: isoDate(value(form, "endsAt")),
         priority: Number(form.get("priority") || 0),
         isActive: form.get("isActive") === "on"
+        ,translations: bengaliTranslations(form, ["eyebrow", "title", "subtitle", "ctaLabel"], currentTranslations)
       });
       notify("Banner saved.");
     } catch (caught) {
@@ -412,6 +432,7 @@ export function AdminContent() {
         instagramUrl: value(form, "instagramUrl"),
         youtubeUrl: value(form, "youtubeUrl"),
         whatsappUrl: value(form, "whatsappUrl")
+        ,translations: bengaliTranslations(form, ["title", "announcement", "announcementLinkLabel"], catalog?.siteSettings.translations)
       });
       setSettings(settings);
       setCatalog((current) => current ? { ...current, siteSettings: settings } : current);
@@ -425,11 +446,13 @@ export function AdminContent() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
+      const currentTranslations = selected && "translations" in selected ? selected.translations : null;
       await save("brands", {
         name: value(form, "name"),
         story: value(form, "story"),
         logoUrl: image,
-        isActive: form.get("isActive") === "on"
+        isActive: form.get("isActive") === "on",
+        translations: bengaliTranslations(form, ["name", "story"], currentTranslations)
       });
       notify("Brand saved.");
     } catch (caught) {
@@ -441,12 +464,14 @@ export function AdminContent() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
+      const currentTranslations = selected && "translations" in selected ? selected.translations : null;
       await save("categories", {
         name: value(form, "name"),
         icon: value(form, "icon"),
         imageUrl: image,
         priority: Number(form.get("priority") || 0),
-        isActive: form.get("isActive") === "on"
+        isActive: form.get("isActive") === "on",
+        translations: bengaliTranslations(form, ["name"], currentTranslations)
       });
       notify("Category saved.");
     } catch (caught) {
@@ -637,13 +662,25 @@ export function AdminContent() {
       .map((line) => line.split("|").map((part) => part.trim()))
       .filter(([title, detail]) => title && detail)
       .map(([title, detail]) => ({ title, detail }));
+    const pointsBn = value(form, "pointsBn")
+      .split("\n")
+      .map((line) => line.split("|").map((part) => part.trim()))
+      .filter(([title, detail]) => title && detail)
+      .map(([title, detail]) => ({ title, detail }));
     setSavingPage(true);
     try {
       const updated = await updateInfoPage(editingPage.slug, {
         eyebrow: value(form, "eyebrow"),
         title: value(form, "title"),
         intro: value(form, "intro"),
-        points
+        points,
+        translations: {
+          ...(editingPage.translations ?? {}),
+          bn: {
+            ...bengaliTranslations(form, ["eyebrow", "title", "intro"]).bn,
+            ...(pointsBn.length ? { points: pointsBn } : {})
+          }
+        }
       });
       setInfoPages((current) => current.map((page) => page.slug === updated.slug ? updated : page));
       setEditingPage(null);
@@ -749,6 +786,13 @@ export function AdminContent() {
               <label>Topbar link label<input name="announcementLinkLabel" defaultValue={catalog.siteSettings.announcementLinkLabel} required /></label>
               <label>Topbar link destination<input name="announcementLinkHref" defaultValue={catalog.siteSettings.announcementLinkHref} required /></label>
             </div>
+            <fieldset className="admin-translation-fields">
+              <legend>Bengali storefront translation</legend>
+              <p>Optional. The English value is used whenever a Bengali field is empty.</p>
+              <label>Website title (Bengali)<input name="titleBn" lang="bn" defaultValue={translatedValue(catalog.siteSettings, "title")} /></label>
+              <label>Topbar announcement (Bengali)<input name="announcementBn" lang="bn" defaultValue={translatedValue(catalog.siteSettings, "announcement")} /></label>
+              <label>Topbar link label (Bengali)<input name="announcementLinkLabelBn" lang="bn" defaultValue={translatedValue(catalog.siteSettings, "announcementLinkLabel")} /></label>
+            </fieldset>
             <fieldset className="admin-social-fields">
               <legend>Social media links</legend>
               <p>Add the full public URL for each account. Leave a channel empty to hide it from the footer.</p>
@@ -793,6 +837,13 @@ export function AdminContent() {
               <label>Title<input name="title" defaultValue={selected && "title" in selected ? selected.title : ""} required /></label>
               <label>Supporting copy<textarea name="subtitle" defaultValue={selected && "subtitle" in selected ? selected.subtitle ?? "" : ""} /></label>
               <div className="form-grid"><label>Button label<input name="ctaLabel" defaultValue={selected && "ctaLabel" in selected ? selected.ctaLabel ?? "" : ""} /></label><label>Button link<input name="ctaHref" defaultValue={selected && "ctaHref" in selected ? selected.ctaHref ?? "" : ""} /></label></div>
+              <fieldset className="admin-translation-fields">
+                <legend>Bengali storefront translation</legend>
+                <label>Eyebrow (Bengali)<input name="eyebrowBn" lang="bn" defaultValue={translatedValue(selected, "eyebrow")} /></label>
+                <label>Title (Bengali)<input name="titleBn" lang="bn" defaultValue={translatedValue(selected, "title")} /></label>
+                <label>Supporting copy (Bengali)<textarea name="subtitleBn" lang="bn" defaultValue={translatedValue(selected, "subtitle")} /></label>
+                <label>Button label (Bengali)<input name="ctaLabelBn" lang="bn" defaultValue={translatedValue(selected, "ctaLabel")} /></label>
+              </fieldset>
               <div className="form-grid"><label>Collection<select name="collection" defaultValue={selected && "collection" in selected ? selected.collection ?? "" : ""}><option value="">None</option><option>topSellingProducts</option><option>newlyLaunched</option><option>trendingProducts</option><option>comboDeals</option><option>certifiedProducts</option><option>justForYou</option><option>categoryShowcase</option></select></label><label>Product limit<input name="productLimit" type="number" min="0" defaultValue={selected && "productLimit" in selected ? selected.productLimit : 8} /></label></div>
               <div className="form-grid"><label>Priority<input name="priority" type="number" defaultValue={selected && "priority" in selected ? selected.priority : 0} /></label><label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive : true} /> Published</label></div>
               <label>Announcement<input name="announcement" defaultValue={selected && "metadata" in selected ? (selected as HomeSection).metadata?.announcement ?? "" : ""} /></label>
@@ -811,6 +862,13 @@ export function AdminContent() {
             <label>Eyebrow<input name="eyebrow" defaultValue={selected && "eyebrow" in selected ? selected.eyebrow ?? "" : ""} placeholder="Everyday pantry market" /></label>
             <label>Title<input name="title" defaultValue={selected && "title" in selected ? selected.title : ""} required /></label><label>Supporting copy<textarea name="subtitle" defaultValue={selected && "subtitle" in selected ? selected.subtitle ?? "" : ""} required /></label>
             <div className="form-grid"><label>Button label<input name="ctaLabel" defaultValue={selected && "ctaLabel" in selected ? selected.ctaLabel ?? "" : ""} required /></label><label>Button link<input name="ctaHref" defaultValue={selected && "ctaHref" in selected ? selected.ctaHref ?? "" : "/shop"} required /></label></div>
+            <fieldset className="admin-translation-fields">
+              <legend>Bengali storefront translation</legend>
+              <label>Eyebrow (Bengali)<input name="eyebrowBn" lang="bn" defaultValue={translatedValue(selected, "eyebrow")} /></label>
+              <label>Title (Bengali)<input name="titleBn" lang="bn" defaultValue={translatedValue(selected, "title")} /></label>
+              <label>Supporting copy (Bengali)<textarea name="subtitleBn" lang="bn" defaultValue={translatedValue(selected, "subtitle")} /></label>
+              <label>Button label (Bengali)<input name="ctaLabelBn" lang="bn" defaultValue={translatedValue(selected, "ctaLabel")} /></label>
+            </fieldset>
             <div className="form-grid"><label>Start publishing<input name="startsAt" type="datetime-local" defaultValue={selected && "startsAt" in selected ? localDate(selected.startsAt) : ""} /></label><label>Stop publishing<input name="endsAt" type="datetime-local" defaultValue={selected && "endsAt" in selected ? localDate(selected.endsAt) : ""} /></label></div>
             <div className="form-grid"><label>Horizontal focal point (%)<input name="focalX" type="number" min="0" max="100" defaultValue={selected && "focalX" in selected ? selected.focalX ?? 50 : 50} /></label><label>Vertical focal point (%)<input name="focalY" type="number" min="0" max="100" defaultValue={selected && "focalY" in selected ? selected.focalY ?? 50 : 50} /></label></div>
             <label>Priority<input name="priority" type="number" defaultValue={selected && "priority" in selected ? selected.priority : 0} /></label><label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive : true} /> Published</label>
@@ -823,7 +881,17 @@ export function AdminContent() {
         <ContentLayout title="Brands" description="Products can be assigned to a brand or remain independent." items={catalog.brands} editorOpen={creating || Boolean(editing)} createLabel="Add brand" onCreate={startCreate} onClose={closeEditor} render={(brand) => (
           <><div className="admin-content-image">{brand.logoUrl ? <img src={brand.logoUrl} alt="" /> : <Store size={21} />}</div><div><strong>{brand.name}</strong><p>{brand.story || "No brand story."}</p></div><ContentActions item={brand} edit={() => startEdit(brand)} toggle={() => void toggle("brands", brand)} remove={() => void remove("brands", brand.id, brand.name)} /></>
         )} form={
-          <AdminForm key={editing?.id ?? "new-brand"} title={editing ? "Edit brand" : "Create brand"} onSubmit={saveBrand} submitLabel="Save brand"><label>Brand name<input name="name" defaultValue={selected && "name" in selected ? selected.name : ""} required /></label><AdminUploadField label="Brand logo" value={image} onChange={setImage} onMessage={notifyUpload} recommendedDimensions="600 x 300 px, transparent background" /><label>Brand story<textarea name="story" defaultValue={selected && "story" in selected ? selected.story ?? "" : ""} /></label><label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive ?? true : true} /> Active</label></AdminForm>
+          <AdminForm key={editing?.id ?? "new-brand"} title={editing ? "Edit brand" : "Create brand"} onSubmit={saveBrand} submitLabel="Save brand">
+            <label>Brand name<input name="name" defaultValue={selected && "name" in selected ? selected.name : ""} required /></label>
+            <AdminUploadField label="Brand logo" value={image} onChange={setImage} onMessage={notifyUpload} recommendedDimensions="600 x 300 px, transparent background" />
+            <label>Brand story<textarea name="story" defaultValue={selected && "story" in selected ? selected.story ?? "" : ""} /></label>
+            <fieldset className="admin-translation-fields">
+              <legend>Bengali storefront translation</legend>
+              <label>Brand name (Bengali)<input name="nameBn" lang="bn" defaultValue={translatedValue(selected, "name")} /></label>
+              <label>Brand story (Bengali)<textarea name="storyBn" lang="bn" defaultValue={translatedValue(selected, "story")} /></label>
+            </fieldset>
+            <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive ?? true : true} /> Active</label>
+          </AdminForm>
         } />
       ) : null}
 
@@ -831,7 +899,17 @@ export function AdminContent() {
         <ContentLayout title="Categories" description="Priority controls navigation and homepage order." items={catalog.categories} editorOpen={creating || Boolean(editing)} createLabel="Add category" onCreate={startCreate} onClose={closeEditor} render={(category, index) => (
           <><div className="admin-content-image">{category.imageUrl ? <img src={category.imageUrl} alt="" /> : <Layers3 size={20} />}</div><div><strong>{category.name}</strong><p>/{category.slug}</p><small>{category.icon || "No icon label"} · Priority {category.priority}</small></div><ContentActions item={category} edit={() => startEdit(category)} toggle={() => void toggle("categories", category)} remove={() => void remove("categories", category.id, category.name)} moveUp={index > 0 ? () => void move("categories", catalog.categories, index, -1) : undefined} moveDown={index < catalog.categories.length - 1 ? () => void move("categories", catalog.categories, index, 1) : undefined} /></>
         )} form={
-          <AdminForm key={editing?.id ?? "new-category"} title={editing ? "Edit category" : "Create category"} onSubmit={saveCategory} submitLabel="Save category"><label>Category name<input name="name" defaultValue={selected && "name" in selected ? selected.name : ""} required /></label><AdminUploadField label="Category image" value={image} onChange={setImage} onMessage={notifyUpload} recommendedDimensions="600 x 600 px, clean centered subject" /><label>Fallback icon label<input name="icon" defaultValue={selected && "icon" in selected ? selected.icon ?? "" : ""} /></label><label>Priority<input name="priority" type="number" defaultValue={selected && "priority" in selected ? selected.priority : 0} /></label><label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive ?? true : true} /> Active</label></AdminForm>
+          <AdminForm key={editing?.id ?? "new-category"} title={editing ? "Edit category" : "Create category"} onSubmit={saveCategory} submitLabel="Save category">
+            <label>Category name<input name="name" defaultValue={selected && "name" in selected ? selected.name : ""} required /></label>
+            <AdminUploadField label="Category image" value={image} onChange={setImage} onMessage={notifyUpload} recommendedDimensions="600 x 600 px, clean centered subject" />
+            <fieldset className="admin-translation-fields">
+              <legend>Bengali storefront translation</legend>
+              <label>Category name (Bengali)<input name="nameBn" lang="bn" defaultValue={translatedValue(selected, "name")} /></label>
+            </fieldset>
+            <label>Fallback icon label<input name="icon" defaultValue={selected && "icon" in selected ? selected.icon ?? "" : ""} /></label>
+            <label>Priority<input name="priority" type="number" defaultValue={selected && "priority" in selected ? selected.priority : 0} /></label>
+            <label className="check-row"><input name="isActive" type="checkbox" defaultChecked={selected && "isActive" in selected ? selected.isActive ?? true : true} /> Active</label>
+          </AdminForm>
         } />
       ) : null}
 
@@ -1148,6 +1226,22 @@ export function AdminContent() {
                   />
                   <small>One per line, as Title | Detail.</small>
                 </label>
+                <fieldset className="admin-translation-fields">
+                  <legend>Bengali storefront translation</legend>
+                  <label>Eyebrow (Bengali)<input name="eyebrowBn" lang="bn" defaultValue={translatedValue(editingPage, "eyebrow")} /></label>
+                  <label>Title (Bengali)<input name="titleBn" lang="bn" defaultValue={translatedValue(editingPage, "title")} /></label>
+                  <label>Intro (Bengali)<textarea name="introBn" lang="bn" defaultValue={translatedValue(editingPage, "intro")} /></label>
+                  <label>Points (Bengali)
+                    <textarea
+                      name="pointsBn"
+                      lang="bn"
+                      placeholder={"শিরোনাম | বিস্তারিত"}
+                      defaultValue={Array.isArray(editingPage.translations?.bn?.points)
+                        ? (editingPage.translations.bn.points as Array<{ title: string; detail: string }>).map((point) => `${point.title} | ${point.detail}`).join("\n")
+                        : ""}
+                    />
+                  </label>
+                </fieldset>
               </AdminForm>
             </aside>
           ) : null}

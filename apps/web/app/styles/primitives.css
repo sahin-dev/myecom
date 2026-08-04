@@ -59,14 +59,14 @@
 /* Primary — the single highest-emphasis action on a view. */
 .ui-button--primary {
   background: var(--fill-solid);
-  border-color: var(--fill-solid);
+  border-color: transparent;
   color: var(--fill-solid-text);
   box-shadow: var(--elevation-1);
 }
 
 .ui-button--primary:hover:not(:disabled) {
   background: var(--fill-solid-hover);
-  border-color: var(--fill-solid-hover);
+  border-color: transparent;
 }
 
 /* Secondary — the default for everything else. */
@@ -297,7 +297,7 @@
 }
 
 .ui-badge--solid {
-  border-color: var(--fill-solid);
+  border-color: transparent;
   background: var(--fill-solid);
   color: var(--fill-solid-text);
 }

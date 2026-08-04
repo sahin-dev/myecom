@@ -159,6 +159,10 @@ class InfoPagePointDto {
 
 export class UpdateInfoPageDto {
   @IsOptional()
+  @IsObject()
+  translations?: Record<string, unknown>;
+
+  @IsOptional()
   @IsString()
   eyebrow?: string;
 

@@ -50,6 +50,7 @@ import { PaymentStrategyResolver } from "../payments/payment-strategy.service";
 import { CourierAdminService } from "./courier-admin.service";
 import { DeliverySettingsService } from "./delivery-settings.service";
 import { PaymentSettingsService } from "./payment-settings.service";
+import { normalizeMediaUrl } from "./media-url";
 
 const slugify = (value: string) =>
   value
@@ -435,7 +436,9 @@ export class EcommerceService {
   }
 
   async createBrand(dto: CreateBrandDto) {
-    return this.prisma.brand.create({ data: dto });
+    return this.prisma.brand.create({
+      data: { ...dto, translations: dto.translations as Prisma.InputJsonValue | undefined }
+    });
   }
 
   async updateBrand(id: string, dto: UpdateBrandDto) {
@@ -445,6 +448,7 @@ export class EcommerceService {
       where: { id },
       data: {
         ...dto,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         name: dto.name?.trim(),
         logoUrl: dto.logoUrl === undefined ? undefined : dto.logoUrl?.trim() || null,
         story: dto.story === undefined ? undefined : dto.story.trim() || null
@@ -473,6 +477,7 @@ export class EcommerceService {
         slug: count ? `${slugBase}-${count + 1}` : slugBase,
         icon: dto.icon,
         imageUrl: dto.imageUrl,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         priority: dto.priority ?? 0
       }
     });
@@ -493,6 +498,7 @@ export class EcommerceService {
       where: { id },
       data: {
         ...dto,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         name: nextName,
         slug: nextSlug,
         icon: dto.icon === undefined ? undefined : dto.icon.trim() || null,
@@ -514,6 +520,7 @@ export class EcommerceService {
     return this.prisma.banner.create({
       data: {
         ...dto,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         startsAt: dto.startsAt ? new Date(dto.startsAt) : undefined,
         endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
         focalX: dto.focalX ?? 50,
@@ -552,6 +559,7 @@ export class EcommerceService {
         whatsappUrl:
           dto.whatsappUrl === undefined ? undefined : dto.whatsappUrl.trim() || null
         ,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         checkoutPolicy:
           dto.checkoutPolicy === undefined
             ? undefined
@@ -569,6 +577,7 @@ export class EcommerceService {
         instagramUrl: dto.instagramUrl?.trim() || null,
         youtubeUrl: dto.youtubeUrl?.trim() || null,
         whatsappUrl: dto.whatsappUrl?.trim() || null,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         checkoutPolicy: normalizePlatformPolicy(dto.checkoutPolicy) as Prisma.InputJsonValue
       }
     });
@@ -592,7 +601,7 @@ export class EcommerceService {
     });
 
     const imageUrls = Array.from(
-      new Set([dto.imageUrl, ...(dto.imageUrls ?? [])].filter(Boolean) as string[])
+      new Set([dto.imageUrl, ...(dto.imageUrls ?? [])].filter(Boolean).map((url) => normalizeMediaUrl(String(url), "image")) as string[])
     );
     const details = normalizeProductDetails(dto.details);
 
@@ -601,6 +610,7 @@ export class EcommerceService {
         name: dto.name,
         slug: count ? `${slugBase}-${count + 1}` : slugBase,
         description: dto.description,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         price: dto.price,
         costPrice: dto.costPrice,
         compareAt: dto.compareAt,
@@ -608,6 +618,7 @@ export class EcommerceService {
         baseOptionEnabled: dto.baseOptionEnabled ?? true,
         baseOptionLabel: dto.baseOptionLabel?.trim() || null,
         imageUrl: imageUrls[0],
+        videoUrl: dto.videoUrl ? normalizeMediaUrl(dto.videoUrl, "video") : null,
         isNew: dto.isNew ?? false,
         isTrending: dto.isTrending ?? false,
         isBestSelling: dto.isBestSelling ?? false,
@@ -741,6 +752,7 @@ export class EcommerceService {
         ...dto,
         key: slugify(dto.key),
         metadata: dto.metadata as Prisma.InputJsonValue | undefined,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         productLimit: dto.productLimit ?? 8,
         priority: dto.priority ?? 0,
         isActive: dto.isActive ?? true
@@ -754,7 +766,8 @@ export class EcommerceService {
       data: {
         ...dto,
         key: dto.key ? slugify(dto.key) : undefined,
-        metadata: dto.metadata as Prisma.InputJsonValue | undefined
+        metadata: dto.metadata as Prisma.InputJsonValue | undefined,
+        translations: dto.translations as Prisma.InputJsonValue | undefined
       }
     });
   }
@@ -1294,6 +1307,7 @@ export class EcommerceService {
           customerName: dto.customerName,
           email: dto.email,
           phone: dto.phone,
+          locale: dto.locale === "bn" ? "bn" : "en",
           shippingAddress,
           shippingInfo: shippingInfo as Prisma.InputJsonValue | undefined,
           billingInfo: billingInfo as Prisma.InputJsonValue | undefined,
@@ -2325,6 +2339,7 @@ export class EcommerceService {
       where: { id },
       data: {
         ...productUpdate,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         comboProductIds: willBeCombo ? Array.from(new Set(comboProductIds)) : [],
         showOnHome:
           willBeCombo && (dto.status ?? product.status) === ProductStatus.ACTIVE
@@ -2339,8 +2354,13 @@ export class EcommerceService {
           imageUrls === undefined
             ? dto.imageUrl === undefined
               ? undefined
-              : dto.imageUrl.trim() || null
-            : imageUrls[0]?.trim() || null,
+              : normalizeMediaUrl(dto.imageUrl, "image") || null
+            : normalizeMediaUrl(imageUrls[0] ?? "", "image") || null,
+        // Empty string clears the promo video; undefined leaves it untouched.
+        videoUrl:
+          dto.videoUrl === undefined
+            ? undefined
+            : normalizeMediaUrl(dto.videoUrl, "video") || null,
         badge: dto.badge === undefined ? undefined : dto.badge.trim() || null,
         brandId: dto.brandId === undefined ? undefined : dto.brandId || null,
         categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null,
@@ -2354,7 +2374,9 @@ export class EcommerceService {
             ? undefined
             : {
                 deleteMany: {},
-                create: Array.from(new Set(imageUrls.filter(Boolean))).map((url, position) => ({
+                create: Array.from(
+                  new Set(imageUrls.filter(Boolean).map((url) => normalizeMediaUrl(url, "image")))
+                ).map((url, position) => ({
                   url,
                   alt: dto.name?.trim() || product.name,
                   position
@@ -2380,6 +2402,7 @@ export class EcommerceService {
       where: { id },
       data: {
         ...dto,
+        translations: dto.translations as Prisma.InputJsonValue | undefined,
         startsAt: dto.startsAt === undefined ? undefined : dto.startsAt ? new Date(dto.startsAt) : null,
         endsAt: dto.endsAt === undefined ? undefined : dto.endsAt ? new Date(dto.endsAt) : null
       }

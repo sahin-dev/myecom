@@ -1389,9 +1389,12 @@
     display: none;
   }
 
-  .home-header .cart-button {
-    width: 34px;
-    height: 34px;
+  /* The nav links hide at this width but the cart stays reachable, so it drops
+     its label and travels as icon plus count. Fixed 34px square geometry is
+     gone — it is an icon-over-label grid now, not a disc. */
+  .home-header .cart-button > span,
+  .header-actions > .cart-button > span {
+    display: none;
   }
 
   .modern-home-hero {
@@ -2172,25 +2175,52 @@
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  padding: 7px 7px 7px 16px;
-  border: 1px solid var(--accent-18);
+  padding: 6px 6px 6px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
   background: var(--surface-raised);
+  box-shadow: var(--elevation-1);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+/* The whole shell reacts to focus, so the ring reads as one control rather
+   than a ring around the bare input inside a box. */
+.shop-page-head form:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.shop-page-head form > svg {
+  color: var(--text-tertiary);
 }
 
 .shop-page-head form input {
   min-width: 0;
   border: 0;
   outline: 0;
+  background: transparent;
 }
 
 .shop-page-head form button,
 .shop-pagination button {
-  min-height: 36px;
-  padding: 0 16px;
-  border: 1px solid var(--accent);
+  min-height: 38px;
+  padding: 0 20px;
+  /* Filled buttons carry no visible outline; the border stays only so the box
+     model matches the outlined variants sitting beside them. */
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
   background: var(--accent);
   color: var(--paper);
-  font-weight: 700;
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.shop-page-head form button:hover,
+.shop-pagination button:hover:not(:disabled) {
+  opacity: 0.88;
 }
 
 .shop-workspace {
@@ -2204,9 +2234,11 @@
   position: sticky;
   top: 94px;
   align-self: start;
-  padding: 20px;
-  border: 1px solid var(--accent-12);
+  padding: 22px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
   background: var(--surface-raised);
+  box-shadow: var(--elevation-1);
 }
 
 .shop-filter-title {
@@ -2244,11 +2276,32 @@
 .admin-page input,
 .admin-page textarea {
   width: 100%;
-  min-height: 40px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  background: var(--surface-raised);
+  min-height: 42px;
+  padding: 9px 13px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  /* background-color, not the shorthand: the shorthand also resets
+     background-image, which would wipe any icon a control sets. */
+  background-color: var(--surface-raised);
   color: var(--ink);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.shop-workspace select:hover,
+.shop-workspace input:hover,
+.admin-page select:hover,
+.admin-page input:hover,
+.admin-page textarea:hover {
+  border-color: var(--border-strong);
+}
+
+/* A select is a menu trigger, so it gets the affordance of one. */
+.shop-workspace select,
+.admin-page select,
+.shop-results-bar select {
+  cursor: pointer;
 }
 
 .shop-workspace fieldset > div {
@@ -2269,20 +2322,40 @@
 }
 
 .shop-clear {
+  width: 100%;
+  min-height: 38px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--accent);
-  font-weight: 700;
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.shop-clear:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .shop-apply {
   width: 100%;
-  min-height: 36px;
+  min-height: 40px;
   margin-bottom: 8px;
-  border: 1px solid var(--accent);
+  /* Filled, so no visible outline — the border only holds the box model. */
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   background: var(--brand);
   color: var(--on-brand);
-  font-weight: 750;
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.shop-apply:hover {
+  opacity: 0.88;
 }
 
 .shop-results {
@@ -2311,6 +2384,20 @@
 
 .shop-results-bar select {
   width: 190px;
+  min-height: 42px;
+  padding: 9px 13px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-raised);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.shop-results-bar select:hover {
+  border-color: var(--border-strong);
 }
 
 .shop-product-grid {
@@ -2358,8 +2445,8 @@
 
 .variant-picker {
   display: grid;
-  gap: 10px;
-  margin: 20px 0;
+  gap: 9px;
+  margin: 4px 0;
 }
 
 .variant-picker > span,
@@ -2376,21 +2463,40 @@
 }
 
 .variant-picker button {
-  min-height: 36px;
-  padding: 0 15px;
-  border: 1px solid var(--line);
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  color: var(--ink);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
 }
 
+.variant-picker button:hover:not(:disabled):not(.active) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+/* Selection reads from the fill and the heavier weight. The old dark outline
+   was the only thing marking it and looked like a stray stroke on the chip. */
 .variant-picker button.active {
-  border-color: var(--accent);
-  background: var(--accent-08);
-  color: var(--accent);
+  border-color: transparent;
+  background: var(--brand);
+  color: var(--on-brand);
+  font-weight: var(--weight-bold);
+  box-shadow: var(--elevation-1);
 }
 
 .variant-picker button:disabled {
-  opacity: 0.45;
+  border-style: dashed;
+  opacity: 0.5;
+  cursor: not-allowed;
   text-decoration: line-through;
 }
 
@@ -3451,7 +3557,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-xs);
-  letter-spacing: 0.02em;
+  letter-spacing: var(--tracking-wide);
 }
 
 .checkout-policy-form .policy-choice.is-selected,
@@ -4278,7 +4384,7 @@
 }
 
 .admin-return-filters button.is-active {
-  border-color: var(--admin-ink);
+  border-color: transparent;
   background: var(--admin-ink);
   color: var(--paper);
 }
@@ -4727,7 +4833,7 @@
 }
 
 .admin-segmented button.active {
-  border-color: var(--signal);
+  border-color: transparent;
   background: var(--brand);
   color: var(--on-brand);
 }
@@ -4781,7 +4887,7 @@
 }
 
 .admin-review-actions button.active {
-  border-color: var(--signal);
+  border-color: transparent;
   background: var(--brand);
   color: var(--on-brand);
 }
@@ -4951,7 +5057,8 @@ body {
   background: var(--paper);
   color: var(--accent);
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    "Nunito Sans Variable", "Nunito Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
 }
 
 body:has(.cart-drawer.open) {
@@ -5362,10 +5469,13 @@ h3 {
   background: var(--accent-03);
 }
 
+/* Matches the detail-page picker: fill carries the selection, so the dark
+   border and the inset ring doubling it both go. */
 .quick-option-choice.active {
-  border-color: var(--accent);
-  background: var(--accent-05);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: transparent;
+  background: var(--brand);
+  color: var(--on-brand);
+  box-shadow: var(--elevation-1);
 }
 
 .quick-option-choice:disabled {
@@ -5396,8 +5506,11 @@ h3 {
   font-size: var(--text-xs);
 }
 
+/* Sits on the brand fill, which stays light in both themes — the default ink
+   inverts to light and would disappear against it. */
 .quick-option-choice.active small {
-  color: var(--accent);
+  color: var(--on-brand);
+  opacity: 0.72;
 }
 
 .quick-option-purchase {
@@ -5468,7 +5581,7 @@ h3 {
   min-height: 52px;
   border-radius: 8px;
   background: var(--brand);
-  border-color: var(--accent);
+  border-color: transparent;
   color: var(--on-brand);
   box-shadow: 0 12px 26px rgba(58, 48, 38, 0.12);
   font-size: var(--text-base);
@@ -5555,10 +5668,29 @@ h3 {
   min-height: 46px;
   align-items: center;
   gap: 10px;
-  padding: 0 15px;
-  border: 1px solid var(--accent-12);
-  border-radius: 6px;
-  background: var(--accent-03);
+  padding: 0 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.search-shell:hover {
+  border-color: var(--border-default);
+}
+
+.search-shell:focus-within {
+  border-color: var(--accent-border);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.search-shell > svg {
+  flex: none;
+  color: var(--text-tertiary);
 }
 
 .predictive-search > button {
@@ -5694,13 +5826,122 @@ h3 {
   color: var(--accent);
 }
 
+/* Tighter base gap, with the destination links keeping their own wider rhythm
+   below. A flat 18px between seven mixed-shape controls was the density. */
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 8px;
 }
 
-.header-actions > a {
+/* The cart is part of this group, so it shares the rhythm. The previous
+   `a:last-of-type { margin-right: 0 }` zeroed the margin on Saved — which was
+   correct while Saved ended the group, but left Saved and Cart pinched
+   together once the cart moved in after it. */
+.header-actions > a,
+.header-actions > .cart-button {
+  margin-right: 8px;
+}
+
+/* Only the item that actually ends the group drops its margin; the divider
+   supplies the separation from the utilities. */
+.header-actions > .cart-button {
+  margin-right: 2px;
+}
+
+.header-actions-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 6px;
+  background: var(--border-default);
+}
+
+/* Matches the theme toggle's height and border so the two utilities read as a
+   matched pair rather than two unrelated widgets. */
+.language-switcher {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.language-switcher:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.language-switcher span {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  /* Never track this label. Bengali joins glyphs into conjuncts and positions
+     diacritics against them; adding letter-spacing pulls those apart and the
+     word renders broken. The document already sets letter-spacing:0 for bn,
+     but that rule targets the button and this one targets the span, so a
+     direct declaration here would have overridden it. */
+  letter-spacing: normal;
+  line-height: 1.35;
+}
+
+/* The old markup's nested buttons and the 1px divider between them are gone.
+   Leaving `.language-switcher > span` in place would have styled the new
+   label as a 1px sliver, since it is now the only child span. */
+
+/* Bengali joins glyphs into conjuncts and hangs diacritics off them, so any
+   tracking pulls the clusters apart and the text renders broken. Zeroing the
+   tokens at the root neutralises every rule that spaces type through them —
+   custom properties inherit, so this reaches descendants that the element
+   selectors below cannot. */
+html[lang="bn"] {
+  --tracking-tight: 0;
+  --tracking-wide: 0;
+  --tracking-caps: 0;
+}
+
+html[lang="bn"] body,
+html[lang="bn"] button,
+html[lang="bn"] input,
+html[lang="bn"] select,
+html[lang="bn"] textarea {
+  font-family: "Noto Sans Bengali", "Hind Siliguri", "Nunito Sans Variable", Arial, sans-serif;
+  letter-spacing: 0;
+}
+
+html[lang="bn"] body {
+  line-height: 1.55;
+}
+
+.admin-translation-fields {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-sunken);
+}
+
+.admin-translation-fields legend {
+  padding: 0 6px;
+  font-weight: 800;
+}
+
+.admin-translation-fields > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.header-actions > a,
+.header-actions > .cart-button {
   position: relative;
   display: grid;
   justify-items: center;
@@ -5786,35 +6027,44 @@ h3 {
   opacity: 0.72;
 }
 
-.icon-button,
-.cart-button {
+.icon-button {
   position: relative;
   display: grid;
   width: 40px;
   height: 40px;
   place-items: center;
-  border: 1px solid var(--accent-18);
-  border-radius: 5px;
-  background: var(--paper);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.icon-button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+/* The cart now sits among the destination links, so it takes their shape
+   rather than staying an outlined disc beside them. */
+.header-actions > .cart-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
 }
 
-.cart-button > span {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  display: grid;
-  min-width: 20px;
-  height: 20px;
-  place-items: center;
-  padding: 0 5px;
-  border: 2px solid var(--paper);
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--paper);
-  font-size: var(--text-xs);
-  font-weight: 900;
+.header-actions > .cart-button:hover {
+  color: var(--text-link);
 }
+
+/* The child span is the cart label now, not the count — the badge moved to
+   the shared .nav-count that Saved already uses. Leaving the old absolute
+   badge styling here would have rendered the word as a chip in the corner. */
 
 .category-nav {
   position: sticky;
@@ -6143,7 +6393,9 @@ h3 {
 }
 
 .spotlight-copy > span,
-.product-meta > span {
+/* Named rather than structural: as `.product-meta > span` this also captured
+   any other span dropped into the card and restyled it as a brand line. */
+.product-meta > .product-brand {
   display: block;
   margin-bottom: 6px;
   color: var(--accent-55);
@@ -6333,7 +6585,81 @@ h3 {
   font-weight: 700;
 }
 
-.product-card-facts span {
+/* ------------------------------------------------------------ Rating stars --
+   Two stacked star rows; the solid row is width-clipped to the score, which
+   gives a true fractional fill instead of rounding to whole or half stars. */
+.rating-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  /* Uniform leading on every child, so `align-items: center` aligns the star
+     block and the two text sizes on one optical centre. */
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.rating-stars__track {
+  position: relative;
+  display: flex;
+  flex: none;
+}
+
+.rating-stars__layer {
+  display: flex;
+  gap: 2px;
+  color: var(--rating-empty);
+}
+
+/* Inline SVGs sit on the text baseline and reserve descender space below the
+   glyph, which is what threw the row out of alignment. */
+.rating-stars svg {
+  display: block;
+}
+
+.rating-stars__layer.is-filled {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  color: var(--rating-filled);
+}
+
+.rating-stars__value {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  /* Keeps 4.0 and 5.0 the same width so ratings line up down a product grid. */
+  font-variant-numeric: tabular-nums;
+}
+
+.rating-stars__count {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  /* This lands inside cards that uppercase and letter-space their metadata;
+     the review count is a sentence, so it opts out of both. */
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Separator dot kept in flow rather than absolutely placed, so it shares the
+   count's baseline and cannot drift. */
+.rating-stars__count::before {
+  margin-right: 7px;
+  color: var(--text-tertiary);
+  content: "·";
+}
+
+/* Inside the facts row the score already sits among muted metadata, so it
+   drops the extra top margin it needs when stacked under the title. */
+.product-card-facts .rating-stars {
+  margin-top: 0;
+}
+
+/* The rating brings its own layout; without the exclusion this rule's gap
+   overrode it, since (0,1,1) beats the component's own (0,1,0). */
+.product-card-facts span:not(.rating-stars) {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -6518,7 +6844,7 @@ h3 {
 }
 
 .footer-socials a:hover {
-  border-color: var(--signal);
+  border-color: transparent;
   background: var(--accent-fill);
   color: var(--accent-fill-text);
 }
@@ -6747,7 +7073,7 @@ h3 {
 
 .floating-cart.has-items {
   padding-right: var(--space-4);
-  border-color: var(--brand-strong);
+  border-color: transparent;
   background: var(--brand);
 }
 
@@ -7419,10 +7745,13 @@ body:has(.checkout-page) .floating-cart {
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
+/* A thumbnail is filled by its image, so a ring is the only way to mark the
+   selected one — it stays, but softened from near-black ink to the warmer
+   brand tone and given a themed halo instead of a hardcoded rgba. */
 .thumbnail-rail button.active,
 .thumbnail-rail .product-art-placeholder.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(192, 150, 98, 0.18);
+  border-color: var(--brand-strong);
+  box-shadow: 0 0 0 2px var(--surface-selected);
 }
 
 .thumbnail-rail button:hover {
@@ -7517,14 +7846,16 @@ body:has(.checkout-page) .floating-cart {
 .product-purchase {
   display: grid;
   align-content: start;
-  gap: 15px;
-  padding: 38px 0 38px 34px;
+  gap: 13px;
+  padding: 30px 0 30px 34px;
 }
 
 .product-purchase h1 {
   margin-bottom: 0;
-  font-size: 42px;
-  line-height: 1.08;
+  /* 42px pushed the buy controls well below the fold on a laptop; the title is
+     still the largest thing in the column at 34px. */
+  font-size: 34px;
+  line-height: 1.12;
 }
 
 .product-summary-line {
@@ -7575,12 +7906,12 @@ body:has(.checkout-page) .floating-cart {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  padding-bottom: 16px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--accent-12);
 }
 
 .detail-price strong {
-  font-size: 29px;
+  font-size: 26px;
 }
 
 .detail-price small {
@@ -7589,15 +7920,13 @@ body:has(.checkout-page) .floating-cart {
   text-decoration: line-through;
 }
 
+/* Plain copy rather than a boxed panel — the border and fill made a paragraph
+   of body text look like an alert and added 30px of chrome to the column. */
 .product-description {
   margin: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--accent-10);
-  border-radius: 6px;
-  background: var(--accent-03);
-  color: var(--accent-72);
+  color: var(--text-secondary);
   font-size: var(--text-sm);
-  line-height: 1.65;
+  line-height: 1.6;
 }
 
 .product-facts {
@@ -7619,38 +7948,29 @@ body:has(.checkout-page) .floating-cart {
   grid-column: 1 / -1;
 }
 
+/* An inline notice rather than a card: the label is already a full sentence,
+   so the block layout and the paragraph under it were spending a lot of the
+   column's height to repeat it. Hardcoded rgba values swapped for the themed
+   warning tokens at the same time. */
 .product-advance-panel {
-  display: grid;
-  grid-template-columns: 38px 1fr;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(156, 103, 45, 0.28);
-  border-radius: 6px;
-  background: rgba(214, 178, 128, 0.16);
-  color: var(--accent);
-}
-
-.product-advance-panel > span {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--paper);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-full);
+  background: var(--warning-bg);
   color: var(--warning-text);
 }
 
-.product-advance-panel strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: var(--text-sm);
+.product-advance-panel > svg {
+  flex: none;
 }
 
-.product-advance-panel p {
-  margin: 0;
-  color: var(--accent-72);
-  font-size: var(--text-sm);
-  line-height: 1.55;
+.product-advance-panel strong {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  line-height: 1;
 }
 
 .quantity-row {
@@ -10052,6 +10372,13 @@ input[type="checkbox"] {
   backdrop-filter: blur(10px);
 }
 
+.auth-language {
+  position: absolute;
+  top: 48px;
+  right: 28px;
+  z-index: 5;
+}
+
 .auth-site-note {
   position: static;
   z-index: 4;
@@ -10577,7 +10904,7 @@ input[type="checkbox"] {
   border-radius: 20px;
   font-size: var(--text-xs) !important;
   font-weight: 850;
-  letter-spacing: 0.02em;
+  letter-spacing: var(--tracking-wide);
   text-transform: capitalize !important;
 }
 
@@ -10713,7 +11040,7 @@ input[type="checkbox"] {
   color: var(--admin-muted);
   font-size: var(--text-xs);
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
 }
 
@@ -10772,7 +11099,7 @@ input[type="checkbox"] {
   text-align: left;
   font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--tracking-caps);
   color: var(--admin-muted);
 }
 
@@ -11140,6 +11467,17 @@ input[type="checkbox"] {
     gap: 8px;
   }
 
+  /* Drops the icon and keeps the label. Width stays automatic because the
+     Bengali label is a full word, not a two-letter code — a fixed 34px circle
+     would clip it. */
+  .language-switcher {
+    padding-inline: 9px;
+  }
+
+  .language-switcher > svg {
+    display: none;
+  }
+
   .header-actions > a {
     display: none;
   }
@@ -11282,7 +11620,7 @@ input[type="checkbox"] {
 
   .mobile-purchase-bar strong {
     font-size: var(--text-lg);
-    letter-spacing: -0.01em;
+    letter-spacing: var(--tracking-tight);
   }
 
   .mobile-option-select {
@@ -11295,7 +11633,7 @@ input[type="checkbox"] {
     color: var(--muted);
     font-size: var(--text-2xs);
     font-weight: 850;
-    letter-spacing: 0.04em;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
   }
 
@@ -11650,6 +11988,11 @@ input[type="checkbox"] {
     position: absolute;
     top: 46px;
     left: 14px;
+  }
+
+  .auth-language {
+    top: 47px;
+    right: 14px;
   }
 
   .auth-visual {
@@ -13621,7 +13964,7 @@ input[type="checkbox"] {
 }
 
 .customer-segment-tabs button.active {
-  border-color: var(--accent);
+  border-color: transparent;
   background: var(--accent);
   color: var(--paper);
 }
@@ -15346,7 +15689,6 @@ input[type="checkbox"] {
 .modern-promo,
 .combo-callout,
 .brand-word > span,
-.cart-button > span,
 .primary-action,
 .add-button,
 .filter-row button.active,
@@ -15370,6 +15712,8 @@ input[type="checkbox"] {
   color: var(--on-brand);
 }
 
+/* These all carry a solid fill. A contrasting outline on top of a fill reads as
+   a seam, so the border stays only to preserve the box model. */
 .primary-action,
 .add-button,
 .filter-row button.active,
@@ -15377,7 +15721,7 @@ input[type="checkbox"] {
 .tabs button.active,
 .shop-page-head form button,
 .shop-pagination button {
-  border-color: var(--accent);
+  border-color: transparent;
 }
 
 .modern-promo-copy > p:not(.eyebrow),
@@ -15406,9 +15750,24 @@ input[type="checkbox"] {
 }
 
 /* Blue is reserved for interaction, information, delivery, and analytics. */
-:where(a, button, input, select, textarea):focus-visible {
-  outline: 3px solid var(--signal);
+/* Was a 3px slab of solid blue. Keyboard users still need a visible indicator,
+   so this thins it rather than dropping it. */
+:where(a, button):focus-visible {
+  outline: 2px solid var(--focus-ring-color);
   outline-offset: 2px;
+}
+
+/* Fields get a soft ring instead of a hard outline: the border tints and a
+   low-opacity halo sits outside it, which reads as a state change on the
+   control rather than a rectangle drawn around it.
+   Deliberately not wrapped in :where() — at zero specificity the border-color
+   would lose to every `.container select` rule and only the halo would show. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-bg);
 }
 
 .search-shell:focus-within,
@@ -17350,20 +17709,39 @@ input[type="checkbox"] {
   }
 }
 
+/* Reads the figure out instead of hinting at it: a 30px disc with a bare "%"
+   pip stuck to its corner conveyed nothing without the number. Hardcoded rgba
+   values replaced with the warning tokens so it themes. */
 .advance-payment-badge {
   position: absolute;
   top: 54px;
   right: 14px;
   z-index: 2;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid rgba(156, 103, 45, 0.22);
-  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-full);
+  /* Opaque, not the translucent --warning-bg: this badge floats over product
+     photography, and at 0.2 alpha in dark mode the image bled through — over a
+     white packshot the label fell to 1.26:1. The glass surface keeps it
+     self-contained whatever it happens to sit on. */
   background: var(--surface-glass);
+  backdrop-filter: blur(6px);
   color: var(--warning-text);
-  box-shadow: 0 8px 18px rgba(70, 49, 24, 0.08);
+  box-shadow: var(--elevation-2);
+}
+
+.advance-payment-badge > svg {
+  flex: none;
+}
+
+.advance-payment-badge b {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-heavy);
+  line-height: 1;
 }
 
 .product-card > .advance-payment-badge:first-child,
@@ -17371,22 +17749,7 @@ input[type="checkbox"] {
   top: 14px;
 }
 
-.advance-payment-badge::after {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  display: grid;
-  width: 13px;
-  height: 13px;
-  place-items: center;
-  border: 2px solid var(--paper);
-  border-radius: 50%;
-  background: var(--accent-fill);
-  color: var(--accent-fill-text);
-  font-size: var(--text-2xs);
-  font-weight: 900;
-  content: "%";
-}
+/* The "%" pip is gone — the percentage is now real text inside the badge. */
 
 .product-card,
 .modern-product-card {
@@ -17748,6 +18111,10 @@ input[type="checkbox"] {
   }
 
   .header-actions > a {
+    display: none;
+  }
+
+  .header-actions > .cart-button > span {
     display: none;
   }
 
@@ -18711,7 +19078,7 @@ input[type="checkbox"] {
     min-height: 0;
   }
 
-  .product-meta > span,
+  .product-meta > .product-brand,
   .modern-product-meta > small {
     margin-bottom: 4px;
     font-size: var(--text-2xs);
@@ -18762,12 +19129,13 @@ input[type="checkbox"] {
     font-size: var(--text-xs);
   }
 
+  /* The fixed square + 50% radius were shaping the old icon disc; the badge is
+     a text pill now and sizes itself from its content. */
   .advance-payment-badge {
     top: 38px;
     right: 8px;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
+    height: 22px;
+    padding: 0 7px;
   }
 
   .floating-cart {
@@ -18976,7 +19344,7 @@ input[type="checkbox"] {
     align-items: center;
     gap: 7px;
     padding: 0 12px;
-    border: 1px solid var(--brand-strong);
+    border: 1px solid transparent;
     border-radius: 999px;
     background: var(--brand);
     color: var(--on-brand);
@@ -19032,7 +19400,7 @@ input[type="checkbox"] {
     justify-content: center;
     gap: 0;
     padding: 0;
-    border: 1px solid var(--accent-18);
+    border: 1px solid transparent;
     border-radius: 999px;
     background: var(--accent);
     color: var(--paper);
@@ -19048,7 +19416,7 @@ input[type="checkbox"] {
   }
 
   .shop-pagination button:not(:disabled) {
-    border-color: var(--accent);
+    border-color: transparent;
     background: var(--accent);
   }
 
@@ -19649,4 +20017,118 @@ input[type="checkbox"] {
   .payment-provider-logo.uploaded img {
     max-width: 98px;
   }
+}
+
+/* Keep the transparent border box so filled buttons do not shift between states. */
+.ui-button--primary,
+.primary-action,
+.add-button,
+.shop-apply,
+.filter-row button.active,
+.modern-segmented button.active,
+.tabs button.active,
+.float-action,
+.floating-cart.has-items,
+.shop-page-head form button,
+.shop-results-bar button,
+.shop-pagination button:not(:disabled),
+.admin-segmented button.active,
+.admin-review-actions button.active,
+.admin-return-filters button.is-active,
+.admin-period-control button.active,
+.customer-segment-tabs button.active,
+.customer-view-toggle button.active {
+  border-color: transparent;
+}
+
+/* ------------------------------------------------------------ Product video --
+   The clip overlays the existing artwork and fades in, so the fallback state is
+   simply the artwork with nothing on top of it. */
+.product-video {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.product-video__media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.product-video.is-playing .product-video__media {
+  opacity: 1;
+}
+
+/* Play affordance for touch and for the detail page. Hidden while the clip is
+   running so it never sits over the picture. */
+.product-video__toggle {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-glass);
+  backdrop-filter: blur(6px);
+  color: var(--text-primary);
+  box-shadow: var(--elevation-2);
+  cursor: pointer;
+  transition:
+    opacity var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.product-video__toggle:hover {
+  background: var(--surface-raised);
+}
+
+.product-video.is-playing .product-video__toggle {
+  opacity: 0;
+}
+
+.product-video.is-playing:hover .product-video__toggle,
+.product-video.is-playing .product-video__toggle:focus-visible {
+  opacity: 1;
+}
+
+/* Admin preview in the product editor. */
+.admin-video-preview {
+  width: 100%;
+  max-height: 220px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+/* Paired URL input used by both upload fields. */
+.admin-upload-url {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.admin-upload-url > span {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+.admin-upload-url input {
+  min-width: 0;
+  flex: 1;
 }

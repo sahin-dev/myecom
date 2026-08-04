@@ -87,6 +87,12 @@
   --info-text: var(--blue-700);
   --info-solid: var(--blue-400);
 
+  /* Ratings read as a warm gold rather than the amber warning tone. Deep enough
+     to clear 3:1 against both card surfaces — WCAG 1.4.11 applies, since a star
+     row is a meaningful graphic, not decoration. */
+  --rating-filled: #b87d15;
+  --rating-empty: rgba(58, 48, 38, 0.24);
+
   /* --- Focus ------------------------------------------------------------ */
   --focus-ring-color: var(--blue-400);
   --focus-ring-width: 2px;
@@ -173,6 +179,9 @@
   --info-border: rgba(156, 195, 245, 0.34);
   --info-text: var(--blue-300);
   --info-solid: var(--blue-400);
+
+  --rating-filled: #f0b849;
+  --rating-empty: rgba(242, 236, 226, 0.24);
 
   /* Shadows read as noise on dark fields; depth comes from surface steps. */
   --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5);

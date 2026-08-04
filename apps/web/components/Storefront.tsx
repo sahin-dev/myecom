@@ -8,7 +8,6 @@ import {
   BadgeCheck,
   Boxes,
   ChevronRight,
-  CreditCard,
   Clock3,
   Coffee,
   Droplets,
@@ -25,6 +24,7 @@ import {
   Wheat
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Catalog,
   Category,
@@ -33,16 +33,19 @@ import {
   fallbackCatalog,
   fetchAccountOrders,
   formatMoney,
-  productAdvancePaymentLabel,
   selectableProductInventory,
   resolveMediaUrl
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizeCatalog } from "../lib/i18n";
 import { useCart } from "./CartContext";
 import { useAuth } from "./AuthContext";
 import { HorizontalRail } from "./HorizontalRail";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
+import { ProductVideo } from "./ProductVideo";
 import { QuickVariantAdd } from "./QuickVariantAdd";
+import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
+import { RatingStars } from "./RatingStars";
 import { useWishlist } from "./WishlistContext";
 
 type Shelf = "new" | "trending";
@@ -61,7 +64,12 @@ function campaignHref(href: string) {
 }
 
 export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalog?: Catalog }) {
-  const catalog = initialCatalog;
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("HomePage");
+  const catalog = useMemo(
+    () => localizeCatalog(initialCatalog, locale),
+    [initialCatalog, locale],
+  );
   const [activeBanner, setActiveBanner] = useState(0);
   const [previousBanner, setPreviousBanner] = useState<number | null>(null);
   const [bannerDirection, setBannerDirection] = useState<SlideDirection>("next");
@@ -270,7 +278,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
                     <ArrowRight size={18} />
                   </Link>
                   <Link className="text-link" href={categorySection ? "#categories" : "/shop"}>
-                    Browse categories
+                    {t("browseCategories")}
                     <ChevronRight size={17} />
                   </Link>
                 </div>
@@ -325,13 +333,13 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
               <CategoryIcon category={entry.category} />
               <span>
                 <strong>{entry.category.name}</strong>
-                <small>{entry.totalProducts} products</small>
+                <small>{t("products", { count: entry.totalProducts })}</small>
               </span>
               <ChevronRight size={17} />
             </Link>
           ))}
           <Link className="modern-category-all" href="/shop">
-            <span><strong>Shop all products</strong><small>See the full pantry</small></span>
+            <span><strong>{t("shopAll")}</strong><small>{t("fullPantry")}</small></span>
             <ArrowRight size={18} />
           </Link>
         </div>
@@ -341,11 +349,11 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
         <section className="modern-product-section buy-again-section" aria-labelledby="buy-again-title">
           <div className="modern-section-heading">
             <div>
-              <p className="eyebrow">Welcome back</p>
-              <h2 id="buy-again-title">Buy again</h2>
-              <p>Quick access to products from your recent orders.</p>
+              <p className="eyebrow">{t("welcomeBack")}</p>
+              <h2 id="buy-again-title">{t("buyAgain")}</h2>
+              <p>{t("buyAgainDetail")}</p>
             </div>
-            <Link href="/account">View order history <ArrowRight size={16} /></Link>
+            <Link href="/account">{t("orderHistory")} <ArrowRight size={16} /></Link>
           </div>
           <div className="modern-product-grid" aria-label="Products from recent orders">
             {buyAgainProducts.map((product) => (
@@ -357,7 +365,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
 
       {popularSection ? <section className="modern-product-section" id="popular">
         <SectionHeading
-          eyebrow="Best sellers"
+          eyebrow={t("bestSellers")}
           title={popularSection.title}
           text={popularSection.subtitle ?? undefined}
           action={popularSection.ctaLabel && popularSection.ctaHref ? { label: popularSection.ctaLabel, href: popularSection.ctaHref } : undefined}
@@ -372,20 +380,20 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
       {combo && comboSection ? (
         <section className="modern-promo" id="combo-deals">
           <div className="modern-promo-copy">
-            <p className="eyebrow">{comboSection.eyebrow ?? "Bundle and save"}</p>
+            <p className="eyebrow">{comboSection.eyebrow ?? t("bundle")}</p>
             <h2>{comboSection.title}</h2>
             <p>{comboSection.subtitle}</p>
             <Link className="primary-action" href="/combo-deals">
-              {comboSection.ctaLabel ?? "Explore combo deals"}
+              {comboSection.ctaLabel ?? t("combo")}
               <ArrowRight size={18} />
             </Link>
           </div>
           <Link className="modern-promo-product" href={`/products/${combo.slug}`}>
             <ProductArt product={combo} />
             <span>
-              <small>{combo.badge ?? "Combo offer"}</small>
+              <small>{combo.badge ?? t("comboOffer")}</small>
               <strong>{combo.name}</strong>
-              <b>{formatMoney(combo.price)}</b>
+              <b>{formatMoney(combo.price, localeCode(locale))}</b>
             </span>
           </Link>
         </section>
@@ -394,20 +402,20 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
       {discoverSection ? <section className="modern-product-section" id="discover">
         <div className="modern-section-toolbar">
           <SectionHeading
-            eyebrow={discoverSection.eyebrow ?? "Discover something useful"}
-            title={shelf === "new" ? discoverSection.title : "Trending this week"}
+            eyebrow={discoverSection.eyebrow ?? t("discover")}
+            title={shelf === "new" ? discoverSection.title : t("trendingWeek")}
             text={discoverSection.subtitle ?? undefined}
           />
-          <div className="modern-segmented" aria-label="Product collection">
+          <div className="modern-segmented" aria-label={t("collection")}>
             <button className={shelf === "new" ? "active" : ""} type="button" onClick={() => setShelf("new")}>
-              New arrivals
+              {t("newArrivals")}
             </button>
             <button className={shelf === "trending" ? "active" : ""} type="button" onClick={() => setShelf("trending")}>
-              Trending
+              {t("trending")}
             </button>
           </div>
         </div>
-        <div className="modern-product-grid" key={shelf} aria-label={shelf === "new" ? "New products" : "Trending products"}>
+        <div className="modern-product-grid" key={shelf} aria-label={shelf === "new" ? t("newProducts") : t("trendingProducts")}>
           {discoveryProducts.slice(0, Math.min(Math.max(discoverSection.productLimit || 8, 4), 8)).map((product) => (
             <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} onAdd={() => addItem(product)} />
           ))}
@@ -581,6 +589,9 @@ function ProductCard({
   platformPolicy?: Catalog["siteSettings"]["checkoutPolicy"];
   onAdd: () => void;
 }) {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Product");
+  const common = useTranslations("Common");
   const { isSaved, toggle } = useWishlist();
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const saved = isSaved(product.slug);
@@ -592,44 +603,49 @@ function ProductCard({
   const savings = displayCompareAt && displayCompareAt > displayPrice
     ? Math.round(((displayCompareAt - displayPrice) / displayCompareAt) * 100)
     : 0;
-  const advanceLabel = productAdvancePaymentLabel(product, platformPolicy);
 
   return (
     <article className="modern-product-card">
       <div className="modern-card-head">
-        <span>{product.badge || (product.isNew ? "New" : product.category?.name ?? "Pantry")}</span>
+        <span>{product.badge || (product.isNew ? t("new") : product.category?.name ?? t("pantry"))}</span>
         <button type="button" onClick={() => toggle(product)} aria-label={saved ? `Remove ${product.name} from saved products` : `Save ${product.name}`}>
           <Heart size={17} fill={saved ? "currentColor" : "none"} />
         </button>
       </div>
       <Link className="modern-product-art" href={`/products/${product.slug}`} aria-label={`View ${product.name}`}>
-        <ProductArt product={product} />
+        <ProductVideo src={product.videoUrl} poster={product.imageUrl} label={t("playPromo")}>
+          <ProductArt product={product} />
+        </ProductVideo>
       </Link>
       <div className="modern-product-meta">
         <small>{product.brand?.name ?? product.category?.name ?? "My Ecom"}</small>
         <h3><Link href={`/products/${product.slug}`}>{product.name}</Link></h3>
         <div className="price-row">
-          <strong>{formatMoney(displayPrice)}</strong>
+          <strong>{formatMoney(displayPrice, localeCode(locale))}</strong>
           {savings ? <em>Save {savings}%</em> : null}
         </div>
         <div className="product-card-facts">
-          {product.reviewCount ? <span><Star size={12} fill="currentColor" /> {product.rating?.toFixed(1)} ({product.reviewCount})</span> : null}
+          {product.reviewCount ? (
+            <RatingStars
+              rating={product.rating}
+              count={product.reviewCount}
+              countLabel={t("reviewCount", { count: product.reviewCount })}
+              label={t("ratingReviews", { rating: product.rating ?? 0, count: product.reviewCount })}
+              size={13}
+            />
+          ) : null}
           <span className={availableInventory <= 5 ? "low-stock" : ""}>
-            {availableInventory > 5 ? "In stock" : availableInventory > 0 ? `Only ${availableInventory} left` : "Out of stock"}
+            {availableInventory > 5 ? common("inStock") : availableInventory > 0 ? t("onlyLeft", { count: availableInventory }) : common("outOfStock")}
           </span>
         </div>
       </div>
-      {advanceLabel ? (
-        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
-          <CreditCard size={14} />
-        </span>
-      ) : null}
+      <AdvancePaymentBadge product={product} policy={platformPolicy} />
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (
         <button className="add-button full" type="button" disabled={!product.inventory} onClick={onAdd}>
           <ShoppingBag size={17} />
-          {product.inventory ? "Add to bag" : "Out of stock"}
+          {product.inventory ? t("addToBag") : common("outOfStock")}
         </button>
       )}
     </article>

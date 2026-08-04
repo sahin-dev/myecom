@@ -1,6 +1,7 @@
 import { Transform } from "class-transformer";
 import {
   IsEmail,
+  IsIn,
   IsOptional,
   IsString,
   Length,
@@ -44,6 +45,10 @@ export class LoginDto {
 }
 
 export class UpdateProfileDto {
+  @IsOptional()
+  @IsIn(["en", "bn"])
+  preferredLocale?: string;
+
   @IsOptional()
   @IsString()
   @Length(2, 80)

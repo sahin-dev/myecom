@@ -23,6 +23,7 @@ import {
   UserRound
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Address,
   CustomerNotification,
@@ -49,13 +50,14 @@ import {
   formatMoney,
   markNotificationRead,
   markAllNotificationsRead,
-  productAdvancePaymentLabel,
   resolveMediaUrl,
   uploadReturnProof,
   updateAddress,
   updatePreferences
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizedHref, localizeProduct } from "../lib/i18n";
 import { orderPaymentBreakdown } from "../lib/orderPayments";
+import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
 import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
 import { OrderReceipt } from "./OrderReceipt";
@@ -101,6 +103,8 @@ const returnStatusCopy: Record<string, string> = {
 };
 
 export function AccountPage() {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Account");
   const { user, loading, logout, updateProfile } = useAuth();
   const { settings } = useSiteSettings();
   const confirm = useConfirm();
@@ -127,11 +131,11 @@ export function AccountPage() {
       fetchAccountOrders().then(setOrders),
       fetchAddresses().then(setAddresses),
       fetchReturns().then(setReturns),
-      fetchRecommendations().then(setRecommendations),
+      fetchRecommendations().then((items) => setRecommendations(items.map((product) => localizeProduct(product, locale)))),
       fetchPreferences().then(setPreferences),
       fetchNotifications().then(setNotifications)
     ]).catch(() => setMessage("Some account information is temporarily unavailable."));
-  }, [user]);
+  }, [locale, user]);
 
   const activeReturnedQuantities = useMemo(() => {
     const totals = new Map<string, number>();
@@ -409,14 +413,14 @@ export function AccountPage() {
     }
   }
 
-  if (loading) return <div className="route-loading">Loading your account...</div>;
+  if (loading) return <div className="route-loading">{t("loading")}</div>;
   if (!user) {
     return (
       <main className="access-page">
         <ShieldCheck size={42} />
-        <h1>Sign in to continue</h1>
-        <p>Your orders and account settings are protected.</p>
-        <a className="primary-action" href="/login?next=/account">Sign in</a>
+        <h1>{t("signInTitle")}</h1>
+        <p>{t("signInDetail")}</p>
+        <a className="primary-action" href={localizedHref("/login?next=/account", locale)}>{t("signIn")}</a>
       </main>
     );
   }
@@ -427,7 +431,7 @@ export function AccountPage() {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("");
-  const memberSince = new Date(user.createdAt).toLocaleDateString("en-BD", {
+  const memberSince = new Date(user.createdAt).toLocaleDateString(localeCode(locale), {
     month: "short",
     year: "numeric"
   });
@@ -439,76 +443,76 @@ export function AccountPage() {
         <div className="account-identity">
           <span className="account-avatar" aria-hidden="true">{accountInitials}</span>
           <div>
-            <p className="eyebrow">Your account</p>
-            <h1>Hello, {user.name.split(" ")[0]}</h1>
+            <p className="eyebrow">{t("eyebrow")}</p>
+            <h1>{t("hello", { name: user.name.split(" ")[0] })}</h1>
             <div className="account-identity-meta">
               <span>{user.email}</span>
-              <span>Member since {memberSince}</span>
+              <span>{t("memberSince", { date: memberSince })}</span>
             </div>
           </div>
         </div>
         <div className="account-actions">
           {user.role !== "CUSTOMER" ? (
-            <a className="secondary-action" href="/admin">Admin console</a>
+            <a className="secondary-action" href="/admin">{t("admin")}</a>
           ) : null}
           <button className="secondary-action" type="button" onClick={logout}>
             <LogOut size={17} />
-            Sign out
+            {t("signOut")}
           </button>
         </div>
       </section>
 
       {message ? <p className="account-global-notice">{message}</p> : null}
 
-      <section className="account-summary" aria-label="Account overview">
+      <section className="account-summary" aria-label={t("overview")}>
         <a href="#account-orders">
           <span><PackageCheck size={19} /></span>
           <strong>{orders.length}</strong>
-          <small>{orders.length === 1 ? "Order" : "Orders"}</small>
+          <small>{t("orders")}</small>
         </a>
         <a href="#account-addresses">
           <span><MapPin size={19} /></span>
           <strong>{addresses.length}</strong>
-          <small>Saved addresses</small>
+          <small>{t("addresses")}</small>
         </a>
         <a href="#account-notifications">
           <span><Bell size={19} /></span>
           <strong>{unreadNotificationCount}</strong>
-          <small>Unread updates</small>
+          <small>{t("updates")}</small>
         </a>
         <a href="#account-returns">
           <span><RotateCcw size={19} /></span>
           <strong>{activeReturnCount}</strong>
-          <small>Active returns</small>
+          <small>{t("returns")}</small>
         </a>
       </section>
 
       <div className="account-shell">
-        <aside className="account-section-nav" aria-label="Account sections">
+        <aside className="account-section-nav" aria-label={t("sections")}>
           <div>
             <LayoutDashboard size={18} />
-            <strong>Manage account</strong>
+            <strong>{t("manage")}</strong>
           </div>
           <nav>
-            <a href="#account-profile"><UserRound size={17} /><span>Profile & security</span></a>
+            <a href="#account-profile"><UserRound size={17} /><span>{t("profileSecurity")}</span></a>
             <a href="#account-orders">
               <PackageCheck size={17} />
-              <span>Orders</span>
+              <span>{t("orders")}</span>
               {orders.length ? <b>{orders.length}</b> : null}
             </a>
             <a href="#account-addresses">
               <MapPin size={17} />
-              <span>Addresses</span>
+              <span>{t("addressNav")}</span>
               {addresses.length ? <b>{addresses.length}</b> : null}
             </a>
             <a href="#account-notifications">
               <Bell size={17} />
-              <span>Notifications</span>
+              <span>{t("notifications")}</span>
               {unreadNotificationCount ? <b>{unreadNotificationCount}</b> : null}
             </a>
             <a href="#account-returns">
               <RotateCcw size={17} />
-              <span>Returns</span>
+              <span>{t("returnsNav")}</span>
               {activeReturnCount ? <b>{activeReturnCount}</b> : null}
             </a>
           </nav>
@@ -520,21 +524,21 @@ export function AccountPage() {
           <div className="panel-heading">
             <Settings size={20} />
             <div>
-              <p className="eyebrow">Profile</p>
-              <h2>Account details</h2>
+              <p className="eyebrow">{t("profile")}</p>
+              <h2>{t("details")}</h2>
             </div>
           </div>
           <form className="account-form" onSubmit={saveProfile}>
             <label>
-              <span>Name</span>
+              <span>{t("name")}</span>
               <input name="name" defaultValue={user.name} required />
             </label>
             <label>
-              <span>Email</span>
+              <span>{t("email")}</span>
               <input value={user.email} disabled />
             </label>
             <label>
-              <span>Phone</span>
+              <span>{t("phone")}</span>
               <input name="phone" defaultValue={user.phone ?? ""} />
             </label>
             <button className="primary-action" type="submit">
@@ -559,7 +563,7 @@ export function AccountPage() {
             <PackageCheck size={20} />
             <div>
               <p className="eyebrow">Purchases</p>
-              <h2>Order history</h2>
+              <h2>{t("orderHistory")}</h2>
             </div>
           </div>
           {orders.length ? (
@@ -687,7 +691,7 @@ export function AccountPage() {
           <MapPin size={20} />
           <div>
             <p className="eyebrow">Delivery</p>
-            <h2>Saved addresses</h2>
+            <h2>{t("savedAddresses")}</h2>
           </div>
         </div>
         <div className="address-workspace">
@@ -746,7 +750,7 @@ export function AccountPage() {
             <Bell size={20} />
             <div>
               <p className="eyebrow">Preferences</p>
-              <h2>Notifications</h2>
+              <h2>{t("notifications")}</h2>
             </div>
           </div>
           <div className="preference-list">
@@ -802,7 +806,7 @@ export function AccountPage() {
             <RotateCcw size={20} />
             <div>
               <p className="eyebrow">Help after purchase</p>
-              <h2>Returns</h2>
+              <h2>{t("returnsNav")}</h2>
             </div>
           </div>
           {eligibleOrders.length ? (
@@ -1127,7 +1131,6 @@ function AccountRecommendationCard({ product }: { product: Product }) {
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const price = selectedVariant?.price ?? product.price;
   const compareAt = selectedVariant ? selectedVariant.compareAt : product.compareAt;
-  const advanceLabel = productAdvancePaymentLabel(product, settings.checkoutPolicy);
 
   return (
     <article className="product-card">
@@ -1139,11 +1142,7 @@ function AccountRecommendationCard({ product }: { product: Product }) {
           {compareAt && compareAt > price ? <small>{formatMoney(compareAt)}</small> : null}
         </div>
       </div>
-      {advanceLabel ? (
-        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
-          <CreditCard size={14} />
-        </span>
-      ) : null}
+      <AdvancePaymentBadge product={product} policy={settings.checkoutPolicy} />
       {product.variants?.length ? (
         <QuickVariantAdd
           product={product}

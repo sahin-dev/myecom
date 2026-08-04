@@ -3,6 +3,7 @@
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Dispatch,
   ReactNode,
@@ -24,6 +25,7 @@ import {
   saveAccountCart,
   trackAnalyticsEvent
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizedHref } from "../lib/i18n";
 import { useAuth } from "./AuthContext";
 import { ProductArt } from "./ProductArt";
 import { useConfirm } from "./ui/ConfirmDialog";
@@ -69,6 +71,8 @@ async function migrateLegacyGuestCart() {
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Cart");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -109,13 +113,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
         skipNextSave.current = !hadDuplicates;
         setCart(lines);
         if (justLoggedIn && hadGuestItems.current) {
-          setCartNotice("Your guest bag items were added to your account bag.");
+          setCartNotice(t("guestMerged"));
           hadGuestItems.current = false;
         }
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setCartNotice(error instanceof Error ? error.message : "Your bag could not be loaded.");
+        setCartNotice(error instanceof Error ? error.message : t("loadError"));
       })
       .finally(() => {
         if (active) setHydrated(true);
@@ -156,12 +160,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
         setCartNotice(
           error instanceof Error
             ? error.message
-            : "Your bag could not be synchronized. Please try again."
+            : t("syncError")
         );
       });
     }, 400);
     return () => window.clearTimeout(timeout);
-  }, [cart, hydrated]);
+  }, [cart, hydrated, t]);
 
   useEffect(() => {
     if (!cartToast) return;
@@ -172,16 +176,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
   function addItem(product: Product, quantity = 1, variant?: ProductVariant | null) {
     const activeVariants = (product.variants ?? []).filter((item) => item.isActive);
     if (activeVariants.length && !variant && !isBaseProductEnabled(product)) {
-      setCartNotice(`${product.name} requires an option selection.`);
+      setCartNotice(t("optionRequired", { product: product.name }));
       setIsOpen(false);
-      window.location.assign(`/products/${product.slug}`);
+      window.location.assign(localizedHref(`/products/${product.slug}`, locale));
       return;
     }
     const available = variant?.inventory ?? product.inventory;
     if (available < 1) return;
     setCartNotice("");
     setCartToast(
-      `${quantity} x ${product.name}${variant ? ` (${variant.name})` : ""} added to your bag.`
+      t("added", { quantity, product: `${product.name}${variant ? ` (${variant.name})` : ""}` })
     );
     const lineId = variant?.id ?? product.id;
     setCart((current) => {
@@ -246,7 +250,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       removeItem,
       clearCart: () => setCart([])
     }),
-    [cart, cartNotice, hydrated, isOpen]
+    [cart, cartNotice, hydrated, isOpen, locale, t]
   );
 
   return (
@@ -280,6 +284,8 @@ function CartToast({ message }: { message: string }) {
 }
 
 function FloatingCartButton() {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Cart");
   const { cartCount, cartReady, subtotal, setIsOpen } = useCart();
   const hasItems = cartCount > 0;
 
@@ -290,8 +296,8 @@ function FloatingCartButton() {
       onClick={() => setIsOpen(true)}
       aria-label={
         hasItems
-          ? `Open shopping bag with ${cartCount} ${cartCount === 1 ? "item" : "items"}`
-          : "Open empty shopping bag"
+          ? t("shoppingBag") + ` (${t("itemCount", { count: cartCount })})`
+          : t("openEmpty")
       }
     >
       <span className="floating-cart-art" aria-hidden="true" key={cartCount}>
@@ -301,18 +307,21 @@ function FloatingCartButton() {
       <span className="floating-cart-copy">
         <small>
           {!cartReady
-            ? "Loading bag"
+            ? t("loadingBag")
             : hasItems
-              ? `${cartCount} ${cartCount === 1 ? "item" : "items"}`
-              : "Bag is empty"}
+              ? t("itemCount", { count: cartCount })
+              : t("empty")}
         </small>
-        <strong>{hasItems ? formatMoney(subtotal) : "Start shopping"}</strong>
+        <strong>{hasItems ? formatMoney(subtotal, localeCode(locale)) : t("startShopping")}</strong>
       </span>
     </button>
   );
 }
 
 function CartDrawer() {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Cart");
+  const common = useTranslations("Common");
   const {
     cart,
     cartCount,
@@ -326,12 +335,12 @@ function CartDrawer() {
     clearCart
   } = useCart();
   const confirm = useConfirm();
-  const checkoutHref = cart.length ? "/checkout" : "#";
+  const checkoutHref = cart.length ? localizedHref("/checkout", locale) : "#";
   const emptyCart = async () => {
     const confirmed = await confirm({
-      title: "Empty your shopping bag?",
-      description: `This removes all ${cart.length} ${cart.length === 1 ? "item" : "items"} from your bag. You can't undo it.`,
-      confirmLabel: "Empty bag",
+      title: t("emptyConfirmTitle"),
+      description: t("emptyConfirmDetail", { count: cart.length }),
+      confirmLabel: t("clear"),
       tone: "danger"
     });
     if (confirmed) clearCart();
@@ -339,24 +348,24 @@ function CartDrawer() {
 
   return (
     <>
-      <aside className={`cart-drawer ${isOpen ? "open" : ""}`} aria-label="Shopping cart">
+      <aside className={`cart-drawer ${isOpen ? "open" : ""}`} aria-label={t("shoppingBag")}>
         <div className="drawer-header">
           <div>
-            <span>Shopping bag</span>
-            <strong>{cartCount} {cartCount === 1 ? "item" : "items"}</strong>
+            <span>{t("shoppingBag")}</span>
+            <strong>{t("itemCount", { count: cartCount })}</strong>
           </div>
           <div className="drawer-header-actions">
             {cart.length ? (
               <button className="clear-cart-button" type="button" onClick={() => void emptyCart()}>
                 <Trash2 size={14} />
-                Empty bag
+                {t("clear")}
               </button>
             ) : null}
             <button
               className="icon-button"
               type="button"
               onClick={() => setIsOpen(false)}
-              aria-label="Close shopping bag"
+              aria-label={t("close")}
             >
               <X size={19} />
             </button>
@@ -366,7 +375,7 @@ function CartDrawer() {
           {cartNotice ? (
             <div className="cart-notice" role="status">
               <span>{cartNotice}</span>
-              <button type="button" onClick={clearCartNotice} aria-label="Dismiss bag message">
+              <button type="button" onClick={clearCartNotice} aria-label={t("dismiss")}>
                 <X size={15} />
               </button>
             </div>
@@ -374,21 +383,21 @@ function CartDrawer() {
           {cart.length ? (
             cart.map((line) => (
               <article className="cart-line" key={line.variant?.id ?? line.product.id}>
-                <Link href={`/products/${line.product.slug}`} onClick={() => setIsOpen(false)}>
+                <Link href={localizedHref(`/products/${line.product.slug}`, locale)} onClick={() => setIsOpen(false)}>
                   <ProductArt compact product={line.product} />
                 </Link>
                 <div className="cart-line-copy">
-                  <Link href={`/products/${line.product.slug}`} onClick={() => setIsOpen(false)}>
+                  <Link href={localizedHref(`/products/${line.product.slug}`, locale)} onClick={() => setIsOpen(false)}>
                     <strong>{line.product.name}</strong>
                   </Link>
                   {line.variant ? <small>{line.variant.name}</small> : null}
-                  <span>{formatMoney(line.variant?.price ?? line.product.price)}</span>
+                  <span>{formatMoney(line.variant?.price ?? line.product.price, localeCode(locale))}</span>
                   <div className="cart-line-actions">
                     <div className="quantity-control">
                       <button
                         type="button"
                         onClick={() => updateQuantity(line.variant?.id ?? line.product.id, line.quantity - 1)}
-                        aria-label="Decrease quantity"
+                        aria-label={t("decrease")}
                       >
                         <Minus size={14} />
                       </button>
@@ -396,7 +405,7 @@ function CartDrawer() {
                       <button
                         type="button"
                         onClick={() => updateQuantity(line.variant?.id ?? line.product.id, line.quantity + 1)}
-                        aria-label="Increase quantity"
+                        aria-label={t("increase")}
                       >
                         <Plus size={14} />
                       </button>
@@ -405,7 +414,7 @@ function CartDrawer() {
                       className="remove-line"
                       type="button"
                       onClick={() => removeItem(line.variant?.id ?? line.product.id)}
-                      aria-label={`Remove ${line.product.name}`}
+                      aria-label={t("removeProduct", { product: line.product.name })}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -419,11 +428,11 @@ function CartDrawer() {
                 <ShoppingBag size={46} strokeWidth={1.35} />
                 <span />
               </div>
-              <small>Your pantry bag</small>
-              <strong>Ready when you are</strong>
-              <p>Choose something useful for home and it will wait for you here.</p>
-              <Link className="primary-action" href="/shop" onClick={() => setIsOpen(false)}>
-                Explore products
+              <small>{t("pantryBag")}</small>
+              <strong>{t("ready")}</strong>
+              <p>{t("readyDetail")}</p>
+              <Link className="primary-action" href={localizedHref("/shop", locale)} onClick={() => setIsOpen(false)}>
+                {t("explore")}
               </Link>
             </div>
           )}
@@ -431,17 +440,17 @@ function CartDrawer() {
         {cart.length ? (
           <div className="drawer-footer">
             <div className="drawer-total">
-              <span>Subtotal</span>
-              <strong>{formatMoney(subtotal)}</strong>
+              <span>{common("subtotal")}</span>
+              <strong>{formatMoney(subtotal, localeCode(locale))}</strong>
             </div>
             <Link
               className="primary-action full"
               href={checkoutHref}
               onClick={() => setIsOpen(false)}
             >
-              Continue to checkout
+              {t("continueCheckout")}
             </Link>
-            <small>Delivery is calculated at checkout.</small>
+            <small>{t("deliveryCalculated")}</small>
           </div>
         ) : null}
       </aside>
@@ -450,7 +459,7 @@ function CartDrawer() {
           className="scrim"
           type="button"
           onClick={() => setIsOpen(false)}
-          aria-label="Close cart"
+          aria-label={t("close")}
         />
       ) : null}
     </>

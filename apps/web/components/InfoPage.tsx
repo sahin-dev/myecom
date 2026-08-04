@@ -1,3 +1,5 @@
+"use client";
+
 import {
   Clock3,
   HeartHandshake,
@@ -7,7 +9,9 @@ import {
   ShieldCheck,
   Truck
 } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import { InfoPageContent, fallbackCatalog } from "../lib/catalog";
+import { AppLocale, localizedHref, localizeEntity } from "../lib/i18n";
 import { PageFooter, PageHeader } from "./PageChrome";
 
 const pages = {
@@ -82,19 +86,22 @@ const pages = {
 export type InfoPageSlug = keyof typeof pages;
 
 export function InfoPage({ page, content }: { page: InfoPageSlug; content?: InfoPageContent | null }) {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Info");
+  const localizedContent = content ? localizeEntity(content, locale) : null;
   const fallback = pages[page];
-  const eyebrow = content?.eyebrow ?? fallback.eyebrow;
-  const title = content?.title ?? fallback.title;
-  const intro = content?.intro ?? fallback.intro;
-  const points = content?.points.length
-    ? content.points.map((point) => [point.title, point.detail] as const)
+  const eyebrow = localizedContent?.eyebrow ?? fallback.eyebrow;
+  const title = localizedContent?.title ?? fallback.title;
+  const intro = localizedContent?.intro ?? fallback.intro;
+  const points = localizedContent?.points.length
+    ? localizedContent.points.map((point) => [point.title, point.detail] as const)
     : fallback.points;
 
   return (
     <main>
       <PageHeader categories={fallbackCatalog.categories} />
       <section className="info-hero">
-        <img src="/images/packing-story.png" alt="Pantry essentials prepared for delivery" />
+        <img src="/images/packing-story.png" alt={t("imageAlt")} />
         <div>
           <span className="info-icon">{fallback.icon}</span>
           <p className="eyebrow">{eyebrow}</p>
@@ -114,10 +121,10 @@ export function InfoPage({ page, content }: { page: InfoPageSlug; content?: Info
       <section className="info-cta">
         <Clock3 size={22} />
         <div>
-          <strong>Still need help?</strong>
-          <span>Our support team can look into your question.</span>
+          <strong>{t("helpTitle")}</strong>
+          <span>{t("helpDetail")}</span>
         </div>
-        <a className="primary-action" href="/contact">Contact support</a>
+        <a className="primary-action" href={localizedHref("/contact", locale)}>{t("contact")}</a>
       </section>
       <PageFooter categories={fallbackCatalog.categories} />
     </main>

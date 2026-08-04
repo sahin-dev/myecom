@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
 import {
   ChevronLeft,
   ChevronRight,
-  CreditCard,
   Filter,
   Heart,
   Search,
@@ -20,15 +20,18 @@ import {
   ProductVariant,
   fallbackCatalog,
   formatMoney,
-  productAdvancePaymentLabel,
   selectableProductInventory,
   searchCatalog,
   trackAnalyticsEvent
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizedHref, localizeSearchResult } from "../lib/i18n";
 import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
+import { ProductVideo } from "./ProductVideo";
 import { QuickVariantAdd } from "./QuickVariantAdd";
+import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
+import { RatingStars } from "./RatingStars";
 import { useSiteSettings } from "./SiteSettingsContext";
 import { useWishlist } from "./WishlistContext";
 
@@ -57,6 +60,10 @@ const shopPageSize = 48;
 
 export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQuery }) {
   const router = useRouter();
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Shop");
+  const common = useTranslations("Common");
+  const searchText = useTranslations("Search");
   const [result, setResult] = useState<CatalogSearchResult | null>(null);
   const [search, setSearch] = useState(initialQuery.search);
   const [searchDraft, setSearchDraft] = useState(initialQuery.search);
@@ -98,7 +105,7 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
     })
       .then((nextResult) => {
         if (!active) return;
-        setResult(nextResult);
+        setResult(localizeSearchResult(nextResult, locale));
         if (page > nextResult.pagination.pages) navigate({ page: nextResult.pagination.pages });
       })
       .catch(() => {
@@ -110,7 +117,7 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
     return () => {
       active = false;
     };
-  }, [brand, category, inStock, maxPrice, minPrice, page, search, sort]);
+  }, [brand, category, inStock, locale, maxPrice, minPrice, page, search, sort]);
 
   function navigate(overrides: Partial<ShopQuery>) {
     const next = {
@@ -143,7 +150,7 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
     if (next.maxPrice) params.set("maxPrice", next.maxPrice);
     if (next.page > 1) params.set("page", String(next.page));
     const query = params.toString();
-    router.push(query ? `/shop?${query}` : "/shop");
+    router.push(localizedHref(query ? `/shop?${query}` : "/shop", locale));
   }
 
   function clearFilters() {
@@ -176,14 +183,14 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
       <PageHeader categories={categories} />
       <section className="shop-page-head">
         <div>
-          <p className="eyebrow">Full catalog</p>
-          <h1>Find the right pantry essential</h1>
-          <p>Search, compare, and filter every available product.</p>
+          <p className="eyebrow">{t("fullCatalog")}</p>
+          <h1>{t("pageTitle")}</h1>
+          <p>{t("pageSubtitle")}</p>
         </div>
         <form onSubmit={submitSearch}>
           <Search size={18} />
-          <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search products, brands, or ingredients" />
-          <button type="submit">Search</button>
+          <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder={searchText("placeholder")} />
+          <button type="submit">{common("search")}</button>
         </form>
       </section>
 
@@ -193,80 +200,80 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
             className="shop-filter-backdrop"
             type="button"
             onClick={() => setFiltersOpen(false)}
-            aria-label="Close filters"
+            aria-label={t("closeFilters")}
           />
         ) : null}
         <aside className={filtersOpen ? "open" : ""}>
           <div className="shop-filter-title">
-            <strong><SlidersHorizontal size={17} /> Filters</strong>
-            <button type="button" onClick={() => setFiltersOpen(false)} aria-label="Close filters">
+            <strong><SlidersHorizontal size={17} /> {t("filters")}</strong>
+            <button type="button" onClick={() => setFiltersOpen(false)} aria-label={t("closeFilters")}>
               <X size={15} />
             </button>
           </div>
-          <label>Category
+          <label>{t("category")}
             <select value={category} onChange={(event) => navigate({ category: event.target.value, page: 1 })}>
-              <option value="">All categories</option>
+              <option value="">{t("allCategories")}</option>
               {categories.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}
             </select>
           </label>
-          <label>Brand
+          <label>{t("brand")}
             <select value={brand} onChange={(event) => navigate({ brand: event.target.value, page: 1 })}>
-              <option value="">All brands</option>
+              <option value="">{t("allBrands")}</option>
               {result?.facets.brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
           <fieldset>
-            <legend>Price range</legend>
+            <legend>{t("priceRange")}</legend>
             <div>
-              <input type="number" min="0" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="Min" />
-              <input type="number" min="0" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="Max" />
+              <input type="number" min="0" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder={t("minimum")} />
+              <input type="number" min="0" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder={t("maximum")} />
             </div>
           </fieldset>
-          <label className="shop-check"><input type="checkbox" checked={inStock} onChange={(event) => navigate({ inStock: event.target.checked, page: 1 })} /> In-stock products only</label>
+          <label className="shop-check"><input type="checkbox" checked={inStock} onChange={(event) => navigate({ inStock: event.target.checked, page: 1 })} /> {t("inStockOnly")}</label>
           <button className="shop-apply" type="button" onClick={() => navigate({ minPrice, maxPrice, page: 1 })}>
-            Apply price range
+            {t("applyPrice")}
           </button>
           <button
             className="shop-clear"
             type="button"
             onClick={clearFilters}
           >
-            Clear filters
+            {t("clearFilters")}
           </button>
         </aside>
 
         <div className="shop-results">
           <div className="shop-results-bar">
             <div>
-              <button type="button" onClick={() => setFiltersOpen(true)}><Filter size={16} /> Filters</button>
+              <button type="button" onClick={() => setFiltersOpen(true)}><Filter size={16} /> {t("filters")}</button>
               <span>
                 {totalProducts
-                  ? `Showing ${showingStart}-${showingEnd} of ${totalProducts} products`
-                  : "0 products"}
+                  ? t("showing", { start: showingStart, end: showingEnd, total: totalProducts })
+                  : t("zeroProducts")}
               </span>
             </div>
-            <select value={sort} onChange={(event) => navigate({ sort: event.target.value, page: 1 })} aria-label="Sort products">
-              <option value="featured">Featured</option>
-              <option value="newest">Newest</option>
-              <option value="price-asc">Price: low to high</option>
-              <option value="price-desc">Price: high to low</option>
+            <select value={sort} onChange={(event) => navigate({ sort: event.target.value, page: 1 })} aria-label={t("sort")}>
+              <option value="featured">{t("featured")}</option>
+              <option value="newest">{t("newest")}</option>
+              <option value="price-asc">{t("priceLow")}</option>
+              <option value="price-desc">{t("priceHigh")}</option>
             </select>
           </div>
 
-          {loading ? <div className="shop-loading">Updating products...</div> : null}
+          {loading ? <div className="shop-loading">{t("updating")}</div> : null}
           {!loading && result?.products.length ? (
             <div className="product-grid shop-product-grid">
               {result.products.map((product) => <ShopProduct key={product.id} product={product} />)}
             </div>
           ) : null}
           {!loading && !result?.products.length ? (
-            <div className="search-empty"><Search size={30} /><h2>No products found</h2><p>Try widening the price range or clearing a filter.</p></div>
+            <div className="search-empty"><Search size={30} /><h2>{t("notFoundTitle")}</h2><p>{t("notFoundDetail")}</p></div>
           ) : null}
 
           <div className="shop-pagination">
-            <button type="button" disabled={page <= 1} onClick={() => navigate({ page: page - 1 })}><ChevronLeft size={17} /> Previous</button>
-            <span>Page {result?.pagination.page ?? 1} of {result?.pagination.pages ?? 1}</span>
-            <button type="button" disabled={page >= (result?.pagination.pages ?? 1)} onClick={() => navigate({ page: page + 1 })}>Next <ChevronRight size={17} /></button>
+            <button type="button" disabled={page <= 1} onClick={() => navigate({ page: page - 1 })}><ChevronLeft size={17} /> {common("previous")}</button>
+            <span>{common("page", { page: result?.pagination.page ?? 1, pages: result?.pagination.pages ?? 1 })}</span>
+            <button type="button" disabled={page >= (result?.pagination.pages ?? 1)} onClick={() => navigate({ page: page + 1 })}>{common("next")} <ChevronRight size={17} /></button>
           </div>
         </div>
       </section>
@@ -276,6 +283,9 @@ export function ShopPage({ initialQuery = emptyQuery }: { initialQuery?: ShopQue
 }
 
 function ShopProduct({ product }: { product: Product }) {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Product");
+  const common = useTranslations("Common");
   const { addItem } = useCart();
   const { settings } = useSiteSettings();
   const { isSaved, toggle } = useWishlist();
@@ -289,33 +299,39 @@ function ShopProduct({ product }: { product: Product }) {
   const savings = displayCompareAt && displayCompareAt > displayPrice
     ? Math.round(((displayCompareAt - displayPrice) / displayCompareAt) * 100)
     : 0;
-  const advanceLabel = productAdvancePaymentLabel(product, settings.checkoutPolicy);
   return (
     <article className="product-card">
       <div className="card-topline">
-        <span>{product.badge || (product.isNew ? "New" : product.category?.name ?? "Pantry")}</span>
-        <button type="button" onClick={() => toggle(product)} aria-label={saved ? "Remove from wishlist" : "Save product"}><Heart size={17} fill={saved ? "currentColor" : "none"} /></button>
+        <span>{product.badge || (product.isNew ? t("new") : product.category?.name ?? t("pantry"))}</span>
+        <button type="button" onClick={() => toggle(product)} aria-label={saved ? t("removeWishlist") : t("saveProduct")}><Heart size={17} fill={saved ? "currentColor" : "none"} /></button>
       </div>
-      <Link className="product-image-link" href={`/products/${product.slug}`}><ProductArt product={product} /></Link>
+      <Link className="product-image-link" href={localizedHref(`/products/${product.slug}`, locale)}>
+        <ProductVideo src={product.videoUrl} poster={product.imageUrl} label={t("playPromo")}>
+          <ProductArt product={product} />
+        </ProductVideo>
+      </Link>
       <div className="product-meta">
-        <span>{product.brand?.name ?? "My Ecom"}</span>
-        <h3><Link href={`/products/${product.slug}`}>{product.name}</Link></h3>
-        {product.reviewCount ? <small>{product.rating} rating · {product.reviewCount} reviews</small> : null}
-        <div className="price-row"><strong>{formatMoney(displayPrice)}</strong>{displayCompareAt ? <small>{formatMoney(displayCompareAt)}</small> : null}{savings ? <em>Save {savings}%</em> : null}</div>
+        <span className="product-brand">{product.brand?.name ?? "My Ecom"}</span>
+        <h3><Link href={localizedHref(`/products/${product.slug}`, locale)}>{product.name}</Link></h3>
+        {product.reviewCount ? (
+          <RatingStars
+            rating={product.rating}
+            count={product.reviewCount}
+            countLabel={t("reviewCount", { count: product.reviewCount })}
+            label={t("ratingReviews", { rating: product.rating ?? 0, count: product.reviewCount })}
+          />
+        ) : null}
+        <div className="price-row"><strong>{formatMoney(displayPrice, localeCode(locale))}</strong>{displayCompareAt ? <small>{formatMoney(displayCompareAt, localeCode(locale))}</small> : null}{savings ? <em>Save {savings}%</em> : null}</div>
         <div className="product-card-facts">
-          <span className={availableInventory <= 5 ? "low-stock" : ""}>{availableInventory > 5 ? "In stock" : availableInventory > 0 ? `Only ${availableInventory} left` : "Out of stock"}</span>
-          <span>1-2 day delivery</span>
+          <span className={availableInventory <= 5 ? "low-stock" : ""}>{availableInventory > 5 ? common("inStock") : availableInventory > 0 ? t("onlyLeft", { count: availableInventory }) : common("outOfStock")}</span>
+          <span>{t("deliveryTime")}</span>
         </div>
       </div>
-      {advanceLabel ? (
-        <span className="advance-payment-badge" title={advanceLabel} aria-label={advanceLabel}>
-          <CreditCard size={14} />
-        </span>
-      ) : null}
+      <AdvancePaymentBadge product={product} policy={settings.checkoutPolicy} />
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (
-        <button className="add-button full" type="button" disabled={!product.inventory} onClick={() => addItem(product)}><ShoppingBag size={17} />{product.inventory ? "Add to bag" : "Out of stock"}</button>
+        <button className="add-button full" type="button" disabled={!product.inventory} onClick={() => addItem(product)}><ShoppingBag size={17} />{product.inventory ? t("addToBag") : common("outOfStock")}</button>
       )}
     </article>
   );

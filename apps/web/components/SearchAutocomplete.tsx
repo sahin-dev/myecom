@@ -1,6 +1,7 @@
 "use client";
 
 import { Search, X } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import { FormEvent, KeyboardEvent, useEffect, useId, useMemo, useState } from "react";
 import {
   Category,
@@ -9,6 +10,7 @@ import {
   resolveMediaUrl,
   searchCatalog
 } from "../lib/catalog";
+import { AppLocale, localeCode, localizedHref, localizeProduct } from "../lib/i18n";
 
 const recentSearchKey = "my-ecom-recent-searches";
 
@@ -21,11 +23,14 @@ function productImage(product: Product) {
 
 export function SearchAutocomplete({
   categories,
-  placeholder = "Search products, brands, or ingredients"
+  placeholder
 }: {
   categories: Category[];
   placeholder?: string;
 }) {
+  const locale = useLocale() as AppLocale;
+  const t = useTranslations("Search");
+  const href = (value: string) => localizedHref(value, locale);
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [open, setOpen] = useState(false);
@@ -57,12 +62,12 @@ export function SearchAutocomplete({
     setLoading(true);
     const timer = window.setTimeout(() => {
       searchCatalog({ search: trimmed, limit: 6 })
-        .then((result) => setProducts(result.products))
+        .then((result) => setProducts(result.products.map((product) => localizeProduct(product, locale))))
         .catch(() => setProducts([]))
         .finally(() => setLoading(false));
     }, 240);
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [locale, query]);
 
   const matchingCategories = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -83,7 +88,7 @@ export function SearchAutocomplete({
     const trimmed = query.trim();
     if (!trimmed) return;
     remember(trimmed);
-    window.location.assign(`/shop?q=${encodeURIComponent(trimmed)}`);
+    window.location.assign(href(`/shop?q=${encodeURIComponent(trimmed)}`));
   }
 
   function keyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -98,7 +103,7 @@ export function SearchAutocomplete({
     }
     if (event.key === "Enter" && activeIndex >= 0) {
       event.preventDefault();
-      window.location.assign(`/products/${products[activeIndex].slug}`);
+      window.location.assign(href(`/products/${products[activeIndex].slug}`));
     }
     if (event.key === "Escape") setOpen(false);
   }
@@ -109,18 +114,18 @@ export function SearchAutocomplete({
   return (
     <form
       className="search-shell predictive-search"
-      action="/shop"
+      action={href("/shop")}
       method="get"
       role="search"
       onSubmit={submit}
     >
-      <label className="sr-only" htmlFor={searchId}>Search products</label>
+      <label className="sr-only" htmlFor={searchId}>{t("label")}</label>
       <Search size={19} />
       <input
         id={searchId}
         name="q"
         value={query}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t("placeholder")}
         role="combobox"
         autoComplete="off"
         aria-autocomplete="list"
@@ -137,7 +142,7 @@ export function SearchAutocomplete({
         onKeyDown={keyDown}
       />
       {query ? (
-        <button type="button" onClick={() => { setQuery(""); setProducts([]); }} aria-label="Clear search">
+        <button type="button" onClick={() => { setQuery(""); setProducts([]); }} aria-label={t("clear")}>
           <X size={15} />
         </button>
       ) : null}
@@ -145,9 +150,9 @@ export function SearchAutocomplete({
         <div className="search-suggestions" id={suggestionsId}>
           {showRecent ? (
             <section>
-              <header><strong>Recent searches</strong></header>
+              <header><strong>{t("recent")}</strong></header>
               {recent.map((item) => (
-                <a href={`/shop?q=${encodeURIComponent(item)}`} key={item} onMouseDown={() => remember(item)}>
+                <a href={href(`/shop?q=${encodeURIComponent(item)}`)} key={item} onMouseDown={() => remember(item)}>
                   <Search size={14} /> {item}
                 </a>
               ))}
@@ -157,10 +162,10 @@ export function SearchAutocomplete({
             <>
               {matchingCategories.length ? (
                 <section>
-                  <header><strong>Categories</strong></header>
+                  <header><strong>{t("categories")}</strong></header>
                   <div className="search-category-results">
                     {matchingCategories.map((category) => (
-                      <a href={`/shop?category=${category.slug}`} key={category.id}>
+                      <a href={href(`/shop?category=${category.slug}`)} key={category.id}>
                         {category.name}
                       </a>
                     ))}
@@ -169,17 +174,17 @@ export function SearchAutocomplete({
               ) : null}
               <section>
                 <header>
-                  <strong>Products</strong>
-                  {loading ? <span role="status" aria-live="polite">Searching...</span> : null}
+                  <strong>{t("products")}</strong>
+                  {loading ? <span role="status" aria-live="polite">{t("searching")}</span> : null}
                 </header>
-                {!loading && !products.length ? <p role="status">No matching products found.</p> : null}
-                <div role="listbox" aria-label="Product suggestions">
+                {!loading && !products.length ? <p role="status">{t("empty")}</p> : null}
+                <div role="listbox" aria-label={t("suggestions")}>
                   {products.map((product, index) => {
                     const image = productImage(product);
                     return (
                       <a
                         className={index === activeIndex ? "active" : ""}
-                        href={`/products/${product.slug}`}
+                        href={href(`/products/${product.slug}`)}
                         id={`${searchId}-product-${product.id}`}
                         key={product.id}
                         role="option"
@@ -190,15 +195,15 @@ export function SearchAutocomplete({
                         </span>
                         <span>
                           <strong>{product.name}</strong>
-                          <small>{product.category?.name ?? "Product"}</small>
+                          <small>{product.category?.name ?? t("product")}</small>
                         </span>
-                        <b>{formatMoney(product.price)}</b>
+                        <b>{formatMoney(product.price, localeCode(locale))}</b>
                       </a>
                     );
                   })}
                 </div>
-                <a className="search-view-all" href={`/shop?q=${encodeURIComponent(query.trim())}`}>
-                  View all search results
+                <a className="search-view-all" href={href(`/shop?q=${encodeURIComponent(query.trim())}`)}>
+                  {t("viewAll")}
                 </a>
               </section>
             </>
