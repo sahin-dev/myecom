@@ -1217,10 +1217,11 @@ export function AdminInventory() {
                 />
               </label>
               <p className="form-note">
-                One clip per product, hosted on your CDN. Must be an https link ending in .mp4 or
-                .webm — QuickTime (.mov) will not play in most browsers. Keep it short and silent:
-                it plays muted on hover on desktop, and behind a play button on mobile. Leave empty
-                to remove it.
+                One clip per product. Paste a direct https link to an .mp4 or .webm file —
+                Dropbox and GitHub share links are converted automatically. Google Drive cannot
+                serve video directly, so use Dropbox, R2, or another host for clips. Keep it short
+                and silent: it plays muted on hover on desktop, and behind a play button on mobile.
+                Leave empty to remove it.
               </p>
               {selected.videoUrl ? (
                 <video
@@ -1283,8 +1284,9 @@ export function AdminInventory() {
                 <input name="videoUrl" type="url" inputMode="url" placeholder="https://cdn.example.com/promo.mp4" />
               </label>
               <p className="form-note">
-                One short, silent .mp4 or .webm hosted on your CDN. Plays on hover on desktop cards
-                and behind a play button on mobile. Leave empty to keep the current behaviour.
+                One short, silent .mp4 or .webm. Dropbox and GitHub share links are converted
+                automatically; Google Drive cannot serve video directly. Plays on hover on desktop
+                cards and behind a play button on mobile. Leave empty to keep the current behaviour.
               </p>
               <label>Badge<input name="badge" /></label>
               <label>Tags<input name="tags" placeholder="honey, organic, gift" /></label>

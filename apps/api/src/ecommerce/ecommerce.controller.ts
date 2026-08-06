@@ -25,6 +25,8 @@ import { UpdateCustomerDto } from "../experience/experience.dto";
 import {
   AdminUpdateBannerDto,
   AdminUpdateOrderDto,
+  UpdateOrderContactDto,
+  FulfillOrderItemsDto,
   AdminUpdateProductDto,
   CheckoutDto,
   CheckoutQuoteDto,
@@ -227,10 +229,19 @@ export class EcommerceController {
     @Query("search") search?: string,
     @Query("status") status?: string,
     @Query("paymentStatus") paymentStatus?: string,
+    @Query("queue") queue?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string
   ) {
-    return this.ecommerce.adminOrders({ search, status, paymentStatus, page, limit });
+    return this.ecommerce.adminOrders({ search, status, paymentStatus, queue, page, limit });
+  }
+
+  /** Sizes of the exception queues, for the ops header on the orders screen. */
+  @Get("admin/order-queues")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.read")
+  adminOrderQueues() {
+    return this.ecommerce.adminOrderQueues();
   }
 
   @Post("admin/orders")
@@ -250,6 +261,46 @@ export class EcommerceController {
     return this.ecommerce.adminOrder(idOrNumber);
   }
 
+  /** Internal history: who did what to this order. */
+  @Get("admin/orders/:idOrNumber/activity")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.read")
+  adminOrderActivity(@Param("idOrNumber") idOrNumber: string) {
+    return this.ecommerce.adminOrderActivity(idOrNumber);
+  }
+
+  @Patch("admin/orders/:idOrNumber/contact")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.update")
+  adminUpdateOrderContact(
+    @Param("idOrNumber") idOrNumber: string,
+    @Body() dto: UpdateOrderContactDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.adminUpdateOrderContact(idOrNumber, dto, request.user.id);
+  }
+
+  @Patch("admin/orders/:idOrNumber/fulfillment")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.update")
+  adminFulfillOrderItems(
+    @Param("idOrNumber") idOrNumber: string,
+    @Body() dto: FulfillOrderItemsDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.adminFulfillOrderItems(idOrNumber, dto, request.user.id);
+  }
+
+  @Post("admin/orders/:idOrNumber/risk-reviewed")
+  @UseGuards(AdminGuard)
+  @RequirePermission("orders.update")
+  adminReviewOrderRisk(
+    @Param("idOrNumber") idOrNumber: string,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.adminReviewOrderRisk(idOrNumber, request.user.id);
+  }
+
   @Patch("admin/orders/:idOrNumber")
   @UseGuards(AdminGuard)
   @RequirePermission("orders.update")
@@ -264,8 +315,11 @@ export class EcommerceController {
   @Delete("admin/orders/:idOrNumber")
   @UseGuards(AdminGuard)
   @RequirePermission("orders.delete")
-  adminCancelOrder(@Param("idOrNumber") idOrNumber: string) {
-    return this.ecommerce.adminCancelOrder(idOrNumber);
+  adminCancelOrder(
+    @Param("idOrNumber") idOrNumber: string,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.adminCancelOrder(idOrNumber, request.user.id);
   }
 
   @Post("admin/orders/:idOrNumber/permanent-delete")
@@ -559,8 +613,12 @@ export class EcommerceController {
   @Patch("orders/:idOrNumber/status")
   @UseGuards(AdminGuard)
   @RequirePermission("orders.update")
-  updateOrderStatus(@Param("idOrNumber") idOrNumber: string, @Body() dto: UpdateOrderStatusDto) {
-    return this.ecommerce.updateOrderStatus(idOrNumber, dto);
+  updateOrderStatus(
+    @Param("idOrNumber") idOrNumber: string,
+    @Body() dto: UpdateOrderStatusDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.ecommerce.updateOrderStatus(idOrNumber, dto, false, request.user.id);
   }
 
   @Patch("orders/:idOrNumber/cancel")

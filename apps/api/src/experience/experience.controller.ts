@@ -42,6 +42,9 @@ import {
   UpdateInfoPageDto,
   UpdateAddressDto,
   CreateManualRefundDto,
+  IssueRefundDto,
+  RecordManualPaymentDto,
+  ReconcilePaymentsDto,
   UpdateAccessRoleDto,
   UpdateCustomerDto,
   UpdateProductImageDto,
@@ -56,6 +59,8 @@ import {
   ValidatePromotionDto
 } from "./experience.dto";
 import { CartOwner, ExperienceService } from "./experience.service";
+import { PaymentsService } from "../payments/payments.service";
+import { ReconciliationService } from "../payments/reconciliation.service";
 import { AccessControlService } from "../auth/access-control.service";
 
 function ownerFrom(request: OptionalAuthenticatedRequest, guestSessionKey?: string): CartOwner {
@@ -68,7 +73,9 @@ function ownerFrom(request: OptionalAuthenticatedRequest, guestSessionKey?: stri
 export class ExperienceController {
   constructor(
     private readonly experience: ExperienceService,
-    private readonly access: AccessControlService
+    private readonly access: AccessControlService,
+    private readonly paymentsService: PaymentsService,
+    private readonly reconciliation: ReconciliationService
   ) {}
 
   @Get("catalog/search")
@@ -555,8 +562,69 @@ export class ExperienceController {
   @Post("admin/payments/:id/recheck")
   @UseGuards(AdminGuard)
   @RequirePermission("payments.write")
-  recheckPayment(@Param("id") id: string) {
-    return this.experience.requeryPayment(id);
+  recheckPayment(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
+    return this.experience.requeryPayment(id, request.user.id);
+  }
+
+  /** Append-only history for one payment: transitions, sweeps, refund attempts. */
+  @Get("admin/payments/:id/events")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.read")
+  paymentEvents(@Param("id") id: string) {
+    return this.experience.paymentEvents(id);
+  }
+
+  @Post("admin/payments/:id/refund")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.refund")
+  refundPayment(
+    @Param("id") id: string,
+    @Body() dto: IssueRefundDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.paymentsService.issueRefund({
+      paymentId: id,
+      amount: dto.amount,
+      reason: dto.reason,
+      manual: dto.manual,
+      actorId: request.user.id
+    });
+  }
+
+  /** Money taken outside a gateway — bank transfer, cash on collection. */
+  @Post("admin/payments/manual")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.capture")
+  recordManualPayment(
+    @Body() dto: RecordManualPaymentDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.paymentsService.recordManualPayment({ ...dto, actorId: request.user.id });
+  }
+
+  /** Bulk re-query of stale pending payments; reports every divergence fixed. */
+  @Post("admin/payments/reconcile")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.reconcile")
+  reconcilePayments(
+    @Body() dto: ReconcilePaymentsDto,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.reconciliation.sweep({
+      staleMinutes: dto.staleMinutes,
+      actorId: request.user.id
+    });
+  }
+
+  @Get("admin/payments/export")
+  @UseGuards(AdminGuard)
+  @RequirePermission("payments.export")
+  exportPayments(
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("status") status?: string
+  ) {
+    return this.experience.exportPayments({ from, to, status });
   }
 
   @Post("admin/payments/:id/permanent-delete")

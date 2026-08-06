@@ -165,6 +165,43 @@ export class BkashService {
     return data;
   }
 
+  /**
+   * Tokenized Checkout refund. bKash requires the original trxID as well as the
+   * paymentID, so a payment that never reached "Completed" (and therefore has
+   * no trxID) cannot be refunded through the gateway.
+   */
+  async refundPayment(params: {
+    paymentID: string;
+    trxID: string;
+    amount: number;
+    reason: string;
+    sku: string;
+  }): Promise<Record<string, unknown>> {
+    if (!params.paymentID || !params.trxID) {
+      throw new BadRequestException(
+        "This payment has no bKash transaction reference, so it cannot be refunded through bKash."
+      );
+    }
+    const { ok, data } = await this.authorizedPost<Record<string, unknown>>(
+      "/tokenized/checkout/payment/refund",
+      {
+        paymentID: params.paymentID,
+        trxID: params.trxID,
+        amount: params.amount.toFixed(2),
+        // bKash caps both of these; over-long values are rejected outright.
+        reason: params.reason.slice(0, 255),
+        sku: params.sku.slice(0, 255)
+      }
+    );
+    const status = String(data.transactionStatus ?? data.refundTrxID ?? "");
+    if (!ok || (!data.refundTrxID && !/completed|success/i.test(status))) {
+      throw new BadRequestException(
+        (data.statusMessage as string | undefined) ?? "bKash refused the refund."
+      );
+    }
+    return data;
+  }
+
   async queryPayment(paymentID: string) {
     const { ok, data } = await this.authorizedPost<Record<string, unknown>>(
       "/tokenized/checkout/payment/status",

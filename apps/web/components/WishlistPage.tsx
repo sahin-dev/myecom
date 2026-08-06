@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Heart, ShoppingBag } from "lucide-react";
+import { ChevronLeft, ChevronRight, Heart } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import {
@@ -16,10 +16,9 @@ import {
 import { AppLocale, localeCode, localizedHref, localizeCatalog, localizeProduct } from "../lib/i18n";
 import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
 import { useAuth } from "./AuthContext";
-import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
-import { QuickVariantAdd } from "./QuickVariantAdd";
+import { QuickVariantAdd, SimpleAddToCartButton } from "./QuickVariantAdd";
 import { useWishlist } from "./WishlistContext";
 
 const wishlistPageSize = 12;
@@ -33,7 +32,6 @@ export function WishlistPage() {
   const [page, setPage] = useState(1);
   const { user } = useAuth();
   const { slugs, toggle } = useWishlist();
-  const { addItem } = useCart();
 
   useEffect(() => {
     fetchCatalog().then((result) => setCatalog(localizeCatalog(result, locale))).catch(() => setCatalog(localizeCatalog(fallbackCatalog, locale)));
@@ -81,7 +79,6 @@ export function WishlistPage() {
                   product={product}
                   platformPolicy={catalog.siteSettings.checkoutPolicy}
                   onRemove={() => toggle(product)}
-                  onAdd={() => addItem(product)}
                 />
               ))}
             </div>
@@ -108,13 +105,11 @@ export function WishlistPage() {
 function WishlistProductCard({
   product,
   platformPolicy,
-  onRemove,
-  onAdd
+  onRemove
 }: {
   product: Product;
   platformPolicy?: Catalog["siteSettings"]["checkoutPolicy"];
   onRemove: () => void;
-  onAdd: () => void;
 }) {
   const locale = useLocale() as AppLocale;
   const t = useTranslations("Product");
@@ -142,10 +137,7 @@ function WishlistProductCard({
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (
-        <button className="add-button full" type="button" onClick={onAdd}>
-          <ShoppingBag size={17} />
-          {t("addToBag")}
-        </button>
+        <SimpleAddToCartButton product={product} label={t("addToBag")} checkStock={false} />
       )}
     </article>
   );

@@ -21,8 +21,13 @@ import { PrismaService } from "./prisma/prisma.service";
 import { UploadsController } from "./uploads/uploads.controller";
 import { PaymentsController } from "./payments/payments.controller";
 import { BkashService } from "./payments/bkash.service";
+import { PaymentsService } from "./payments/payments.service";
+import { ReconciliationService } from "./payments/reconciliation.service";
+import { PaymentRateLimitGuard } from "./payments/payment-rate-limit.guard";
 import { PaymentStrategyResolver } from "./payments/payment-strategy.service";
 import { MailService } from "./mail/mail.service";
+import { OrderNotificationService } from "./orders/order-notification.service";
+import { OrderRiskService } from "./orders/order-risk.service";
 
 @Module({
   imports: [
@@ -60,8 +65,13 @@ import { MailService } from "./mail/mail.service";
     OptionalJwtAuthGuard,
     AdminGuard,
     BkashService,
+    PaymentsService,
+    ReconciliationService,
+    PaymentRateLimitGuard,
     PaymentStrategyResolver,
-    MailService
+    MailService,
+    OrderNotificationService,
+    OrderRiskService
   ]
 })
 export class AppModule {}

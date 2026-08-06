@@ -174,6 +174,7 @@ export const orderStatuses = [
   "OUT_FOR_DELIVERY",
   "DELIVERY_FAILED",
   "DELIVERED",
+  "RETURNED_TO_ORIGIN",
   "CANCELLED"
 ];
 
@@ -326,7 +327,8 @@ export function AdminUploadField({
       </div>
       <small className="admin-upload-hint">
         Recommended size: {recommendedDimensions}. Upload JPG, PNG, or WebP up to 5 MB, or paste an
-        https link to an image already hosted on your CDN.
+        https link. Google Drive, Dropbox, and GitHub share links are converted to direct image
+        links automatically.
       </small>
       {value ? (
         <button type="button" onClick={() => onChange("")}>

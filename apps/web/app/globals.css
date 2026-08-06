@@ -2954,6 +2954,28 @@
   color: var(--ink);
 }
 
+.admin-cod-collection-panel.admin-cod-collection-done {
+  grid-template-columns: auto 1fr;
+  border-color: var(--success-text);
+  color: var(--success-text);
+}
+
+.admin-cod-collection-panel.admin-cod-collection-done > span {
+  display: grid;
+  gap: 2px;
+}
+
+.admin-cod-collection-panel.admin-cod-collection-done strong {
+  color: var(--success-text);
+  font-size: var(--text-sm);
+  font-weight: 800;
+}
+
+.admin-cod-collection-panel.admin-cod-collection-done small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
 .admin-courier-layout {
   display: grid;
   grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr);
@@ -6163,6 +6185,62 @@ html[lang="bn"] body {
 
 .full {
   width: 100%;
+}
+
+/*
+  The in-place +/- stepper an "Add to bag" button becomes once its product is
+  in the cart. Combined with whatever className the caller already applies
+  (.add-button or .secondary-action), so it inherits the same min-height and
+  radius and the card never reflows when the button morphs — but always
+  renders filled, regardless of the base class's own colour, since a filled
+  look reads as "confirmed, in cart" in a way an outline doesn't.
+*/
+.add-button-stepper {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0;
+  overflow: hidden;
+}
+
+/*
+  Colour lives on a two-class selector, not the bare .add-button-stepper
+  above: a later "filled button" design-system block (~line 15759) redeclares
+  .add-button's own background/color/border-color at the same specificity,
+  and being later in the file it would otherwise win regardless of source
+  order here. Pairing both classes (0,2,0) beats that unconditionally rather
+  than depending on where in the file either rule happens to sit.
+*/
+.add-button.add-button-stepper,
+.secondary-action.add-button-stepper,
+.primary-action.add-button-stepper {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.add-button-stepper button {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.add-button-stepper button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.add-button-stepper button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.add-button-stepper strong {
+  font-size: var(--text-sm);
+  font-weight: 850;
 }
 
 .eyebrow {
@@ -13303,6 +13381,7 @@ input[type="checkbox"] {
 .admin-status.status-cancelled,
 .admin-status.status-failed,
 .admin-status.status-delivery_failed,
+.admin-status.status-returned_to_origin,
 .admin-status.status-archived {
   border-style: dashed;
   opacity: 0.65;
@@ -20131,4 +20210,307 @@ textarea:focus-visible {
 .admin-upload-url input {
   min-width: 0;
   flex: 1;
+}
+
+/* ---------------------------------------------- Payments: actions & history */
+
+.admin-labeled-action {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--accent-18);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--admin-ink);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.admin-labeled-action:hover:not(:disabled) {
+  border-color: var(--admin-line);
+  background: var(--surface-sunken);
+}
+
+.admin-labeled-action:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.payment-dialog-form {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-refund-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--admin-line);
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  cursor: pointer;
+}
+
+.admin-refund-mode input {
+  margin-top: 2px;
+  accent-color: var(--signal);
+}
+
+.admin-refund-mode span {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-refund-mode strong {
+  color: var(--admin-ink);
+  font-size: var(--text-xs);
+  font-weight: 750;
+}
+
+.admin-refund-mode small {
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.payment-timeline {
+  display: grid;
+  margin: 0;
+  padding: 0 0 0 18px;
+  border-left: 1px solid var(--admin-line);
+  gap: 16px;
+  list-style: none;
+}
+
+.payment-timeline li {
+  position: relative;
+}
+
+.payment-timeline li::before {
+  position: absolute;
+  top: 5px;
+  left: -23px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--paper);
+  border-radius: 50%;
+  background: var(--signal);
+  content: "";
+}
+
+.payment-timeline__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.payment-timeline__head strong {
+  color: var(--admin-ink);
+  font-size: var(--text-xs);
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.payment-timeline__head small,
+.payment-timeline li > small {
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+}
+
+.payment-timeline__source {
+  padding: 1px 7px;
+  border: 1px solid var(--admin-line);
+  border-radius: 999px;
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+  text-transform: capitalize;
+}
+
+.payment-timeline__source.is-gateway {
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
+.payment-timeline__source.is-admin {
+  border-color: var(--signal);
+  color: var(--info-text);
+}
+
+.payment-timeline p {
+  margin: 5px 0 0;
+  color: var(--admin-ink);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.payment-timeline__transition {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+/* ------------------------------------------- Orders: queues, risk, fulfilment */
+
+.admin-queue-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.admin-queue-chip {
+  display: flex;
+  min-width: 132px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--admin-line);
+  border-radius: 6px;
+  background: var(--paper);
+  cursor: pointer;
+  text-align: left;
+}
+
+.admin-queue-chip strong {
+  color: var(--admin-ink);
+  font-size: var(--text-lg);
+  font-weight: 750;
+  line-height: 1.1;
+}
+
+.admin-queue-chip span {
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.admin-queue-chip:hover {
+  background: var(--surface-sunken);
+}
+
+.admin-queue-chip.is-active {
+  border-color: var(--signal);
+  box-shadow: inset 0 0 0 1px var(--signal);
+}
+
+.admin-queue-chip.is-danger strong {
+  color: var(--danger-text);
+}
+
+.admin-queue-chip.is-warning strong {
+  color: var(--warning-text);
+}
+
+.admin-queue-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+}
+
+.admin-risk-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border: 1px solid var(--warning-border);
+  border-radius: 6px;
+  background: var(--warning-bg);
+}
+
+.admin-risk-banner strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--warning-text);
+  font-size: var(--text-sm);
+  font-weight: 750;
+}
+
+.admin-risk-banner ul {
+  margin: 7px 0 0;
+  padding-left: 20px;
+  color: var(--warning-text);
+  font-size: var(--text-xs);
+  line-height: 1.65;
+}
+
+.admin-derived-field {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.admin-derived-field > span {
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.admin-derived-field small {
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+}
+
+.admin-contact-form {
+  margin-bottom: 14px;
+}
+
+/*
+  Scoped under .admin-order-lines on purpose. The existing `.admin-order-lines
+  > div`, `> div span` and `small` rules carry a class plus an element, so an
+  unscoped single class here would lose to them and these styles would silently
+  not apply.
+*/
+.admin-order-lines .admin-fulfil-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+}
+
+.admin-order-lines .admin-fulfil-field input {
+  width: 62px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--admin-line);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.admin-order-lines > .admin-fulfil-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0 0;
+  border-top: 1px solid var(--admin-line);
+}
+
+.admin-order-lines > .admin-fulfil-actions > span {
+  display: block;
+  color: var(--admin-muted);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.admin-order-lines .admin-partial-note {
+  color: var(--warning-text);
+  font-weight: 650;
 }

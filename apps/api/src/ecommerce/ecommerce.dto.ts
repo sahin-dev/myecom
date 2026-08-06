@@ -1,6 +1,7 @@
 import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -593,9 +594,10 @@ export class AdminUpdateOrderDto {
   @IsEnum(OrderStatus)
   status?: OrderStatus;
 
-  @IsOptional()
-  @IsEnum(PaymentStatus)
-  paymentStatus?: PaymentStatus;
+  // paymentStatus is deliberately absent. It is derived from the payment and
+  // refund rows by PaymentsService.reconcileOrderPaymentStatus, so accepting it
+  // here only produced a write that the next read silently overwrote. Money is
+  // moved by recording a payment or issuing a refund.
 
   @IsOptional()
   @IsString()
@@ -620,6 +622,42 @@ export class AdminUpdateOrderDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+/** Correcting who the parcel goes to, before it reaches the courier. */
+export class UpdateOrderContactDto {
+  @IsOptional()
+  @IsString()
+  customerName?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  shippingAddress?: string;
+}
+
+export class FulfillOrderItemLineDto {
+  @IsString()
+  orderItemId!: string;
+
+  @IsInt()
+  @Min(0)
+  fulfilledQuantity!: number;
+}
+
+export class FulfillOrderItemsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ValidateNested({ each: true })
+  @Type(() => FulfillOrderItemLineDto)
+  items!: FulfillOrderItemLineDto[];
 }
 
 export class CreateCourierServiceDto {

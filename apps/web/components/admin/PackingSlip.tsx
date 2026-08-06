@@ -73,6 +73,7 @@ export function PackingSlip({
             <dl>
               <div><dt>Payment</dt><dd>{order.paymentMethod ?? "Cash on delivery"}</dd></div>
               <div><dt>Payment status</dt><dd>{order.paymentStatus ?? "PENDING"}</dd></div>
+              <div><dt>Refunds</dt><dd>{paymentBreakdown.refundedAmount > 0 ? `${paymentBreakdown.refundedAmount.toFixed(2)} refunded` : "No refunds"}</dd></div>
               <div><dt>Delivery</dt><dd>{order.deliveryMethodName ?? "Standard delivery"}</dd></div>
               {order.courierName ? <div><dt>Courier</dt><dd>{order.courierName}</dd></div> : null}
               {order.trackingCode ? <div><dt>Tracking code</dt><dd>{order.trackingCode}</dd></div> : null}

@@ -468,6 +468,10 @@ export type Order = {
   courierName?: string | null;
   courierShipments?: CourierShipment[];
   adminNote?: string | null;
+  /** Advisory 0-100 fraud/deliverability score with the reasons behind it. */
+  riskScore?: number;
+  riskFlags?: string[];
+  riskReviewedAt?: string | null;
   subtotal: number;
   shippingFee: number;
   total: number;
@@ -485,6 +489,8 @@ export type Order = {
     variantId?: string | null;
     variantName?: string | null;
     quantity: number;
+    /** How many of `quantity` have actually shipped. */
+    fulfilledQuantity?: number;
     unitPrice: number;
     unitCost?: number | null;
     advancePaymentPercent?: number;
@@ -496,8 +502,19 @@ export type Order = {
     method: string;
     amount: number;
     status: string;
+    transactionId?: string | null;
     gatewayReference?: string | null;
+    refundedAmount?: number | null;
+    capturedAt?: string | null;
     providerPayload?: Record<string, unknown> | null;
+  }>;
+  refunds?: Array<{
+    id: string;
+    amount: number;
+    status: string;
+    reason?: string | null;
+    isManual?: boolean | null;
+    createdAt: string;
   }>;
   trackingEvents: Array<{
     id: string;
@@ -601,6 +618,26 @@ export type AdminOrdersResponse = {
     total: number;
     pages: number;
   };
+};
+
+/** Sizes of the ops exception queues on the orders screen. */
+export type OrderQueues = {
+  slaHours: number;
+  riskThreshold: number;
+  overdue: number;
+  atRisk: number;
+  unfulfilled: number;
+  oldestOverdue: { orderNumber: string; status: string; ageHours: number } | null;
+};
+
+/** One entry in an order's internal (staff-facing) history. */
+export type OrderActivityEntry = {
+  id: string;
+  action: string;
+  entity: string;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  actor?: { id: string; name: string; email: string } | null;
 };
 
 export type AdminCatalog = {
@@ -964,14 +1001,18 @@ export type ReturnRequest = {
     disposition?: "RESTOCK" | "DAMAGED" | "DISPOSE" | "INSPECTION" | null;
     orderItem?: Order["items"][number];
   }>;
-  refund?: {
+  /**
+   * At most one in practice, but a list because MongoDB cannot enforce that —
+   * see the note on Refund.returnRequestId in the Prisma schema.
+   */
+  refunds?: Array<{
     id: string;
     amount: number;
     status: Refund["status"];
     reason: string;
     createdAt: string;
     updatedAt?: string;
-  } | null;
+  }>;
   order?: { orderNumber: string; total: number } | Order;
   user?: { name: string; email: string };
   createdAt: string;
@@ -1001,9 +1042,49 @@ export type Payment = {
   status: "PENDING" | "PARTIALLY_PAID" | "PAID" | "FAILED" | "PARTIALLY_REFUNDED" | "REFUNDED";
   transactionId?: string | null;
   gatewayReference?: string | null;
+  /** Running total of settled refunds, so refundable balance is a subtraction. */
+  refundedAmount: number;
+  /** True when money was taken outside a gateway and recorded by an admin. */
+  isManual?: boolean;
+  failureReason?: string | null;
+  capturedAt?: string | null;
+  feeAmount?: number | null;
+  netAmount?: number | null;
   order: { orderNumber: string; customerName: string; email: string; userId?: string | null; total: number };
   createdAt: string;
   updatedAt?: string;
+};
+
+/** One entry in a payment's append-only history. */
+export type PaymentEvent = {
+  id: string;
+  paymentId: string;
+  type: string;
+  message: string;
+  fromStatus?: Payment["status"] | null;
+  toStatus?: Payment["status"] | null;
+  source: string;
+  payload?: unknown;
+  createdAt: string;
+  actor?: { id: string; name: string; email: string } | null;
+};
+
+export type ReconciliationReport = {
+  checkedAt: string;
+  staleMinutes: number;
+  scanned: number;
+  corrected: number;
+  unreachable: number;
+  rows: Array<{
+    paymentId: string;
+    orderNumber: string;
+    provider: string;
+    amount: number;
+    storedStatus: Payment["status"];
+    gatewayStatus: Payment["status"] | "UNKNOWN";
+    outcome: "corrected" | "matched" | "unreachable";
+    detail?: string;
+  }>;
 };
 
 export type PromotionValidation = {
@@ -1025,7 +1106,6 @@ export type CatalogSearchResult = {
 };
 
 export type AuthSession = {
-  accessToken: string;
   user: AuthUser;
 };
 
@@ -1589,15 +1669,33 @@ export const testimonials: Testimonial[] = [
 ];
 
 const configuredApiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-export const authStorageKey = "my-ecom-access-token";
-const guestSessionStorageKey = "my-ecom-guest-session";
+const guestSessionCookieName = "my-ecom-guest-session";
 
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function writeCookie(name: string, value: string, days: number) {
+  if (typeof document === "undefined") return;
+  const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+/**
+ * A random, unauthenticated correlation id for an anonymous shopper's cart
+ * and attribution — not a credential, so a plain (non-httpOnly) cookie is
+ * fine; it's client-generated and client-read either way. The API's
+ * ownerFrom() already ignores this whenever a request carries an
+ * authenticated session, so it's safe to always send.
+ */
 export function guestSessionKey() {
-  if (typeof window === "undefined") return "";
-  const existing = window.localStorage.getItem(guestSessionStorageKey);
+  if (typeof document === "undefined") return "";
+  const existing = readCookie(guestSessionCookieName);
   if (existing) return existing;
   const created = crypto.randomUUID();
-  window.localStorage.setItem(guestSessionStorageKey, created);
+  writeCookie(guestSessionCookieName, created, 365);
   return created;
 }
 
@@ -1636,13 +1734,15 @@ export function resolveMediaUrl(value?: string | null) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token =
-    typeof window === "undefined" ? null : window.localStorage.getItem(authStorageKey);
   const response = await fetch(`${apiBase()}/api${path}`, {
     ...init,
+    // Sends the httpOnly session cookie automatically when one exists — the
+    // API resolves the authenticated user from it and, per ownerFrom(), simply
+    // ignores X-Guest-Session in that case, so it's harmless to always send.
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : { "X-Guest-Session": guestSessionKey() }),
+      "X-Guest-Session": guestSessionKey(),
       ...(init?.headers ?? {})
     },
     cache: "no-store"
@@ -1899,13 +1999,11 @@ export async function createReturnRequest(input: {
 }
 
 export async function uploadReturnProof(file: File) {
-  const token =
-    typeof window === "undefined" ? null : window.localStorage.getItem(authStorageKey);
   const form = new FormData();
   form.append("file", file);
   const response = await fetch(`${apiBase()}/api/account/return-proofs`, {
     method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: "include",
     body: form
   });
 
@@ -2072,6 +2170,8 @@ export async function fetchAdminOrders(input?: {
   search?: string;
   status?: string;
   paymentStatus?: string;
+  /** "overdue" | "risk" | "unfulfilled" — an ops exception queue. */
+  queue?: string;
   page?: number;
   limit?: number;
 }) {
@@ -2079,6 +2179,7 @@ export async function fetchAdminOrders(input?: {
   if (input?.search) query.set("search", input.search);
   if (input?.status) query.set("status", input.status);
   if (input?.paymentStatus) query.set("paymentStatus", input.paymentStatus);
+  if (input?.queue) query.set("queue", input.queue);
   query.set("page", String(input?.page ?? 1));
   query.set("limit", String(input?.limit ?? 25));
   return request<AdminOrdersResponse>(`/admin/orders?${query.toString()}`);
@@ -2086,6 +2187,43 @@ export async function fetchAdminOrders(input?: {
 
 export async function fetchAdminOrder(idOrNumber: string) {
   return request<Order>(`/admin/orders/${encodeURIComponent(idOrNumber)}`);
+}
+
+export async function fetchOrderQueues() {
+  return request<OrderQueues>("/admin/order-queues");
+}
+
+export async function fetchOrderActivity(idOrNumber: string) {
+  return request<OrderActivityEntry[]>(
+    `/admin/orders/${encodeURIComponent(idOrNumber)}/activity`
+  );
+}
+
+/** Corrects delivery details before the parcel reaches the courier. */
+export async function updateAdminOrderContact(
+  idOrNumber: string,
+  input: { customerName?: string; email?: string; phone?: string; shippingAddress?: string }
+) {
+  return request<Order>(`/admin/orders/${encodeURIComponent(idOrNumber)}/contact`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fulfillAdminOrderItems(
+  idOrNumber: string,
+  items: Array<{ orderItemId: string; fulfilledQuantity: number }>
+) {
+  return request<Order>(`/admin/orders/${encodeURIComponent(idOrNumber)}/fulfillment`, {
+    method: "PATCH",
+    body: JSON.stringify({ items })
+  });
+}
+
+export async function markOrderRiskReviewed(idOrNumber: string) {
+  return request<Order>(`/admin/orders/${encodeURIComponent(idOrNumber)}/risk-reviewed`, {
+    method: "POST"
+  });
 }
 
 export async function fetchCourierServices() {
@@ -2169,7 +2307,7 @@ export async function syncCourierShipment(id: string) {
 
 export async function updateAdminOrder(idOrNumber: string, input: {
   status?: string;
-  paymentStatus?: string;
+  // paymentStatus is derived server-side from the payment ledger; it is not settable.
   paymentMethod?: string;
   trackingCode?: string;
   courierName?: string;
@@ -2433,8 +2571,14 @@ export async function updateAdminRefund(id: string, input: { status: Refund["sta
   });
 }
 
+/**
+ * Draws the amount down across every refundable payment on the order, oldest
+ * first, so a multi-payment order (a manual entry topped up by COD, say)
+ * refunds in one request even though no single payment covers the full
+ * amount. Returns one Refund row per payment it touched.
+ */
 export async function createManualRefund(orderId: string, input: { amount: number; reason: string }) {
-  return request<Refund>(`/admin/orders/${encodeURIComponent(orderId)}/refunds`, {
+  return request<Refund[]>(`/admin/orders/${encodeURIComponent(orderId)}/refunds`, {
     method: "POST",
     body: JSON.stringify(input)
   });
@@ -2451,6 +2595,55 @@ export async function fetchAdminPayments(params?: { search?: string; status?: st
 
 export async function recheckAdminPayment(id: string) {
   return request<Payment>(`/admin/payments/${encodeURIComponent(id)}/recheck`, { method: "POST" });
+}
+
+export async function fetchPaymentEvents(id: string) {
+  return request<PaymentEvent[]>(`/admin/payments/${encodeURIComponent(id)}/events`);
+}
+
+/**
+ * Sends the refund to the gateway unless `manual` is set, in which case it is
+ * recorded as money already returned by other means.
+ */
+export async function refundAdminPayment(
+  id: string,
+  input: { amount: number; reason: string; manual?: boolean }
+) {
+  return request<{ id: string; amount: number; status: string }>(
+    `/admin/payments/${encodeURIComponent(id)}/refund`,
+    { method: "POST", body: JSON.stringify(input) }
+  );
+}
+
+export async function recordManualPayment(input: {
+  orderId: string;
+  amount: number;
+  method: string;
+  reference?: string;
+  note?: string;
+}) {
+  return request<Payment>("/admin/payments/manual", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function reconcileAdminPayments(staleMinutes?: number) {
+  return request<ReconciliationReport>("/admin/payments/reconcile", {
+    method: "POST",
+    body: JSON.stringify({ staleMinutes })
+  });
+}
+
+export async function exportAdminPayments(params?: { from?: string; to?: string; status?: string }) {
+  const query = new URLSearchParams();
+  if (params?.from) query.set("from", params.from);
+  if (params?.to) query.set("to", params.to);
+  if (params?.status) query.set("status", params.status);
+  const suffix = query.toString();
+  return request<Record<string, string | number | boolean>[]>(
+    `/admin/payments/export${suffix ? `?${suffix}` : ""}`
+  );
 }
 
 export async function initiateBkashPayment(orderId: string) {
@@ -2732,6 +2925,11 @@ export async function fetchMe() {
   return request<AuthUser>("/auth/me");
 }
 
+/** Clears the httpOnly session cookie server-side; client JS can't drop it itself. */
+export async function logoutUser() {
+  return request<{ loggedOut: boolean }>("/auth/logout", { method: "POST" });
+}
+
 export async function updateMe(input: {
   name?: string;
   phone?: string;
@@ -2780,13 +2978,11 @@ export async function fetchAccountOrders() {
 }
 
 export async function uploadAdminImage(file: File) {
-  const token =
-    typeof window === "undefined" ? null : window.localStorage.getItem(authStorageKey);
   const form = new FormData();
   form.append("file", file);
   const response = await fetch(`${apiBase()}/api/admin/uploads`, {
     method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: "include",
     body: form
   });
 

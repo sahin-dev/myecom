@@ -21,6 +21,9 @@ enum OrderStatus {
   OUT_FOR_DELIVERY
   DELIVERY_FAILED
   DELIVERED
+  /// The parcel came back to the warehouse after delivery failed. Terminal, and
+  /// distinct from CANCELLED because the goods travelled and came back.
+  RETURNED_TO_ORIGIN
   CANCELLED
 }
 
@@ -558,6 +561,13 @@ model Order {
   trackingCode       String?
   courierName        String?
   adminNote          String?
+  /// Risk score 0-100 and the reasons behind it, computed at placement so staff
+  /// can triage before picking. Advisory only — nothing is blocked automatically.
+  riskScore          Int                @default(0)
+  riskFlags          String[]           @default([])
+  /// Set when staff have looked at a flagged order, so it leaves the review queue.
+  riskReviewedAt     DateTime?
+  riskReviewedById   String?            @db.ObjectId
   promotionId        String?            @db.ObjectId
   promotion          Promotion?         @relation(fields: [promotionId], references: [id])
   subtotal           Float
@@ -600,12 +610,17 @@ model OrderItem {
   variant               ProductVariant? @relation(fields: [variantId], references: [id])
   variantName           String?
   quantity              Int
+  /// How many of `quantity` have actually gone out. Lets one order ship in
+  /// several parcels instead of forcing all-or-nothing fulfilment.
+  fulfilledQuantity     Int             @default(0)
   unitPrice             Float
   unitCost              Float?
   advancePaymentPercent Int             @default(0)
   advancePaymentAmount  Float           @default(0)
   returnItems           ReturnItem[]
   createdAt             DateTime        @default(now())
+
+  @@index([orderId])
 }
 
 model TrackingEvent {
@@ -691,7 +706,14 @@ model Notification {
   title     String
   message   String
   isRead    Boolean  @default(false)
+  /// How this reached the customer. "in_app" rows were never delivered anywhere.
+  channel     String    @default("in_app")
+  /// Set only when a mail server actually accepted the message.
+  emailedAt   DateTime?
+  emailError  String?
   createdAt DateTime @default(now())
+
+  @@index([orderId])
 }
 
 model Review {
@@ -760,11 +782,52 @@ model Payment {
   transactionId     String?
   gatewayReference  String?
   providerPayload   Json?
+  /// Guards against a retried checkout creating duplicate rows for one order.
+  /// Derived from the order's own idempotency key where one is supplied.
+  idempotencyKey    String?       @unique
+  /// Processor fee and the amount actually settled. Gross alone cannot answer
+  /// "did we receive what we were owed".
+  feeAmount         Float?
+  netAmount         Float?
+  /// Running total of COMPLETED refunds, so refundable balance is a field read
+  /// rather than an aggregate over every refund row.
+  refundedAmount    Float         @default(0)
+  failureReason     String?
+  capturedAt        DateTime?
+  /// True when an admin recorded money taken outside a gateway (bank transfer,
+  /// cash on collection). Keeps offline money visibly distinct from gateway money.
+  isManual          Boolean       @default(false)
+  recordedById      String?       @db.ObjectId
   refunds           Refund[]
+  events            PaymentEvent[]
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
   @@index([gatewayReference])
+  @@index([status])
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+/// Append-only history for a payment: every transition, reconciliation sweep,
+/// refund attempt and gateway response. This is what makes a payment auditable
+/// and gives support a timeline to read instead of a raw JSON blob.
+model PaymentEvent {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  paymentId   String   @db.ObjectId
+  payment     Payment  @relation(fields: [paymentId], references: [id])
+  /// e.g. created, captured, failed, refund.requested, reconciled, status.corrected
+  type        String
+  message     String
+  fromStatus  PaymentStatus?
+  toStatus    PaymentStatus?
+  /// Who caused it: an admin user id, or null when the gateway or a sweep did.
+  actorId     String?  @db.ObjectId
+  source      String   @default("system")
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([paymentId, createdAt])
 }
 
 model Refund {
@@ -773,13 +836,29 @@ model Refund {
   order           Order          @relation(fields: [orderId], references: [id])
   paymentId       String?        @db.ObjectId
   payment         Payment?       @relation(fields: [paymentId], references: [id])
-  returnRequestId String?        @unique @db.ObjectId
+  /// Not @unique. MongoDB's unique index is not sparse, so every refund that is
+  /// not tied to a return (most of them) would collide on null and the index
+  /// could never be built. "At most one refund per return request" is enforced
+  /// in ExperienceService.updateReturnRequest instead.
+  returnRequestId String?        @db.ObjectId
   returnRequest   ReturnRequest? @relation(fields: [returnRequestId], references: [id])
   amount          Float
   reason          String
   status          RefundStatus   @default(PENDING)
+  /// Set when the gateway actually moved the money, so a database row that says
+  /// COMPLETED can be told apart from money that genuinely left the account.
+  gatewayReference String?
+  gatewayPayload  Json?
+  /// True when an admin refunded outside the gateway and is recording the fact.
+  isManual        Boolean        @default(false)
+  failureReason   String?
+  processedAt     DateTime?
+  requestedById   String?        @db.ObjectId
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+
+  @@index([orderId])
+  @@index([status])
 }
 
 model ReturnRequest {
@@ -796,7 +875,9 @@ model ReturnRequest {
   resolutionType ReturnResolutionType?
   status         ReturnStatus          @default(REQUESTED)
   items          ReturnItem[]
-  refund         Refund?
+  /// At most one in practice; a list because the database cannot express the
+  /// constraint. See the note on Refund.returnRequestId.
+  refunds        Refund[]
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 }

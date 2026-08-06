@@ -31,6 +31,7 @@ const statusLabels: Record<string, string> = {
   OUT_FOR_DELIVERY: "Out for delivery",
   DELIVERY_FAILED: "Delivery failed",
   DELIVERED: "Delivered",
+  RETURNED_TO_ORIGIN: "Returned to us",
   CANCELLED: "Cancelled",
   CREATED: "Parcel created",
   PICKUP_REQUESTED: "Pickup requested",
@@ -43,7 +44,9 @@ const deliverySteps = ["PLACED", "CONFIRMED", "PACKED", "SHIPPED", "OUT_FOR_DELI
 function statusTone(status?: string | null) {
   if (!status) return "neutral";
   if (["DELIVERED", "CONFIRMED", "COMPLETED", "PAID"].includes(status)) return "success";
-  if (["DELIVERY_FAILED", "CANCELLED", "RETURNED", "FAILED"].includes(status)) return "danger";
+  if (["DELIVERY_FAILED", "CANCELLED", "RETURNED", "RETURNED_TO_ORIGIN", "FAILED"].includes(status)) {
+    return "danger";
+  }
   if (["SHIPPED", "PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(status)) return "active";
   if (["PLACED", "PACKED", "CREATED", "PICKUP_REQUESTED", "PENDING", "UNKNOWN"].includes(status)) {
     return "warning";

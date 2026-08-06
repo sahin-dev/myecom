@@ -1,17 +1,22 @@
 "use client";
 
 import {
+  AlertTriangle,
+  Check,
   ChevronLeft,
   ChevronRight,
   Download,
+  History,
   Mail,
   MapPin,
   PackageSearch,
+  Pencil,
   Phone,
   Plus,
   Printer,
   RefreshCw,
   Search,
+  ShieldAlert,
   ShoppingBag,
   Trash2,
   Truck
@@ -28,17 +33,30 @@ import {
   baseProductOptionLabel,
   dispatchCourierShipment,
   effectiveCourierShipmentStatus,
+  fetchAdminOrder,
+  recordManualPayment,
   fetchCourierServices,
   fetchAdminCatalog,
   fetchAdminOrders,
+  fetchOrderActivity,
+  fetchOrderQueues,
   formatMoney,
+  fulfillAdminOrderItems,
   isBaseProductEnabled,
+  markOrderRiskReviewed,
   permanentlyDeleteAdminResource,
   syncCourierShipment,
+  updateAdminOrderContact,
   updateCourierShipment,
   updateAdminOrder
 } from "../../lib/catalog";
-import type { CourierService, CourierShipment, CourierShipmentStatus } from "../../lib/catalog";
+import type {
+  CourierService,
+  CourierShipment,
+  CourierShipmentStatus,
+  OrderActivityEntry,
+  OrderQueues
+} from "../../lib/catalog";
 import { orderPaymentBreakdown } from "../../lib/orderPayments";
 import { useAuth } from "../AuthContext";
 import { useSiteSettings } from "../SiteSettingsContext";
@@ -57,17 +75,84 @@ import {
   useAdminToast
 } from "./AdminShared";
 import { PackingSlip } from "./PackingSlip";
+import { Button } from "../ui/Button";
+import { Modal } from "../ui/Modal";
 
+/** Mirrors `orderTransitions` in the API — keep the two in step. */
 const orderTransitions: Record<string, string[]> = {
   PLACED: ["CONFIRMED", "CANCELLED"],
   CONFIRMED: ["PACKED", "CANCELLED"],
   PACKED: ["SHIPPED", "CANCELLED"],
-  SHIPPED: ["OUT_FOR_DELIVERY"],
-  OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_FAILED"],
-  DELIVERY_FAILED: ["OUT_FOR_DELIVERY"],
+  SHIPPED: ["OUT_FOR_DELIVERY", "RETURNED_TO_ORIGIN"],
+  OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_FAILED", "RETURNED_TO_ORIGIN"],
+  DELIVERY_FAILED: ["OUT_FOR_DELIVERY", "RETURNED_TO_ORIGIN"],
   DELIVERED: [],
+  RETURNED_TO_ORIGIN: [],
   CANCELLED: []
 };
+
+/** Delivery details stop being ours to change once the courier has the parcel. */
+const editableOrderStatuses = ["PLACED", "CONFIRMED", "PACKED"];
+
+/**
+ * A shipment can be marked "collected" two different ways: the courier
+ * actually took cash (collectedAmount > 0), or the order was already fully
+ * paid by other means before delivery, so there was nothing left to collect
+ * (collectedAmount stays 0). The backend only ever writes 0 in that second
+ * case — an actual collection is validated to be greater than zero — so this
+ * is an unambiguous signal, not a heuristic.
+ */
+function describeCollection(shipment: CourierShipment) {
+  if (!shipment.paymentCollectedAt) return null;
+  if ((shipment.collectedAmount ?? 0) > 0) {
+    return { label: `${formatMoney(shipment.collectedAmount ?? 0)} collected`, prepaid: false };
+  }
+  return { label: "Already fully paid — nothing to collect", prepaid: true };
+}
+
+/** Turns an audit row into a sentence, falling back to the raw metadata. */
+function describeActivity(entry: OrderActivityEntry) {
+  const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+  const asText = (value: unknown) => (value == null ? "" : String(value));
+
+  switch (entry.action) {
+    case "order.status_changed":
+    case "order.cancelled":
+    case "order.returned_to_origin":
+      return `Status moved from ${formatStatus(asText(meta.from))} to ${formatStatus(asText(meta.to))}.${
+        meta.note ? ` Note: ${asText(meta.note)}` : ""
+      }`;
+    case "order.created":
+      return `Order created for ${asText(meta.total)}.`;
+    case "order.contact_updated":
+      return "Delivery details were corrected.";
+    case "order.items_fulfilled": {
+      const lines = Array.isArray(meta.lines) ? meta.lines : [];
+      return lines.length
+        ? lines
+            .map((line) => {
+              const row = line as Record<string, unknown>;
+              return `${asText(row.product)}: ${asText(row.from)} to ${asText(row.to)} shipped`;
+            })
+            .join("; ")
+        : "Fulfilment updated.";
+    }
+    case "order.risk_reviewed":
+      return "Marked as reviewed and cleared from the risk queue.";
+    case "order.updated":
+      return "Order fields were edited.";
+    case "refund.initiated":
+      return `Refund of ${asText(meta.amount)} sent to the gateway. ${asText(meta.reason)}`;
+    case "refund.recorded":
+      return `Refund of ${asText(meta.amount)} recorded as settled elsewhere. ${asText(meta.reason)}`;
+    case "refund.failed":
+      return `Refund of ${asText(meta.amount)} failed: ${asText(meta.message)}`;
+    case "payment.manual_recorded":
+      return `Manual payment of ${asText(meta.amount)} recorded via ${asText(meta.method)}.`;
+    default:
+      return Object.keys(meta).length ? JSON.stringify(meta) : "No further detail recorded.";
+  }
+}
 const courierShipmentStatuses: CourierShipmentStatus[] = [
   "CREATED",
   "PICKUP_REQUESTED",
@@ -142,6 +227,12 @@ export function AdminOrders() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("");
+  const [queue, setQueue] = useState("");
+  const [queues, setQueues] = useState<OrderQueues | null>(null);
+  const [activity, setActivity] = useState<OrderActivityEntry[] | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [editingContact, setEditingContact] = useState(false);
+  const [fulfilment, setFulfilment] = useState<Record<string, number>>({});
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -163,25 +254,138 @@ export function AdminOrders() {
         search,
         status,
         paymentStatus,
+        queue,
         page,
         limit: 25
       });
       setResult(next);
       if (selected) {
-        const refreshed = next.orders.find((order) => order.id === selected.id);
-        if (refreshed) setSelected(refreshed);
+        // The list response never includes payments/refunds (a deliberate
+        // weight-saving omission for 25 rows at a time), so syncing the open
+        // order from it would silently erase whatever the detail endpoint had
+        // just populated — exactly what made the Payment ledger look empty
+        // right after an action that had, in fact, just recorded a payment.
+        const refreshed = await fetchAdminOrder(selected.id);
+        setSelected(refreshed);
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Orders are unavailable.");
     } finally {
       setLoading(false);
     }
-  }, [page, paymentStatus, search, selected?.id, status]);
+  }, [page, paymentStatus, queue, search, selected?.id, status]);
 
   useEffect(() => {
     void load();
     setSelectedIds(new Set());
   }, [load]);
+
+  // Queue sizes drive the ops header, so they refresh whenever the list does.
+  const loadQueues = useCallback(() => {
+    fetchOrderQueues().then(setQueues).catch(() => setQueues(null));
+  }, []);
+  useEffect(() => { loadQueues(); }, [loadQueues, result]);
+
+  // Reset the per-order panels whenever a different order is opened.
+  useEffect(() => {
+    setActivityOpen(false);
+    setActivity(null);
+    setEditingContact(false);
+    setFulfilment(
+      Object.fromEntries((selected?.items ?? []).map((item) => [item.id, item.fulfilledQuantity ?? 0]))
+    );
+  }, [selected?.id]);
+
+  async function openActivity() {
+    if (!selected) return;
+    setActivityOpen(true);
+    if (activity) return;
+    try {
+      setActivity(await fetchOrderActivity(selected.id));
+    } catch {
+      setActivity([]);
+    }
+  }
+
+  async function saveContact(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    try {
+      const updated = await updateAdminOrderContact(selected.id, {
+        customerName: String(form.get("customerName") || ""),
+        email: String(form.get("email") || ""),
+        phone: String(form.get("phone") || ""),
+        shippingAddress: String(form.get("shippingAddress") || "")
+      });
+      setSelected(updated);
+      setEditingContact(false);
+      notify(`Delivery details for ${updated.orderNumber} were updated.`);
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Details could not be updated.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveFulfilment() {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      const updated = await fulfillAdminOrderItems(
+        selected.id,
+        (selected.items ?? []).map((item) => ({
+          orderItemId: item.id,
+          fulfilledQuantity: fulfilment[item.id] ?? 0
+        }))
+      );
+      setSelected(updated);
+      notify(`Fulfilment recorded for ${updated.orderNumber}.`);
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Fulfilment could not be saved.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Fulfilment is only meaningful while the order is still live.
+  const canFulfil =
+    Boolean(selected) &&
+    can("orders.update") &&
+    !["CANCELLED", "RETURNED_TO_ORIGIN"].includes(selected?.status ?? "");
+
+  const fulfilmentChanged = (selected?.items ?? []).some(
+    (item) => (fulfilment[item.id] ?? 0) !== (item.fulfilledQuantity ?? 0)
+  );
+
+  const fulfilmentSummary = (() => {
+    const items = selected?.items ?? [];
+    const ordered = items.reduce((sum, item) => sum + item.quantity, 0);
+    const shipped = items.reduce((sum, item) => sum + (fulfilment[item.id] ?? 0), 0);
+    if (!ordered) return "";
+    if (shipped === 0) return "Nothing shipped yet";
+    if (shipped >= ordered) return "Everything shipped";
+    return `${shipped} of ${ordered} units shipped`;
+  })();
+
+  async function clearRisk() {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      const updated = await markOrderRiskReviewed(selected.id);
+      setSelected(updated);
+      notify(`${updated.orderNumber} was marked reviewed.`);
+      loadQueues();
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Could not mark reviewed.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!can("couriers.read")) return;
@@ -204,7 +408,6 @@ export function AdminOrders() {
     try {
       const updated = await updateAdminOrder(selected.id, {
         status: String(form.get("status")),
-        paymentStatus: String(form.get("paymentStatus")),
         paymentMethod: String(form.get("paymentMethod") || ""),
         courierName: String(form.get("courierName") || ""),
         trackingCode: String(form.get("trackingCode") || ""),
@@ -294,11 +497,42 @@ export function AdminOrders() {
     setSaving(true);
     try {
       await createManualRefund(refundTarget.id, { amount, reason });
+      const refreshed = await fetchAdminOrder(refundTarget.orderNumber);
+      setSelected(refreshed);
       notify(`A refund of ${formatMoney(amount)} was queued for ${refundTarget.orderNumber}.`);
       setRefundTarget(null);
       await load();
     } catch (caught) {
       notify(caught instanceof Error ? caught.message : "Refund could not be issued.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function captureManualPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    const amount = Number(form.get("amount"));
+    const method = String(form.get("method") || "").trim();
+    const reference = String(form.get("reference") || "").trim();
+    const note = String(form.get("note") || "").trim();
+    if (!amount || amount <= 0 || !method) return;
+    setSaving(true);
+    try {
+      await recordManualPayment({
+        orderId: selected.orderNumber,
+        amount,
+        method,
+        reference: reference || undefined,
+        note: note || undefined
+      });
+      const refreshed = await fetchAdminOrder(selected.orderNumber);
+      setSelected(refreshed);
+      notify(`Manual payment of ${formatMoney(amount)} was recorded for ${selected.orderNumber}.`);
+      await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Manual payment could not be recorded.", "error");
     } finally {
       setSaving(false);
     }
@@ -543,6 +777,39 @@ export function AdminOrders() {
         }
       />
 
+      {/*
+        Ops work from exceptions, not from a reverse-chronological list. These
+        answer "what needs me today" before any filtering happens.
+      */}
+      {queues ? (
+        <div className="admin-queue-bar" role="group" aria-label="Order queues">
+          {[
+            { id: "", label: "All orders", count: result?.pagination.total ?? 0, tone: "neutral" },
+            { id: "overdue", label: `Overdue (>${queues.slaHours}h)`, count: queues.overdue, tone: "danger" },
+            { id: "unfulfilled", label: "Awaiting dispatch", count: queues.unfulfilled, tone: "warning" },
+            { id: "risk", label: "Needs review", count: queues.atRisk, tone: "warning" }
+          ].map((item) => (
+            <button
+              key={item.id || "all"}
+              type="button"
+              className={`admin-queue-chip is-${item.tone}${queue === item.id ? " is-active" : ""}`}
+              aria-pressed={queue === item.id}
+              onClick={() => { setQueue(item.id); setPage(1); }}
+            >
+              <strong>{item.count}</strong>
+              <span>{item.label}</span>
+            </button>
+          ))}
+          {queues.oldestOverdue ? (
+            <p className="admin-queue-note">
+              <AlertTriangle size={14} />
+              {queues.oldestOverdue.orderNumber} has waited {queues.oldestOverdue.ageHours}h in{" "}
+              {formatStatus(queues.oldestOverdue.status)}.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       <form className="admin-filterbar" onSubmit={applySearch}>
         <label className="admin-search">
           <Search size={17} />
@@ -564,6 +831,39 @@ export function AdminOrders() {
       </form>
 
       <AdminToast message={message} kind={kind} />
+
+      {activityOpen && selected ? (
+        <Modal
+          open
+          onClose={() => setActivityOpen(false)}
+          title={`Internal history — ${selected.orderNumber}`}
+          description="Who did what to this order. The tracking history above is what the customer sees."
+          size="lg"
+          footer={<Button variant="secondary" onClick={() => setActivityOpen(false)}>Close</Button>}
+        >
+          {!activity ? <p className="admin-muted">Loading history...</p> : null}
+          {activity?.length === 0 ? (
+            <p className="admin-muted">
+              Nothing recorded yet. Staff actions are logged from the point they happen.
+            </p>
+          ) : null}
+          {activity?.length ? (
+            <ol className="payment-timeline">
+              {activity.map((entry) => (
+                <li key={entry.id}>
+                  <div className="payment-timeline__head">
+                    <strong>{formatStatus(entry.action.replace(/\./g, " "))}</strong>
+                    <span className="payment-timeline__source">{entry.entity}</span>
+                    <small>{new Date(entry.createdAt).toLocaleString("en-BD")}</small>
+                  </div>
+                  <p>{describeActivity(entry)}</p>
+                  <small>{entry.actor ? `by ${entry.actor.name}` : "by the system"}</small>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </Modal>
+      ) : null}
 
       {cancelTarget ? (
         <AdminConfirmDialog
@@ -588,9 +888,23 @@ export function AdminOrders() {
         <div className="admin-confirm-overlay" role="dialog" aria-modal="true">
           <form className="admin-confirm-card" onSubmit={issueRefund}>
             <h3>Issue refund for {refundTarget.orderNumber}</h3>
-            <p>Order total: {formatMoney(refundTarget.total)}. The amount can't exceed the order's remaining refundable balance.</p>
+            <p>
+              Refundable balance: {formatMoney(orderPaymentBreakdown(refundTarget).paidAmount)} of{" "}
+              {formatMoney(refundTarget.total)}.
+              {(refundTarget.payments?.length ?? 0) > 1
+                ? " This order has more than one payment — the amount is drawn from them in order, oldest first."
+                : ""}
+            </p>
             <label>Amount
-              <input name="amount" type="number" min="1" max={refundTarget.total} step="0.01" required autoFocus />
+              <input
+                name="amount"
+                type="number"
+                min="1"
+                max={orderPaymentBreakdown(refundTarget).paidAmount}
+                step="0.01"
+                required
+                autoFocus
+              />
             </label>
             <label>Reason
               <input name="reason" type="text" placeholder="Goodwill adjustment, damaged item, etc." required />
@@ -779,22 +1093,66 @@ export function AdminOrders() {
                 <span>Order details</span>
                 <h2>{selected.orderNumber}</h2>
               </div>
+              <button type="button" className="admin-detail-print" onClick={() => void openActivity()} title="Internal history">
+                <History size={16} /> History
+              </button>
               <button type="button" className="admin-detail-print" onClick={() => setPrintingOrder(selected)} title="Print packing slip">
                 <Printer size={16} /> Packing slip
               </button>
               <button type="button" onClick={() => setSelected(null)} aria-label="Close order details">Close</button>
             </div>
 
-            <div className="admin-customer-contact">
-              <strong>{selected.customerName}</strong>
-              <a href={`mailto:${selected.email}`}><Mail size={15} />{selected.email}</a>
-              <a href={`tel:${selected.phone}`}><Phone size={15} />{selected.phone}</a>
-              <p><MapPin size={15} />{formatAddressInfo(selected.shippingInfo, selected.shippingAddress)}</p>
-              {selected.billingInfo && !selected.billingSameAsShipping ? (
-                <p><Mail size={15} />Billing: {formatAddressInfo(selected.billingInfo)}</p>
-              ) : null}
-              {selected.deliveryZoneName ? <p><Truck size={15} />Zone: {selected.deliveryZoneName}</p> : null}
-            </div>
+            {/* Advisory only — the score never blocks anything, it just asks for eyes. */}
+            {(selected.riskScore ?? 0) >= 40 && !selected.riskReviewedAt ? (
+              <div className="admin-risk-banner">
+                <div>
+                  <strong><ShieldAlert size={16} /> Needs review — risk score {selected.riskScore}</strong>
+                  <ul>
+                    {(selected.riskFlags ?? []).map((flag) => <li key={flag}>{flag}</li>)}
+                  </ul>
+                </div>
+                {can("orders.update") ? (
+                  <button type="button" className="secondary-action" disabled={saving} onClick={() => void clearRisk()}>
+                    Mark reviewed
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {editingContact ? (
+              <form className="admin-order-form admin-contact-form" onSubmit={saveContact}>
+                <div className="form-grid">
+                  <label>Customer name<input name="customerName" defaultValue={selected.customerName} /></label>
+                  <label>Email<input name="email" type="email" defaultValue={selected.email} /></label>
+                </div>
+                <div className="form-grid">
+                  <label>Phone<input name="phone" defaultValue={selected.phone} /></label>
+                  <label>Shipping address<input name="shippingAddress" defaultValue={selected.shippingAddress} /></label>
+                </div>
+                <div className="admin-editor-sticky-actions">
+                  <button type="button" className="secondary-action" onClick={() => setEditingContact(false)}>Cancel</button>
+                  <button type="submit" className="primary-action" disabled={saving}>
+                    {saving ? "Saving..." : "Save delivery details"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="admin-customer-contact">
+                <strong>{selected.customerName}</strong>
+                <a href={`mailto:${selected.email}`}><Mail size={15} />{selected.email}</a>
+                <a href={`tel:${selected.phone}`}><Phone size={15} />{selected.phone}</a>
+                <p><MapPin size={15} />{formatAddressInfo(selected.shippingInfo, selected.shippingAddress)}</p>
+                {selected.billingInfo && !selected.billingSameAsShipping ? (
+                  <p><Mail size={15} />Billing: {formatAddressInfo(selected.billingInfo)}</p>
+                ) : null}
+                {selected.deliveryZoneName ? <p><Truck size={15} />Zone: {selected.deliveryZoneName}</p> : null}
+                {can("orders.update") && editableOrderStatuses.includes(selected.status) ? (
+                  <button type="button" className="text-link" onClick={() => setEditingContact(true)}>
+                    <Pencil size={13} /> Correct delivery details
+                  </button>
+                ) : null}
+              </div>
+            )}
 
             <div className="admin-order-lines">
               {selected.items.map((item) => (
@@ -805,10 +1163,38 @@ export function AdminOrders() {
                     {item.advancePaymentAmount ? (
                       <small>Advance {item.advancePaymentPercent ?? 0}%: {formatMoney(item.advancePaymentAmount)}</small>
                     ) : null}
+                    {canFulfil ? (
+                      <label className="admin-fulfil-field">
+                        Shipped
+                        <input
+                          type="number"
+                          min={0}
+                          max={item.quantity}
+                          value={fulfilment[item.id] ?? 0}
+                          onChange={(event) =>
+                            setFulfilment((current) => ({
+                              ...current,
+                              [item.id]: Math.max(0, Math.min(item.quantity, Number(event.target.value) || 0))
+                            }))
+                          }
+                        />
+                        of {item.quantity}
+                      </label>
+                    ) : (item.fulfilledQuantity ?? 0) > 0 && (item.fulfilledQuantity ?? 0) < item.quantity ? (
+                      <small className="admin-partial-note">{item.fulfilledQuantity} of {item.quantity} shipped</small>
+                    ) : null}
                   </span>
                   <strong>{formatMoney(item.quantity * item.unitPrice)}</strong>
                 </div>
               ))}
+              {canFulfil && fulfilmentChanged ? (
+                <div className="admin-fulfil-actions">
+                  <span>{fulfilmentSummary}</span>
+                  <button type="button" className="primary-action" disabled={saving} onClick={() => void saveFulfilment()}>
+                    {saving ? "Saving..." : "Save fulfilment"}
+                  </button>
+                </div>
+              ) : null}
               <dl>
                 <div><dt>Subtotal</dt><dd>{formatMoney(selected.subtotal)}</dd></div>
                 {selected.discount ? (
@@ -824,15 +1210,74 @@ export function AdminOrders() {
                     {selectedPaymentBreakdown.hasFailedPayment ? (
                       <div><dt>Failed payment attempt</dt><dd>{formatMoney(selectedPaymentBreakdown.failedAmount)}</dd></div>
                     ) : selectedPaymentBreakdown.paidAmount > 0 ? (
-                      <div><dt>Paid online</dt><dd>{formatMoney(selectedPaymentBreakdown.paidAmount)}</dd></div>
+                      <div><dt>Net paid</dt><dd>{formatMoney(selectedPaymentBreakdown.paidAmount)}</dd></div>
                     ) : (
                       <div><dt>Advance required</dt><dd>{formatMoney(selectedPaymentBreakdown.scheduledNow)}</dd></div>
                     )}
+                    {selectedPaymentBreakdown.refundedAmount > 0 ? (
+                      <div><dt>Refunded</dt><dd>-{formatMoney(selectedPaymentBreakdown.refundedAmount)}</dd></div>
+                    ) : null}
                     <div><dt>Outstanding balance</dt><dd>{formatMoney(selectedPaymentBreakdown.outstandingAmount)}</dd></div>
                   </>
                 ) : null}
               </dl>
             </div>
+
+            <section className="admin-order-section">
+              <AdminSectionHeader title="Payment ledger" description="Capture offline payments and review every payment and refund tied to this order." />
+              {can("payments.capture") ? (
+                <form className="admin-order-form" onSubmit={captureManualPayment}>
+                  <div className="form-grid">
+                    <label>Amount<input name="amount" type="number" min="0.01" step="0.01" required /></label>
+                    <label>Method<input name="method" placeholder="Bank transfer / Cash / Card terminal" required /></label>
+                  </div>
+                  <div className="form-grid">
+                    <label>Reference<input name="reference" placeholder="Receipt number or slip" /></label>
+                    <label>Note<input name="note" placeholder="Optional note" /></label>
+                  </div>
+                  <div className="admin-editor-sticky-actions">
+                    <span />
+                    <button className="primary-action" type="submit" disabled={saving}>Record manual payment</button>
+                  </div>
+                </form>
+              ) : null}
+              <div className="admin-shipment-list">
+                {selected.payments?.length ? selected.payments.map((payment) => (
+                  <article className="admin-shipment-card" key={payment.id}>
+                    <header>
+                      <div>
+                        <strong>{payment.provider}</strong>
+                        <span>{payment.method}</span>
+                      </div>
+                      <StatusBadge value={payment.status} kind="payment" />
+                    </header>
+                    <div className="admin-shipment-reference-grid">
+                      <div><span>Amount</span><strong>{formatMoney(payment.amount)}</strong></div>
+                      <div><span>Refunded</span><strong>{formatMoney(payment.refundedAmount ?? 0)}</strong></div>
+                      <div><span>Reference</span><strong>{payment.transactionId || payment.gatewayReference || "—"}</strong></div>
+                      <div><span>Captured</span><strong>{payment.capturedAt ? new Date(payment.capturedAt).toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" }) : "Pending"}</strong></div>
+                    </div>
+                  </article>
+                )) : <p className="admin-empty-copy">No payment rows have been recorded for this order yet.</p>}
+                {selected.refunds?.length ? selected.refunds.map((refund) => (
+                  <article className="admin-shipment-card" key={refund.id}>
+                    <header>
+                      <div>
+                        <strong>Refund</strong>
+                        <span>{refund.reason || "Refund recorded"}</span>
+                      </div>
+                      <StatusBadge value={refund.status} kind="payment" />
+                    </header>
+                    <div className="admin-shipment-reference-grid">
+                      <div><span>Amount</span><strong>{formatMoney(refund.amount)}</strong></div>
+                      <div><span>Type</span><strong>{refund.isManual ? "Manual" : "Gateway"}</strong></div>
+                      <div><span>Created</span><strong>{new Date(refund.createdAt).toLocaleString("en-BD", { dateStyle: "medium", timeStyle: "short" })}</strong></div>
+                      <div><span>Status</span><strong>{refund.status}</strong></div>
+                    </div>
+                  </article>
+                )) : null}
+              </div>
+            </section>
 
             <section className="admin-order-section admin-order-courier-panel">
               <AdminSectionHeader
@@ -884,11 +1329,10 @@ export function AdminOrders() {
                         <div>
                           <span>Cash collection</span>
                           <strong>
-                            {shipment.paymentCollectedAt
-                              ? `${formatMoney(shipment.collectedAmount ?? 0)} collected`
-                              : (shipment.cashCollectionAmount ?? 0) > 0
+                            {describeCollection(shipment)?.label ??
+                              ((shipment.cashCollectionAmount ?? 0) > 0
                                 ? `${formatMoney(shipment.cashCollectionAmount ?? 0)} due`
-                                : "Not recorded"}
+                                : "Not recorded")}
                           </strong>
                         </div>
                       </div>
@@ -950,25 +1394,48 @@ export function AdminOrders() {
                               <input name="deliveryFailedReason" placeholder="Customer unavailable, wrong address..." />
                             </label>
                           </div>
-                          <div className="admin-cod-collection-panel">
-                            <label className="admin-check-row">
-                              <input name="paymentCollected" type="checkbox" />
+                          {/*
+                            Once collected, this stops asking. It used to render
+                            unconditionally, so a genuine save looked identical to
+                            no save at all — the checkbox and amount field always
+                            came back blank, whether or not money had already been
+                            recorded against this parcel.
+                          */}
+                          {shipment.paymentCollectedAt ? (
+                            <div className="admin-cod-collection-panel admin-cod-collection-done">
+                              <Check size={16} />
                               <span>
-                                <strong>Payment collected</strong>
-                                <small>Confirm cash collection when the parcel is delivered.</small>
+                                <strong>{describeCollection(shipment)?.label}</strong>
+                                <small>
+                                  {describeCollection(shipment)?.prepaid ? "Confirmed " : ""}
+                                  {new Date(shipment.paymentCollectedAt).toLocaleString("en-BD", {
+                                    dateStyle: "medium",
+                                    timeStyle: "short"
+                                  })}
+                                </small>
                               </span>
-                            </label>
-                            <label>
-                              Collected amount
-                              <input
-                                name="collectedAmount"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder={String(Math.max(selected.total - (selectedPaymentBreakdown?.paidAmount ?? 0), 0))}
-                              />
-                            </label>
-                          </div>
+                            </div>
+                          ) : (
+                            <div className="admin-cod-collection-panel">
+                              <label className="admin-check-row">
+                                <input name="paymentCollected" type="checkbox" />
+                                <span>
+                                  <strong>Payment collected</strong>
+                                  <small>Confirm cash collection when the parcel is delivered.</small>
+                                </span>
+                              </label>
+                              <label>
+                                Collected amount
+                                <input
+                                  name="collectedAmount"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder={String(Math.max(selected.total - (selectedPaymentBreakdown?.paidAmount ?? 0), 0))}
+                                />
+                              </label>
+                            </div>
+                          )}
                           <div className="admin-shipment-update-actions">
                             <button className="primary-action" type="submit" disabled={saving}>Save parcel update</button>
                           </div>
@@ -1023,11 +1490,16 @@ export function AdminOrders() {
                     ))}
                   </select>
                 </label>
-                <label>Payment
-                  <select name="paymentStatus" defaultValue={selected.paymentStatus ?? "PENDING"}>
-                    {paymentStatuses.map((item) => <option key={item} value={item}>{formatStatus(item)}</option>)}
-                  </select>
-                </label>
+                {/*
+                  Payment status is derived from the payment and refund rows, so it is
+                  shown here rather than edited — a control would silently revert on save.
+                  Money is moved from the payment ledger above.
+                */}
+                <div className="admin-derived-field">
+                  <span>Payment</span>
+                  <StatusBadge value={selected.paymentStatus} kind="payment" />
+                  <small>Derived from the payment ledger.</small>
+                </div>
               </div>
               </div>
               <div className="admin-order-form-section">
@@ -1071,7 +1543,8 @@ export function AdminOrders() {
               </div>
             </form> : null}
             {can("orders.delete") && ["PLACED", "CONFIRMED", "PACKED"].includes(selected.status) ? <button className="danger-action admin-cancel-order" type="button" disabled={saving} onClick={() => setCancelTarget(selected)}>Cancel order</button> : null}
-            {can("refunds.write") && ["PAID", "PARTIALLY_REFUNDED"].includes(selected.paymentStatus ?? "") ? <button className="secondary-action" type="button" disabled={saving} onClick={() => setRefundTarget(selected)}>Issue refund</button> : null}
+            {/* PARTIALLY_PAID belongs here too: the captured payment behind it is refundable. */}
+            {can("refunds.write") && ["PAID", "PARTIALLY_PAID", "PARTIALLY_REFUNDED"].includes(selected.paymentStatus ?? "") ? <button className="secondary-action" type="button" disabled={saving} onClick={() => setRefundTarget(selected)}>Issue refund</button> : null}
             {can("orders.permanent_delete") ? (
               <button className="danger-action admin-cancel-order" type="button" disabled={saving} onClick={() => setPermanentDeleteTarget(selected)}>
                 <Trash2 size={16} /> Permanently delete

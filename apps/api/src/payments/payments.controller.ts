@@ -13,6 +13,8 @@ import type { OptionalAuthenticatedRequest } from "../auth/auth.types";
 import { EcommerceService } from "../ecommerce/ecommerce.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { BkashService } from "./bkash.service";
+import { PaymentRateLimitGuard } from "./payment-rate-limit.guard";
+import { PaymentsService } from "./payments.service";
 import { ExecuteBkashDto, InitiateBkashDto } from "./payments.dto";
 
 @Controller("checkout/bkash")
@@ -20,7 +22,8 @@ export class PaymentsController {
   constructor(
     private readonly bkash: BkashService,
     private readonly prisma: PrismaService,
-    private readonly ecommerce: EcommerceService
+    private readonly ecommerce: EcommerceService,
+    private readonly payments: PaymentsService
   ) {}
 
   @Post("initiate")
@@ -61,6 +64,10 @@ export class PaymentsController {
         });
         await this.reconcileOrderPaymentStatus(transaction, order.id);
       });
+      await this.auditPaymentTransition(payment.id, "payment.initiation.failed", {
+        orderId: order.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
       await this.cancelFailedOnlineOrder(order.id);
       throw error;
     });
@@ -77,6 +84,7 @@ export class PaymentsController {
   }
 
   @Post("execute")
+  @UseGuards(PaymentRateLimitGuard)
   async execute(@Body() dto: ExecuteBkashDto) {
     const payment = await this.prisma.payment.findFirst({
       where: { gatewayReference: dto.paymentID },
@@ -104,6 +112,10 @@ export class PaymentsController {
         });
         await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
       });
+      await this.auditPaymentTransition(payment.id, "payment.captured.gateway", {
+        orderId: payment.orderId,
+        transactionId: result.trxID
+      });
     } catch (error) {
       return this.applyVerifiedBkashStatus(dto.paymentID);
     }
@@ -113,11 +125,13 @@ export class PaymentsController {
   }
 
   @Post("failed")
+  @UseGuards(PaymentRateLimitGuard)
   async failed(@Body() dto: ExecuteBkashDto) {
     return this.markPaymentFailed(dto.paymentID);
   }
 
   @Post("webhook")
+  @UseGuards(PaymentRateLimitGuard)
   async webhook(@Body() payload: Record<string, unknown>) {
     const paymentID = this.paymentIdFromPayload(payload);
     if (!paymentID) throw new BadRequestException("bKash webhook did not include a paymentID.");
@@ -127,6 +141,17 @@ export class PaymentsController {
   @Post("ipn")
   async ipn(@Body() payload: Record<string, unknown>) {
     return this.webhook(payload);
+  }
+
+  private async auditPaymentTransition(paymentId: string, action: string, metadata: Record<string, unknown>) {
+    await this.prisma.auditLog.create({
+      data: {
+        action,
+        entity: "Payment",
+        entityId: paymentId,
+        metadata: metadata as Prisma.InputJsonValue
+      }
+    });
   }
 
   private paymentIdFromPayload(payload: Record<string, unknown>) {
@@ -192,6 +217,10 @@ export class PaymentsController {
         });
         await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
       });
+      await this.auditPaymentTransition(payment.id, "payment.captured.gateway", {
+        orderId: payment.orderId,
+        source: "webhook"
+      });
       return this.confirmPaidOnlineOrder(payment.orderId);
     }
     if (status === PaymentStatus.FAILED) {
@@ -204,6 +233,10 @@ export class PaymentsController {
           }
         });
         await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
+      });
+      await this.auditPaymentTransition(payment.id, "payment.failed.gateway", {
+        orderId: payment.orderId,
+        source: "webhook"
       });
       return this.cancelFailedOnlineOrder(payment.orderId);
     }
@@ -249,6 +282,10 @@ export class PaymentsController {
         data: { status: PaymentStatus.FAILED }
       });
       await this.reconcileOrderPaymentStatus(transaction, payment.orderId);
+    });
+    await this.auditPaymentTransition(payment.id, "payment.failed.gateway", {
+      orderId: payment.orderId,
+      source: "manual"
     });
     return this.cancelFailedOnlineOrder(payment.orderId);
   }

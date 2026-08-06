@@ -17,7 +17,6 @@ import {
   Pause,
   Play,
   ShieldCheck,
-  ShoppingBag,
   Sparkles,
   Star,
   Truck,
@@ -37,13 +36,12 @@ import {
   resolveMediaUrl
 } from "../lib/catalog";
 import { AppLocale, localeCode, localizeCatalog } from "../lib/i18n";
-import { useCart } from "./CartContext";
 import { useAuth } from "./AuthContext";
 import { HorizontalRail } from "./HorizontalRail";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
 import { ProductVideo } from "./ProductVideo";
-import { QuickVariantAdd } from "./QuickVariantAdd";
+import { QuickVariantAdd, SimpleAddToCartButton } from "./QuickVariantAdd";
 import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
 import { RatingStars } from "./RatingStars";
 import { useWishlist } from "./WishlistContext";
@@ -78,7 +76,6 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [shelf, setShelf] = useState<Shelf>("new");
   const [buyAgainProducts, setBuyAgainProducts] = useState<Product[]>([]);
-  const { addItem } = useCart();
   const { user } = useAuth();
 
   useEffect(() => {
@@ -357,7 +354,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
           </div>
           <div className="modern-product-grid" aria-label="Products from recent orders">
             {buyAgainProducts.map((product) => (
-              <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} onAdd={() => addItem(product)} />
+              <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} />
             ))}
           </div>
         </section>
@@ -372,7 +369,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
         />
         <div className="modern-product-grid" aria-label="Best selling products">
           {popularProducts.slice(0, Math.min(Math.max(popularSection.productLimit || 8, 6), 8)).map((product) => (
-            <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} onAdd={() => addItem(product)} />
+            <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} />
           ))}
         </div>
       </section> : null}
@@ -417,7 +414,7 @@ export function Storefront({ initialCatalog = fallbackCatalog }: { initialCatalo
         </div>
         <div className="modern-product-grid" key={shelf} aria-label={shelf === "new" ? t("newProducts") : t("trendingProducts")}>
           {discoveryProducts.slice(0, Math.min(Math.max(discoverSection.productLimit || 8, 4), 8)).map((product) => (
-            <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} onAdd={() => addItem(product)} />
+            <ProductCard key={product.id} product={product} platformPolicy={catalog.siteSettings.checkoutPolicy} />
           ))}
         </div>
       </section> : null}
@@ -582,12 +579,10 @@ function SectionHeading({
 
 function ProductCard({
   product,
-  platformPolicy,
-  onAdd
+  platformPolicy
 }: {
   product: Product;
   platformPolicy?: Catalog["siteSettings"]["checkoutPolicy"];
-  onAdd: () => void;
 }) {
   const locale = useLocale() as AppLocale;
   const t = useTranslations("Product");
@@ -643,10 +638,7 @@ function ProductCard({
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (
-        <button className="add-button full" type="button" disabled={!product.inventory} onClick={onAdd}>
-          <ShoppingBag size={17} />
-          {product.inventory ? t("addToBag") : common("outOfStock")}
-        </button>
+        <SimpleAddToCartButton product={product} label={t("addToBag")} outOfStockLabel={common("outOfStock")} />
       )}
     </article>
   );

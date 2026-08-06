@@ -11,9 +11,9 @@ import {
 } from "react";
 import {
   AuthUser,
-  authStorageKey,
   fetchMe,
   loginUser,
+  logoutUser,
   registerUser,
   updateMe
 } from "../lib/catalog";
@@ -49,21 +49,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const pendingAction = useRef<(() => void | Promise<void>) | null>(null);
 
   useEffect(() => {
-    const token = window.localStorage.getItem(authStorageKey);
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-
+    // The session cookie is httpOnly, so there's nothing in client storage to
+    // check before asking — a visitor with no session just gets a 401 back.
     fetchMe()
       .then(setUser)
-      .catch(() => window.localStorage.removeItem(authStorageKey))
+      .catch(() => undefined)
       .finally(() => setLoading(false));
   }, []);
 
   async function login(email: string, password: string) {
     const session = await loginUser({ email, password });
-    window.localStorage.setItem(authStorageKey, session.accessToken);
     setUser(session.user);
     return session.user;
   }
@@ -75,7 +70,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     phone?: string;
   }) {
     const session = await registerUser(input);
-    window.localStorage.setItem(authStorageKey, session.accessToken);
     setUser(session.user);
     return session.user;
   }
@@ -92,8 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    window.localStorage.removeItem(authStorageKey);
+    // Clears local state immediately so the UI updates without waiting on the
+    // network; the request that actually expires the httpOnly cookie
+    // server-side runs in the background regardless of its outcome — an
+    // errored logout call must not leave the user looking still signed in.
     setUser(null);
+    void logoutUser().catch(() => undefined);
   }
 
   function requireAuth(onAuthenticated: () => void | Promise<void>) {

@@ -753,3 +753,51 @@ export class CreateManualRefundDto {
   @IsString()
   reason!: string;
 }
+
+export class IssueRefundDto {
+  @IsNumber()
+  @IsPositive()
+  amount!: number;
+
+  @IsString()
+  reason!: string;
+
+  /**
+   * Set when the money was returned outside the gateway and the admin is
+   * recording that fact. Left false, the refund is sent to the provider and
+   * only completes if the provider confirms it.
+   */
+  @IsOptional()
+  @IsBoolean()
+  manual?: boolean;
+}
+
+export class RecordManualPaymentDto {
+  @IsString()
+  orderId!: string;
+
+  @IsNumber()
+  @IsPositive()
+  amount!: number;
+
+  /** Free text, e.g. "Bank transfer", "Cash on collection". */
+  @IsString()
+  method!: string;
+
+  @IsOptional()
+  @IsString()
+  reference?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class ReconcilePaymentsDto {
+  /** Only sweep payments older than this, so in-flight checkouts are left alone. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  staleMinutes?: number;
+}

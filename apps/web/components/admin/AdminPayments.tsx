@@ -1,16 +1,37 @@
 "use client";
 
-import { Check, Copy, CreditCard, RefreshCw, Search, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Download,
+  History,
+  Landmark,
+  RefreshCw,
+  RotateCcw,
+  ScanLine,
+  Search,
+  Trash2
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../AuthContext";
 import {
   Payment,
+  ReconciliationReport,
+  exportAdminPayments,
   fetchAdminPayments,
   formatMoney,
   permanentlyDeleteAdminResource,
-  recheckAdminPayment
+  recheckAdminPayment,
+  reconcileAdminPayments
 } from "../../lib/catalog";
+import {
+  ManualPaymentDialog,
+  PaymentTimelineDialog,
+  ReconciliationDialog,
+  RefundPaymentDialog,
+  refundableBalance
+} from "./AdminPaymentDialogs";
 import {
   AdminError,
   AdminLoading,
@@ -37,6 +58,24 @@ function compactId(value: string) {
   return value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
 }
 
+/** Quotes every field so embedded commas, quotes and newlines survive the round trip. */
+function toCsv(rows: Record<string, string | number | boolean>[]) {
+  const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+  const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  return [columns.map(cell).join(","), ...rows.map((row) => columns.map((key) => cell(row[key])).join(","))]
+    .join("\r\n");
+}
+
+function downloadCsv(rows: Record<string, string | number | boolean>[], filename: string) {
+  const blob = new Blob([`﻿${toCsv(rows)}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export function AdminPayments() {
   const { user } = useAuth();
   const can = useCallback(
@@ -51,6 +90,12 @@ export function AdminPayments() {
   const [page, setPage] = useState(1);
   const [recheckingPaymentId, setRecheckingPaymentId] = useState("");
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Payment | null>(null);
+  const [refundTarget, setRefundTarget] = useState<Payment | null>(null);
+  const [timelineTarget, setTimelineTarget] = useState<Payment | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [report, setReport] = useState<ReconciliationReport | null>(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [copiedValue, setCopiedValue] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -90,6 +135,37 @@ export function AdminPayments() {
     setPayments((current) => current.filter((entry) => entry.id !== permanentDeleteTarget.id));
     notify(`Payment for ${permanentDeleteTarget.order.orderNumber} was permanently deleted.`);
     setPermanentDeleteTarget(null);
+  }
+
+  async function runReconciliation() {
+    setReconciling(true);
+    try {
+      const result = await reconcileAdminPayments();
+      setReport(result);
+      // A sweep can rewrite statuses, so the table has to come back from the server.
+      if (result.corrected) await load();
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "Reconciliation could not run.", "error");
+    } finally {
+      setReconciling(false);
+    }
+  }
+
+  async function exportRecords() {
+    setExporting(true);
+    try {
+      const rows = await exportAdminPayments(status === "ALL" ? undefined : { status });
+      if (!rows.length) {
+        notify("There is nothing to export for this filter.", "error");
+        return;
+      }
+      downloadCsv(rows, `payments-${new Date().toISOString().slice(0, 10)}.csv`);
+      notify(`Exported ${rows.length} payment${rows.length === 1 ? "" : "s"}.`);
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : "The export failed.", "error");
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function copyValue(value: string, label: string) {
@@ -158,7 +234,8 @@ export function AdminPayments() {
     paid: filteredPayments.filter((item) => item.status === "PAID").length,
     pending: filteredPayments.filter((item) => ["PENDING", "PARTIALLY_PAID"].includes(item.status)).length,
     failed: filteredPayments.filter((item) => item.status === "FAILED").length,
-    amount: filteredPayments.reduce((sum, item) => sum + item.amount, 0)
+    amount: filteredPayments.reduce((sum, item) => sum + item.amount, 0),
+    refunded: filteredPayments.reduce((sum, item) => sum + (item.refundedAmount ?? 0), 0)
   }), [filteredPayments]);
 
   const pages = Math.max(1, Math.ceil(filteredPayments.length / paymentPageSize));
@@ -181,9 +258,69 @@ export function AdminPayments() {
         eyebrow="Finance"
         title="Payment records"
         description="Review every transaction, gateway reference, payment status, and order connection from one place."
-        actions={<button className="admin-icon-button" type="button" onClick={() => void load()} title="Refresh payments"><RefreshCw size={17} /></button>}
+        actions={
+          <>
+            {can("payments.capture") ? (
+              <button className="admin-labeled-action" type="button" onClick={() => setManualOpen(true)}>
+                <Landmark size={15} /> Record payment
+              </button>
+            ) : null}
+            {can("payments.reconcile") ? (
+              <button
+                className="admin-labeled-action"
+                type="button"
+                onClick={() => void runReconciliation()}
+                disabled={reconciling}
+              >
+                <ScanLine size={15} /> {reconciling ? "Reconciling..." : "Reconcile"}
+              </button>
+            ) : null}
+            {can("payments.export") ? (
+              <button
+                className="admin-labeled-action"
+                type="button"
+                onClick={() => void exportRecords()}
+                disabled={exporting}
+              >
+                <Download size={15} /> {exporting ? "Exporting..." : "Export"}
+              </button>
+            ) : null}
+            <button className="admin-icon-button" type="button" onClick={() => void load()} title="Refresh payments">
+              <RefreshCw size={17} />
+            </button>
+          </>
+        }
       />
       <AdminToast message={message} kind={kind} />
+
+      {timelineTarget ? (
+        <PaymentTimelineDialog payment={timelineTarget} onClose={() => setTimelineTarget(null)} />
+      ) : null}
+
+      {refundTarget ? (
+        <RefundPaymentDialog
+          payment={refundTarget}
+          onClose={() => setRefundTarget(null)}
+          onDone={(text) => {
+            setRefundTarget(null);
+            notify(text);
+            void load();
+          }}
+        />
+      ) : null}
+
+      {manualOpen ? (
+        <ManualPaymentDialog
+          onClose={() => setManualOpen(false)}
+          onDone={(text) => {
+            setManualOpen(false);
+            notify(text);
+            void load();
+          }}
+        />
+      ) : null}
+
+      {report ? <ReconciliationDialog report={report} onClose={() => setReport(null)} /> : null}
 
       {permanentDeleteTarget ? (
         <AdminPasswordConfirmDialog
@@ -200,12 +337,13 @@ export function AdminPayments() {
         <article><span>Pending</span><strong>{summary.pending}</strong></article>
         <article><span>Failed</span><strong>{summary.failed}</strong></article>
         <article><span>Transaction value</span><strong>{formatMoney(summary.amount)}</strong></article>
+        <article><span>Refunded</span><strong>{formatMoney(summary.refunded)}</strong></article>
       </div>
 
       <section className="admin-data-panel">
         <AdminSectionHeader
           title="Transactions"
-          description="Search by order number, customer, transaction ID, gateway reference, method, or provider. Re-check asks the gateway for the latest status when a payment is still pending."
+          description="Search by order number, customer, transaction ID, gateway reference, method, or provider. Re-check asks the gateway for one pending payment; Reconcile sweeps every stale one. History shows the full audit trail behind a status."
         />
         <form className="admin-filterbar" onSubmit={(event) => event.preventDefault()}>
           <label className="admin-search">
@@ -248,6 +386,12 @@ export function AdminPayments() {
                 item.status === "PENDING" &&
                 item.provider === "bkash" &&
                 Boolean(item.gatewayReference);
+              const balance = refundableBalance(item);
+              // Mirrors PaymentsService.issueRefund: only a captured payment is refundable.
+              const canRefund =
+                can("payments.refund") &&
+                balance > 0 &&
+                ["PAID", "PARTIALLY_REFUNDED"].includes(item.status);
               return (
                 <tr key={item.id}>
                   <td>
@@ -278,25 +422,38 @@ export function AdminPayments() {
                       ) : "Guest"}
                     </small>
                   </td>
-                  <td>{item.method}<small>{item.provider}</small></td>
-                  <td>{formatMoney(item.amount)}<small>{item.currency}</small></td>
+                  <td>{item.method}<small>{item.isManual ? `${item.provider} / recorded manually` : item.provider}</small></td>
+                  <td>
+                    {formatMoney(item.amount)}
+                    <small>
+                      {item.refundedAmount > 0
+                        ? `${formatMoney(item.refundedAmount)} refunded`
+                        : item.failureReason || item.currency}
+                    </small>
+                  </td>
                   <td>{new Date(item.createdAt).toLocaleString("en-BD")}<small>{item.updatedAt ? `Updated ${new Date(item.updatedAt).toLocaleString("en-BD")}` : ""}</small></td>
                   <td><StatusBadge value={item.status} kind="payment" /></td>
                   <td>
-                    {canRecheck || can("payments.permanent_delete") ? (
-                      <div className="admin-row-actions">
+                    <div className="admin-row-actions">
                         {canRecheck ? (
                           <button type="button" onClick={() => void recheckPayment(item)} disabled={recheckingPaymentId === item.id}>
                             <RefreshCw size={14} /> {recheckingPaymentId === item.id ? "Checking..." : "Re-check"}
                           </button>
                         ) : null}
+                        {canRefund ? (
+                          <button type="button" onClick={() => setRefundTarget(item)}>
+                            <RotateCcw size={14} /> Refund
+                          </button>
+                        ) : null}
+                        <button type="button" title="Payment history" onClick={() => setTimelineTarget(item)}>
+                          <History size={14} />
+                        </button>
                         {can("payments.permanent_delete") ? (
                           <button type="button" title="Permanently delete" onClick={() => setPermanentDeleteTarget(item)}>
                             <Trash2 size={14} />
                           </button>
                         ) : null}
-                      </div>
-                    ) : <CreditCard size={16} aria-hidden="true" />}
+                    </div>
                   </td>
                 </tr>
               );

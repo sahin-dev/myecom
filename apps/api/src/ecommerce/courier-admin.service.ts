@@ -14,6 +14,7 @@ import {
 } from "./ecommerce.dto";
 import { CourierAdapterResolver } from "./courier-adapter.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { PaymentsService } from "../payments/payments.service";
 
 const cleanCode = (value?: string | null) =>
   (value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
@@ -82,7 +83,8 @@ type CourierDispatchOrder = Prisma.OrderGetPayload<{
 export class CourierAdminService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly courierAdapters: CourierAdapterResolver
+    private readonly courierAdapters: CourierAdapterResolver,
+    private readonly payments: PaymentsService
   ) {}
 
   async adminCourierServices() {
@@ -526,6 +528,16 @@ export class CourierAdminService {
     };
   }
 
+  /**
+   * Settles the cash a courier collected on delivery.
+   *
+   * Order status is derived through PaymentsService.reconcileOrderPaymentStatus
+   * — the single shared implementation every other payment-affecting flow uses
+   * — rather than a second, local formula. The previous local version only
+   * summed PAID payments, ignoring PARTIALLY_REFUNDED and REFUNDED ones, which
+   * could overstate the outstanding balance (and so overstate what the courier
+   * is allowed to collect) on an order that already carries a refund.
+   */
   private async settleCourierCollection(shipmentId: string, requestedAmount?: number) {
     await this.prisma.$transaction(async (transaction) => {
       const shipment = await transaction.courierShipment.findUnique({
@@ -538,13 +550,31 @@ export class CourierAdminService {
       }
       if (shipment.paymentCollectedAt) return;
 
-      const paid = await transaction.payment.aggregate({
-        where: { orderId: shipment.orderId, status: PaymentStatus.PAID },
-        _sum: { amount: true }
-      });
-      const paidAmount = roundMoney(Number(paid._sum.amount ?? 0));
+      // Same netting PaymentsService.reconcileOrderPaymentStatus uses: captured
+      // payments (including ones later refunded) minus completed refunds.
+      const [capturedAgg, refundedAgg] = await Promise.all([
+        transaction.payment.aggregate({
+          where: {
+            orderId: shipment.orderId,
+            status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED] }
+          },
+          _sum: { amount: true }
+        }),
+        transaction.refund.aggregate({
+          where: { orderId: shipment.orderId, status: "COMPLETED" },
+          _sum: { amount: true }
+        })
+      ]);
+      const capturedAmount = roundMoney(Number(capturedAgg._sum.amount ?? 0));
+      const refundedAmount = roundMoney(Number(refundedAgg._sum.amount ?? 0));
+      const paidAmount = roundMoney(Math.max(0, capturedAmount - refundedAmount));
       const outstanding = roundMoney(Math.max(shipment.order.total - paidAmount, 0));
+
       if (outstanding <= 0.01) {
+        // Already settled by other means before this delivery confirmation —
+        // there is nothing for the courier to collect. collectedAmount stays 0
+        // so the UI can tell this apart from an actual collection: an actual
+        // one always validates to a positive amount below.
         await transaction.payment.updateMany({
           where: { orderId: shipment.orderId, status: PaymentStatus.PENDING },
           data: { status: PaymentStatus.FAILED }
@@ -553,9 +583,10 @@ export class CourierAdminService {
           where: { id: shipment.id },
           data: { paymentCollectedAt: new Date(), collectedAmount: 0 }
         });
+        await this.payments.reconcileOrderPaymentStatus(transaction, shipment.orderId);
         await transaction.order.update({
           where: { id: shipment.orderId },
-          data: { paymentStatus: PaymentStatus.PAID, amountDueOnDelivery: 0 }
+          data: { amountDueOnDelivery: 0 }
         });
         return;
       }
@@ -573,38 +604,94 @@ export class CourierAdminService {
         );
       }
 
-      const paidAfterCollection = roundMoney(paidAmount + collectionAmount);
-      const remaining = roundMoney(Math.max(shipment.order.total - paidAfterCollection, 0));
-      const paymentStatus = remaining <= 0.01
-        ? PaymentStatus.PAID
-        : PaymentStatus.PARTIALLY_PAID;
       const collectedAt = new Date();
 
-      await transaction.payment.create({
-        data: {
-          orderId: shipment.orderId,
-          provider: shipment.courierService.code,
-          method: "CASH_ON_DELIVERY",
-          amount: collectionAmount,
-          status: PaymentStatus.PAID,
-          transactionId: `COD-${shipment.order.orderNumber}-${shipment.id.slice(-8)}`,
-          gatewayReference: shipment.trackingCode,
-          providerPayload: {
-            source: "courier_collection",
-            shipmentId: shipment.id,
-            courierService: shipment.courierService.name,
-            collectedAt: collectedAt.toISOString()
-          }
-        }
+      // Checkout creates a "cash" placeholder for the FULL order total the
+      // moment a pure cash-on-delivery order is placed (see
+      // EcommerceService.checkout — paymentRecordAmount is the whole total
+      // when the order isn't paying online). That row and this collection are
+      // the same money, not two payments, so it's settled in place. Creating
+      // a second row and bulk-marking the placeholder FAILED below used to
+      // make every completed cash-on-delivery order carry a payment that
+      // reads as a failure, when the opposite happened.
+      //
+      // This does NOT apply to a mixed order (a partial online advance plus a
+      // COD balance): there, the "cash" placeholder doesn't exist — the
+      // checkout-time payment was made under the online provider instead —
+      // so the lookup below finds nothing and a new row is created, correctly
+      // representing a genuinely separate, additional payment.
+      const codPlaceholder = await transaction.payment.findFirst({
+        where: { orderId: shipment.orderId, provider: "cash", status: PaymentStatus.PENDING },
+        orderBy: { createdAt: "asc" }
       });
+
+      const transactionId = `COD-${shipment.order.orderNumber}-${shipment.id.slice(-8)}`;
+      const providerPayload = {
+        source: "courier_collection",
+        shipmentId: shipment.id,
+        courierService: shipment.courierService.name,
+        collectedAt: collectedAt.toISOString()
+      };
+
+      const payment = codPlaceholder
+        ? await transaction.payment.update({
+            where: { id: codPlaceholder.id },
+            data: {
+              amount: collectionAmount,
+              status: PaymentStatus.PAID,
+              capturedAt: collectedAt,
+              transactionId,
+              gatewayReference: shipment.trackingCode,
+              providerPayload
+            }
+          })
+        : await transaction.payment.create({
+            data: {
+              orderId: shipment.orderId,
+              provider: shipment.courierService.code,
+              method: "CASH_ON_DELIVERY",
+              amount: collectionAmount,
+              status: PaymentStatus.PAID,
+              capturedAt: collectedAt,
+              transactionId,
+              gatewayReference: shipment.trackingCode,
+              // Never null: the unique index on this column is not sparse in
+              // MongoDB, so a second key-less payment anywhere in the system
+              // collides with the first and every collection after it fails.
+              // A shipment only ever settles once (guarded by
+              // paymentCollectedAt above), so its id is a natural, unique key.
+              idempotencyKey: `cod:${shipment.id}`,
+              providerPayload
+            }
+          });
+      // Every other payment-affecting flow writes this; COD collection was
+      // the one silent path, leaving cash collections invisible in a
+      // payment's history.
+      await this.payments.recordEvent(
+        payment.id,
+        {
+          type: "captured",
+          message: `Cash on delivery of ${collectionAmount.toFixed(2)} collected by ${shipment.courierService.name}.`,
+          fromStatus: codPlaceholder ? PaymentStatus.PENDING : undefined,
+          toStatus: PaymentStatus.PAID,
+          source: "system",
+          payload: { shipmentId: shipment.id }
+        },
+        transaction
+      );
+
       await transaction.courierShipment.update({
         where: { id: shipment.id },
         data: { collectedAmount: collectionAmount, paymentCollectedAt: collectedAt }
       });
+
+      const paymentStatus = await this.payments.reconcileOrderPaymentStatus(transaction, shipment.orderId);
+      const remaining = roundMoney(Math.max(shipment.order.total - roundMoney(paidAmount + collectionAmount), 0));
       await transaction.order.update({
         where: { id: shipment.orderId },
-        data: { paymentStatus, amountDueOnDelivery: remaining }
+        data: { amountDueOnDelivery: remaining }
       });
+
       if (paymentStatus === PaymentStatus.PAID) {
         await transaction.payment.updateMany({
           where: {

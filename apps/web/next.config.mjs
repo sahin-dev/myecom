@@ -20,7 +20,22 @@ const cloudflarePatterns = [
   // Cloudflare Stream thumbnails and MP4 downloads
   { protocol: "https", hostname: "**.cloudflarestream.com" },
   { protocol: "https", hostname: "videodelivery.net" },
-  ...(cdnHost ? [{ protocol: "https", hostname: cdnHost }] : [])
+  ...(cdnHost ? [{ protocol: "https", hostname: cdnHost }] : []),
+
+  /*
+   * Consumer storage services, for merchants without a CDN. Share links are
+   * rewritten to their direct-file form on save (see api/ecommerce/media-url),
+   * so these are the hosts those rewritten URLs actually resolve to.
+   */
+  { protocol: "https", hostname: "drive.google.com" },
+  { protocol: "https", hostname: "lh3.googleusercontent.com" },
+  { protocol: "https", hostname: "**.dropbox.com" },
+  { protocol: "https", hostname: "**.dropboxusercontent.com" },
+  { protocol: "https", hostname: "raw.githubusercontent.com" },
+  { protocol: "https", hostname: "cdn.jsdelivr.net" },
+  { protocol: "https", hostname: "i.imgur.com" },
+  { protocol: "https", hostname: "**.cloudinary.com" },
+  { protocol: "https", hostname: "**.supabase.co" }
 ];
 
 /** @type {import('next').NextConfig} */

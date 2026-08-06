@@ -10,6 +10,7 @@ import { UserRole } from "@prisma/client";
 import { Reflector } from "@nestjs/core";
 import { PrismaService } from "../prisma/prisma.service";
 import { AccessControlService } from "./access-control.service";
+import { AUTH_COOKIE_NAME } from "./auth.cookies";
 import {
   AuthUser,
   AuthenticatedRequest,
@@ -17,8 +18,15 @@ import {
 } from "./auth.types";
 import { ADMIN_PERMISSION_KEY } from "./permissions";
 
-function bearerToken(header?: string) {
-  const [type, token] = header?.split(" ") ?? [];
+/**
+ * The cookie is how the browser authenticates itself; the Authorization
+ * header stays supported alongside it so a non-browser client (a script, a
+ * future mobile app) can still call the API with a bearer token directly.
+ */
+function extractToken(request: AuthenticatedRequest | OptionalAuthenticatedRequest) {
+  const cookieToken = request.cookies?.[AUTH_COOKIE_NAME];
+  if (cookieToken) return cookieToken;
+  const [type, token] = request.headers.authorization?.split(" ") ?? [];
   return type === "Bearer" ? token : undefined;
 }
 
@@ -32,7 +40,7 @@ export class JwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const token = bearerToken(request.headers.authorization);
+    const token = extractToken(request);
     if (!token) throw new UnauthorizedException("Authentication required.");
 
     try {
@@ -72,7 +80,7 @@ export class OptionalJwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<OptionalAuthenticatedRequest>();
-    const token = bearerToken(request.headers.authorization);
+    const token = extractToken(request);
     if (!token) return true;
 
     try {

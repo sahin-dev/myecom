@@ -22,6 +22,7 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { hashPassword } from "../auth/password";
+import { normalizeMediaUrl } from "../ecommerce/media-url";
 import {
   AddProductImageDto,
   CreateAddressDto,
@@ -52,6 +53,7 @@ import {
 } from "./experience.dto";
 import { BkashService } from "../payments/bkash.service";
 import { AuthService } from "../auth/auth.service";
+import { PaymentsService } from "../payments/payments.service";
 
 export type CartOwner = { userId?: string; sessionKey?: string };
 
@@ -135,7 +137,8 @@ export class ExperienceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bkash: BkashService,
-    private readonly auth: AuthService
+    private readonly auth: AuthService,
+    private readonly paymentsService: PaymentsService
   ) {}
 
   async searchCatalog(query: {
@@ -712,7 +715,7 @@ export class ExperienceService {
       include: {
         order: { select: { orderNumber: true, total: true } },
         items: { include: { orderItem: true } },
-        refund: true
+        refunds: true
       },
       orderBy: { createdAt: "desc" }
     });
@@ -767,7 +770,7 @@ export class ExperienceService {
       include: {
         items: { include: { orderItem: true } },
         order: { select: { orderNumber: true, total: true } },
-        refund: true
+        refunds: true
       }
     });
   }
@@ -784,7 +787,7 @@ export class ExperienceService {
       include: {
         items: { include: { orderItem: true } },
         order: { select: { orderNumber: true, total: true } },
-        refund: true
+        refunds: true
       }
     });
   }
@@ -1043,7 +1046,7 @@ export class ExperienceService {
         user: { select: { name: true, email: true } },
         order: { include: { items: true, payments: true, refunds: true } },
         items: { include: { orderItem: true } },
-        refund: true
+        refunds: true
       },
       orderBy: { createdAt: "desc" }
     });
@@ -1055,7 +1058,7 @@ export class ExperienceService {
       include: {
         items: { include: { orderItem: true } },
         order: { include: { payments: true, refunds: true } },
-        refund: true
+        refunds: true
       }
     });
     if (!current) throw new NotFoundException("Return request not found.");
@@ -1140,10 +1143,12 @@ export class ExperienceService {
           });
         }
       }
+      // This guard is the only thing enforcing one refund per return request —
+      // the database cannot express it (see Refund.returnRequestId in the schema).
       if (
         dto.status === ReturnStatus.REFUND_PENDING &&
         current.status === ReturnStatus.RECEIVED &&
-        !current.refund
+        !current.refunds.length
       ) {
         const grossReturned = current.items.reduce(
           (sum, item) => sum + item.orderItem.unitPrice * item.quantity,
@@ -1199,7 +1204,7 @@ export class ExperienceService {
           user: { select: { name: true, email: true } },
           order: { include: { items: true, payments: true, refunds: true } },
           items: { include: { orderItem: true } },
-          refund: true
+          refunds: true
         }
       });
     });
@@ -1546,7 +1551,14 @@ export class ExperienceService {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException("Product not found.");
     const image = await this.prisma.productImage.create({
-      data: { ...dto, productId, position: dto.position ?? 0 }
+      // Share links pasted here need the same rewrite the product editor does,
+      // otherwise a Drive or Dropbox URL is stored as its viewer page.
+      data: {
+        ...dto,
+        url: normalizeMediaUrl(dto.url, "image"),
+        productId,
+        position: dto.position ?? 0
+      }
     });
     await this.audit(actorId, "product_image.created", "ProductImage", image.id, { productId });
     return image;
@@ -1584,42 +1596,95 @@ export class ExperienceService {
     });
   }
 
+  /**
+   * Order-level refund entry point kept for the Orders screen.
+   *
+   * It now delegates to PaymentsService so there is exactly one refund
+   * implementation: gateway-backed where the provider supports it, explicitly
+   * recorded as manual where it does not. Previously this wrote a PENDING row
+   * that an admin advanced by hand, which meant the database could say
+   * COMPLETED while no money had moved.
+   */
+  /**
+   * Refunds an order by amount, not by payment. An order can be captured
+   * across more than one payment — several manual entries, or an online
+   * payment topped up by cash on delivery — and a refund can't be issued
+   * "through" a payment for more than that payment's own balance. So the
+   * requested amount is drawn down across every refundable payment on the
+   * order, oldest first, one Refund row per payment it touches.
+   *
+   * Previously this picked a single arbitrary payment (the first captured
+   * one) and validated the whole request against only its balance, which
+   * rejected perfectly refundable amounts the moment an order had more than
+   * one payment — a routine shape once manual capture and COD collection are
+   * both in use.
+   */
   async createManualRefund(actorId: string, orderId: string, dto: CreateManualRefundDto) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { payments: true, refunds: true }
+      include: { payments: { orderBy: { createdAt: "asc" } } }
     });
     if (!order) throw new NotFoundException("Order not found.");
-    const paidPayment = order.payments.find((payment) => payment.status === PaymentStatus.PAID);
-    if (!paidPayment) {
-      throw new BadRequestException("This order has no paid payment to refund against.");
+
+    const candidates = order.payments
+      .filter(
+        (payment) =>
+          payment.status === PaymentStatus.PAID || payment.status === PaymentStatus.PARTIALLY_REFUNDED
+      )
+      .map((payment) => ({ payment, balance: this.paymentsService.refundableBalance(payment) }))
+      .filter(({ balance }) => balance > 0.009);
+
+    if (!candidates.length) {
+      throw new BadRequestException("This order has no captured payment to refund against.");
     }
-    const alreadyRefunded = order.refunds
-      .filter((refund) => refund.status !== RefundStatus.FAILED)
-      .reduce((sum, refund) => sum + refund.amount, 0);
-    if (dto.amount > order.total - alreadyRefunded) {
-      throw new BadRequestException("Refund amount exceeds the order's refundable balance.");
+
+    const totalRefundable = money(candidates.reduce((sum, { balance }) => sum + balance, 0));
+    if (dto.amount > totalRefundable + 0.01) {
+      throw new BadRequestException(
+        `That is more than the ${totalRefundable.toFixed(2)} refundable across this order's payments.`
+      );
     }
-    const refund = await this.prisma.refund.create({
-      data: {
-        orderId: order.id,
-        paymentId: paidPayment.id,
-        amount: dto.amount,
+
+    const refunds = [];
+    let remaining = dto.amount;
+    for (const { payment, balance } of candidates) {
+      if (remaining <= 0.009) break;
+      const portion = money(Math.min(balance, remaining));
+
+      const refund = await this.paymentsService.issueRefund({
+        paymentId: payment.id,
+        amount: portion,
         reason: dto.reason,
-        status: RefundStatus.PENDING
-      },
+        actorId,
+        // Providers without a refund API are recorded rather than sent, so the
+        // Orders screen keeps working for cash and offline payments. When a
+        // gateway payment is missing refund metadata, we record a manual
+        // refund instead of failing the admin flow.
+        manual:
+          !this.paymentsService.supportsGatewayRefund(payment.provider) ||
+          !payment.gatewayReference ||
+          !payment.transactionId
+      });
+      refunds.push(refund);
+      remaining = money(remaining - portion);
+
+      await this.audit(actorId, "refund.created", "Refund", refund.id, {
+        orderNumber: order.orderNumber,
+        amount: portion,
+        reason: dto.reason,
+        provider: payment.provider,
+        viaGateway: this.paymentsService.supportsGatewayRefund(payment.provider)
+      });
+    }
+
+    return this.prisma.refund.findMany({
+      where: { id: { in: refunds.map((refund) => refund.id) } },
       include: {
         order: { select: { orderNumber: true, customerName: true, email: true, total: true } },
         payment: { select: { provider: true, method: true, transactionId: true } },
         returnRequest: { select: { id: true, returnNumber: true, status: true } }
       }
     });
-    await this.audit(actorId, "refund.created", "Refund", refund.id, {
-      orderNumber: order.orderNumber,
-      amount: dto.amount,
-      reason: dto.reason
-    });
-    return refund;
   }
 
   payments(query: { search?: string; status?: string; provider?: string }) {
@@ -1654,7 +1719,70 @@ export class ExperienceService {
     });
   }
 
-  async requeryPayment(id: string) {
+  /** Timeline for one payment, oldest first, with the acting admin resolved. */
+  async paymentEvents(paymentId: string) {
+    const events = await this.prisma.paymentEvent.findMany({
+      where: { paymentId },
+      orderBy: { createdAt: "asc" },
+      take: 200
+    });
+    const actorIds = [...new Set(events.map((e) => e.actorId).filter(Boolean) as string[])];
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: actorIds } },
+          select: { id: true, name: true, email: true }
+        })
+      : [];
+    const byId = new Map(actors.map((a) => [a.id, a]));
+    return events.map((event) => ({
+      ...event,
+      actor: event.actorId ? byId.get(event.actorId) ?? null : null
+    }));
+  }
+
+  /**
+   * Flat transaction rows for finance. Returns data rather than a CSV string so
+   * the client can render or download it; the shape is deliberately flat.
+   */
+  async exportPayments(query: { from?: string; to?: string; status?: string }) {
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        status: query.status ? (query.status as PaymentStatus) : undefined,
+        createdAt: {
+          gte: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          lte: to && !Number.isNaN(to.getTime()) ? to : undefined
+        }
+      },
+      include: {
+        order: { select: { orderNumber: true, customerName: true, email: true, total: true } }
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5000
+    });
+    return payments.map((payment) => ({
+      paymentId: payment.id,
+      createdAt: payment.createdAt.toISOString(),
+      capturedAt: payment.capturedAt?.toISOString() ?? "",
+      orderNumber: payment.order.orderNumber,
+      customer: payment.order.customerName,
+      email: payment.order.email,
+      provider: payment.provider,
+      method: payment.method,
+      isManual: payment.isManual,
+      status: payment.status,
+      currency: payment.currency,
+      amount: payment.amount,
+      refundedAmount: payment.refundedAmount,
+      netAmount: payment.netAmount ?? "",
+      feeAmount: payment.feeAmount ?? "",
+      transactionId: payment.transactionId ?? "",
+      gatewayReference: payment.gatewayReference ?? ""
+    }));
+  }
+
+  async requeryPayment(id: string, actorId?: string) {
     const payment = await this.prisma.payment.findUnique({
       where: { id },
       include: { order: true }
@@ -1709,6 +1837,24 @@ export class ExperienceService {
           }
         });
       }
+    });
+    // A re-check can move a payment between states, so it is auditable in its
+    // own right - previously this was the one mutation with no trail at all.
+    await this.prisma.paymentEvent.create({
+      data: {
+        paymentId: id,
+        type: "rechecked",
+        message: `Gateway re-check returned ${status}.`,
+        fromStatus: payment.status,
+        toStatus: status,
+        actorId,
+        source: "admin",
+        payload: result as Prisma.InputJsonValue
+      }
+    });
+    await this.audit(actorId, "payment.rechecked", "Payment", id, {
+      from: payment.status,
+      to: status
     });
     return this.prisma.payment.findUnique({
       where: { id },

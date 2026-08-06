@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, Minus, Plus, ShoppingBag, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { ReactNode, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Product,
@@ -131,17 +131,7 @@ export function QuickVariantAdd({
   };
 
   if (!variants.length) {
-    return (
-      <button
-        className={className}
-        type="button"
-        disabled={product.inventory < 1}
-        onClick={() => addItem(product)}
-      >
-        <ShoppingBag size={16} />
-        {product.inventory > 0 ? "Add to bag" : "Out of stock"}
-      </button>
-    );
+    return <SimpleAddToCartButton product={product} className={className} label="Add to bag" outOfStockLabel="Out of stock" />;
   }
 
   const optionSheet = open ? (
@@ -277,5 +267,66 @@ export function QuickVariantAdd({
       </div>
       {optionSheet ? createPortal(optionSheet, document.body) : null}
     </>
+  );
+}
+
+/**
+ * The "Add to bag" button for a product with no variants to choose between.
+ * Once the product is in the cart, it morphs in place into a +/- stepper for
+ * that line, so raising or lowering the quantity — or clearing it entirely at
+ * zero, via CartContext's own filtering — never requires opening the cart.
+ *
+ * Reused across every product-card surface (shop grid, storefront rails,
+ * combos, wishlist, account) rather than duplicated per page, so this
+ * behaviour is one implementation, not five kept in sync by hand.
+ */
+export function SimpleAddToCartButton({
+  product,
+  className = "add-button full",
+  label,
+  outOfStockLabel,
+  checkStock = true
+}: {
+  product: Product;
+  className?: string;
+  label: ReactNode;
+  outOfStockLabel?: ReactNode;
+  /** Some callers (e.g. the wishlist) never disable the button on stock. */
+  checkStock?: boolean;
+}) {
+  const { cart, addItem, updateQuantity } = useCart();
+  const line = cart.find((item) => !item.variant && item.product.id === product.id);
+  const quantity = line?.quantity ?? 0;
+  const outOfStock = checkStock && product.inventory < 1;
+  const ariaLabel = typeof label === "string" ? label : product.name;
+
+  if (quantity > 0) {
+    return (
+      <div className={`${className} add-button-stepper`.trim()} role="group" aria-label={ariaLabel}>
+        <button
+          type="button"
+          onClick={() => updateQuantity(product.id, quantity - 1)}
+          aria-label="Decrease quantity"
+        >
+          <Minus size={16} />
+        </button>
+        <strong>{quantity}</strong>
+        <button
+          type="button"
+          onClick={() => updateQuantity(product.id, quantity + 1)}
+          disabled={checkStock && quantity >= product.inventory}
+          aria-label="Increase quantity"
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button className={className} type="button" disabled={outOfStock} onClick={() => addItem(product)}>
+      <ShoppingBag size={16} />
+      {outOfStock && outOfStockLabel ? outOfStockLabel : label}
+    </button>
   );
 }

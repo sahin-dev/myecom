@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, ChevronLeft, ChevronRight, Gift, PackageCheck, ShoppingBag } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Gift, PackageCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Catalog,
@@ -12,10 +12,9 @@ import {
   fetchComboDeals,
   formatMoney
 } from "../lib/catalog";
-import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
-import { QuickVariantAdd } from "./QuickVariantAdd";
+import { QuickVariantAdd, SimpleAddToCartButton } from "./QuickVariantAdd";
 
 const comboDealsPageSize = 8;
 
@@ -84,7 +83,6 @@ export function ComboDealsPage() {
 }
 
 function ComboDealCard({ combo }: { combo: Product }) {
-  const { addItem } = useCart();
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const price = selectedVariant?.price ?? combo.price;
   const compareAt = selectedVariant ? selectedVariant.compareAt : combo.compareAt;
@@ -124,15 +122,7 @@ function ComboDealCard({ combo }: { combo: Product }) {
       {combo.variants?.length ? (
         <QuickVariantAdd product={combo} onSelect={setSelectedVariant} />
       ) : (
-        <button
-          className="add-button full"
-          type="button"
-          disabled={combo.inventory < 1}
-          onClick={() => addItem(combo)}
-        >
-          <ShoppingBag size={17} />
-          {combo.inventory > 0 ? "Add combo to bag" : "Out of stock"}
-        </button>
+        <SimpleAddToCartButton product={combo} label="Add combo to bag" outOfStockLabel="Out of stock" />
       )}
     </article>
   );

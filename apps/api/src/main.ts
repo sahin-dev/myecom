@@ -2,6 +2,7 @@ import { ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
+import cookieParser from "cookie-parser";
 import { resolve } from "node:path";
 import { AppModule } from "./app.module";
 
@@ -22,6 +23,7 @@ async function bootstrap() {
     origin: allowedOrigins,
     credentials: true
   });
+  app.use(cookieParser());
   app.setGlobalPrefix("api");
   app.useStaticAssets(uploadDir, {
     prefix: "/uploads/"

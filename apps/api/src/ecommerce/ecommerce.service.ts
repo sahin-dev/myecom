@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import {
   AnalyticsEventType,
   CheckoutMethodType,
@@ -37,6 +38,8 @@ import {
   UpdateDeliveryZoneDto,
   UpdateHomeSectionDto,
   UpdateOrderStatusDto,
+  UpdateOrderContactDto,
+  FulfillOrderItemsDto,
   UpdatePaymentGatewayDto,
   UpdateSiteSettingsDto,
   UpdateTestimonialDto
@@ -47,6 +50,9 @@ import { AuthService } from "../auth/auth.service";
 import { ExperienceService, PromotionLine } from "../experience/experience.service";
 import { UpdateCustomerDto } from "../experience/experience.dto";
 import { PaymentStrategyResolver } from "../payments/payment-strategy.service";
+import { PaymentsService } from "../payments/payments.service";
+import { OrderNotificationService } from "../orders/order-notification.service";
+import { OrderRiskService, RISK_REVIEW_THRESHOLD } from "../orders/order-risk.service";
 import { CourierAdminService } from "./courier-admin.service";
 import { DeliverySettingsService } from "./delivery-settings.service";
 import { PaymentSettingsService } from "./payment-settings.service";
@@ -160,23 +166,62 @@ const orderTransitions: Record<OrderStatus, OrderStatus[]> = {
   PLACED: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
   CONFIRMED: [OrderStatus.PACKED, OrderStatus.CANCELLED],
   PACKED: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
-  SHIPPED: [OrderStatus.OUT_FOR_DELIVERY],
-  OUT_FOR_DELIVERY: [OrderStatus.DELIVERED, OrderStatus.DELIVERY_FAILED],
-  DELIVERY_FAILED: [OrderStatus.OUT_FOR_DELIVERY],
+  // A parcel in transit can still come back, so both shipped states reach RTO.
+  SHIPPED: [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.RETURNED_TO_ORIGIN],
+  OUT_FOR_DELIVERY: [
+    OrderStatus.DELIVERED,
+    OrderStatus.DELIVERY_FAILED,
+    OrderStatus.RETURNED_TO_ORIGIN
+  ],
+  // A failed attempt is either retried or the parcel comes home; without RTO
+  // there was nowhere for a returned parcel to land.
+  DELIVERY_FAILED: [OrderStatus.OUT_FOR_DELIVERY, OrderStatus.RETURNED_TO_ORIGIN],
   DELIVERED: [],
+  RETURNED_TO_ORIGIN: [],
   CANCELLED: []
 };
+
+/** Statuses whose stock never reached the customer, so it goes back on the shelf. */
+const stockReleasingStatuses: OrderStatus[] = [
+  OrderStatus.CANCELLED,
+  OrderStatus.RETURNED_TO_ORIGIN
+];
+
+/** Statuses that still need someone to act on them. */
+const OPEN_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.PLACED,
+  OrderStatus.CONFIRMED,
+  OrderStatus.PACKED,
+  OrderStatus.DELIVERY_FAILED
+];
+
+/** How long an order may sit in an open status before it counts as overdue. */
+const ORDER_SLA_HOURS = 24;
+
+/** Delivery details are ours to change only until the courier has the parcel. */
+const EDITABLE_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.PLACED,
+  OrderStatus.CONFIRMED,
+  OrderStatus.PACKED
+];
 @Injectable()
 export class EcommerceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly experience: ExperienceService,
     private readonly paymentStrategies: PaymentStrategyResolver,
+    private readonly payments: PaymentsService,
     private readonly couriers: CourierAdminService,
     private readonly deliverySettings: DeliverySettingsService,
     private readonly paymentSettings: PaymentSettingsService,
-    private readonly auth: AuthService
+    private readonly auth: AuthService,
+    private readonly orderNotifications: OrderNotificationService,
+    private readonly orderRisk: OrderRiskService
   ) {}
+
+  private async refreshOrderPaymentStatus(orderId: string) {
+    await this.payments.reconcileOrderPaymentStatus(this.prisma as unknown as Prisma.TransactionClient, orderId);
+  }
 
   private withEffectiveCourierStatuses<
     T extends {
@@ -1222,6 +1267,14 @@ export class EcommerceService {
     const deliveryConfig = quote.selectedDeliveryMethod as { code?: string; name?: string } | null;
     const orderNumber = `ME-${Date.now().toString().slice(-8)}`;
     const paymentMethod = paymentConfig?.name ?? dto.paymentMethod?.trim() ?? "Cash on delivery";
+    // Always non-null. MongoDB's unique index is not sparse, so a second payment
+    // storing null would collide with the first and the index could never even
+    // be built — which is why the double-charge guard was not actually in force.
+    // A random key for a request that supplied none is unique by construction and
+    // simply never matches an earlier one, which is the intended behaviour.
+    const paymentIdempotencyKey = dto.idempotencyKey
+      ? `${dto.idempotencyKey}:payment`
+      : `checkout:${randomUUID()}`;
     const shippingInfo = dto.shippingInfo;
     const billingSameAsShipping = dto.billingSameAsShipping ?? !dto.billingInfo;
     const billingInfo = billingSameAsShipping ? shippingInfo : dto.billingInfo;
@@ -1265,7 +1318,31 @@ export class EcommerceService {
     const paymentStatus = PaymentStatus.PENDING;
 
     try {
-      return await this.prisma.$transaction(async (transaction) => {
+      const placed = await this.prisma.$transaction(async (transaction) => {
+      if (paymentIdempotencyKey) {
+        const existingPayment = await transaction.payment.findUnique({
+          where: { idempotencyKey: paymentIdempotencyKey },
+          select: { orderId: true }
+        });
+        if (existingPayment) {
+          const existingOrder = await transaction.order.findUnique({
+            where: { id: existingPayment.orderId },
+            include: {
+              items: true,
+              payments: true,
+              promotion: { select: { code: true, name: true } },
+              trackingEvents: { orderBy: { createdAt: "asc" } },
+              courierShipments: {
+                include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+                orderBy: { createdAt: "desc" }
+              },
+              notifications: true
+            }
+          });
+          if (existingOrder) return existingOrder;
+        }
+      }
+
       for (const item of dto.items) {
         const updated = item.variantId
           ? await transaction.productVariant.updateMany({
@@ -1367,6 +1444,10 @@ export class EcommerceService {
               amount: paymentRecordAmount,
               status: "PENDING",
               gatewayReference,
+              // Derived from the order's key so a retried checkout cannot open a
+              // second payment row against the same order. The column is unique,
+              // so a duplicate is rejected by the database rather than by luck.
+              idempotencyKey: paymentIdempotencyKey,
               providerPayload: gatewayPayment as Prisma.InputJsonValue | undefined
             }
           },
@@ -1429,6 +1510,13 @@ export class EcommerceService {
       }
       return order;
       });
+
+      // A replayed checkout returns the order it already created. Only the run
+      // that actually placed this order scores it and emails the customer.
+      if (placed.orderNumber === orderNumber) {
+        await this.afterOrderPlaced(placed.id);
+      }
+      return placed;
     } catch (error) {
       if (
         dto.idempotencyKey &&
@@ -1457,6 +1545,16 @@ export class EcommerceService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Side effects that follow a successful checkout but must not be able to fail
+   * it: scoring the order for risk and emailing the customer. Both swallow their
+   * own errors — an order is placed the moment it is committed.
+   */
+  private async afterOrderPlaced(orderId: string) {
+    await this.orderRisk.assessAndStore(orderId);
+    await this.orderNotifications.sendOrderPlaced(orderId);
   }
 
   async adminCreateOrder(dto: CheckoutDto, actorId: string) {
@@ -1505,6 +1603,7 @@ export class EcommerceService {
       include: {
         items: true,
         payments: true,
+        refunds: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         courierShipments: {
@@ -1519,13 +1618,31 @@ export class EcommerceService {
       throw new NotFoundException("Order not found.");
     }
 
-    return this.withEffectiveCourierStatuses(order);
+    await this.refreshOrderPaymentStatus(order.id);
+    const refreshed = await this.prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: {
+        items: true,
+        payments: true,
+        refunds: true,
+        promotion: { select: { code: true, name: true } },
+        trackingEvents: { orderBy: { createdAt: "asc" } },
+        courierShipments: {
+          include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+          orderBy: { createdAt: "desc" }
+        },
+        notifications: { orderBy: { createdAt: "desc" } }
+      }
+    });
+
+    return this.withEffectiveCourierStatuses(refreshed);
   }
 
   async updateOrderStatus(
     idOrNumber: string,
     dto: UpdateOrderStatusDto,
-    allowCancellation = false
+    allowCancellation = false,
+    actorId?: string
   ) {
     if (!Object.values(OrderStatus).includes(dto.status as OrderStatus)) {
       throw new BadRequestException("Invalid order status.");
@@ -1550,8 +1667,10 @@ export class EcommerceService {
       );
     }
 
-    return this.prisma.$transaction(async (transaction) => {
-      if (nextStatus === OrderStatus.CANCELLED) {
+    const releasesStock = stockReleasingStatuses.includes(nextStatus);
+
+    const order = await this.prisma.$transaction(async (transaction) => {
+      if (releasesStock) {
         for (const item of current.items) {
           if (item.variantId) {
             await transaction.productVariant.update({
@@ -1568,9 +1687,12 @@ export class EcommerceService {
             data: {
               productId: item.productId,
               variantId: item.variantId,
-              type: "RELEASE",
+              type: nextStatus === OrderStatus.CANCELLED ? "RELEASE" : "RETURN",
               quantity: item.quantity,
-              reason: `Cancelled ${current.orderNumber}`,
+              reason:
+                nextStatus === OrderStatus.CANCELLED
+                  ? `Cancelled ${current.orderNumber}`
+                  : `Returned to origin from ${current.orderNumber}`,
               reference: current.orderNumber
             }
           });
@@ -1582,22 +1704,33 @@ export class EcommerceService {
         await transaction.couponRedemption.deleteMany({
           where: { orderId: current.id }
         });
-        const paidPayments = current.payments.filter(
-          (payment) => payment.status === PaymentStatus.PAID
-        );
-        const paidAmount = roundMoney(paidPayments.reduce((sum, payment) => sum + payment.amount, 0));
-        if (paidAmount > 0) {
-          await transaction.refund.create({
-            data: {
-              orderId: current.id,
-              paymentId: paidPayments[0]?.id,
-              amount: paidAmount,
-              reason: "Order cancelled",
-              status: "PENDING"
-            }
-          });
-        }
+        // Nothing left the building, so no line counts as fulfilled any more.
+        await transaction.orderItem.updateMany({
+          where: { orderId: current.id },
+          data: { fulfilledQuantity: 0 }
+        });
       }
+
+      await transaction.auditLog.create({
+        data: {
+          actorId,
+          action:
+            nextStatus === OrderStatus.CANCELLED
+              ? "order.cancelled"
+              : nextStatus === OrderStatus.RETURNED_TO_ORIGIN
+                ? "order.returned_to_origin"
+                : "order.status_changed",
+          entity: "Order",
+          entityId: current.id,
+          metadata: {
+            orderNumber: current.orderNumber,
+            from: current.status,
+            to: nextStatus,
+            note: dto.note ?? null,
+            location: dto.location ?? null
+          }
+        }
+      });
 
       return transaction.order.update({
         where: { id: current.id },
@@ -1628,6 +1761,7 @@ export class EcommerceService {
         include: {
           items: true,
           payments: true,
+          refunds: true,
           promotion: { select: { code: true, name: true } },
           trackingEvents: { orderBy: { createdAt: "asc" } },
           courierShipments: {
@@ -1638,6 +1772,76 @@ export class EcommerceService {
         }
       });
     });
+
+    // The goods came back or never went, so captured money is returned.
+    if (releasesStock) {
+      await this.refundCapturedPaymentsOnCancel(current.id, current.orderNumber, actorId);
+    }
+
+    // Best-effort: a mail failure must not undo a status change that is committed.
+    await this.orderNotifications.sendStatusEmail(current.id, nextStatus);
+    return this.adminOrder(order.id);
+  }
+
+  /**
+   * Returns money already captured on a cancelled order.
+   *
+   * Every refund goes through PaymentsService so the payment's running refunded
+   * total, its event history and the order's derived status all move together —
+   * the previous behaviour wrote a bare PENDING refund row that no gateway ever
+   * saw and that left `refundedAmount` at zero, so the same money stayed
+   * refundable a second time.
+   *
+   * A gateway that refuses the refund must not roll back the cancellation, so
+   * failures are recorded and reported rather than thrown.
+   */
+  private async refundCapturedPaymentsOnCancel(
+    orderId: string,
+    orderNumber: string,
+    actorId?: string
+  ) {
+    const capturedPayments = await this.prisma.payment.findMany({
+      where: {
+        orderId,
+        status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED] }
+      }
+    });
+
+    for (const payment of capturedPayments) {
+      const balance = roundMoney(this.payments.refundableBalance(payment));
+      if (balance <= 0) continue;
+      try {
+        await this.payments.issueRefund({
+          paymentId: payment.id,
+          amount: balance,
+          reason: `Order ${orderNumber} cancelled`,
+          actorId: actorId ?? "",
+          // Record rather than send when the provider has no refund API, or when
+          // a gateway payment is missing the references the API needs.
+          manual:
+            !this.payments.supportsGatewayRefund(payment.provider) ||
+            !payment.gatewayReference ||
+            !payment.transactionId
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Refund failed.";
+        await this.prisma.auditLog.create({
+          data: {
+            actorId,
+            action: "refund.failed",
+            entity: "Payment",
+            entityId: payment.id,
+            metadata: { orderNumber, amount: balance, provider: payment.provider, message }
+          }
+        });
+        await this.payments.recordEvent(payment.id, {
+          type: "refund.failed",
+          message: `Automatic refund on cancellation failed: ${message}`,
+          actorId,
+          source: "system"
+        });
+      }
+    }
   }
 
   async adminDashboard(daysInput?: string) {
@@ -1998,12 +2202,26 @@ export class EcommerceService {
     search?: string;
     status?: string;
     paymentStatus?: string;
+    queue?: string;
     page?: string;
     limit?: string;
   }) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(10, Number(query.limit) || 25));
     const where: Prisma.OrderWhereInput = {};
+
+    // Exception queues. Ops work from these, not from a reverse-chronological
+    // list — "what needs me today" rather than "what happened most recently".
+    if (query.queue === "overdue") {
+      where.status = { in: OPEN_ORDER_STATUSES };
+      where.createdAt = { lt: new Date(Date.now() - ORDER_SLA_HOURS * 3_600_000) };
+    } else if (query.queue === "risk") {
+      where.riskScore = { gte: RISK_REVIEW_THRESHOLD };
+      where.riskReviewedAt = null;
+      where.status = { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] };
+    } else if (query.queue === "unfulfilled") {
+      where.status = { in: [OrderStatus.CONFIRMED, OrderStatus.PACKED] };
+    }
 
     if (query.status && Object.values(OrderStatus).includes(query.status as OrderStatus)) {
       where.status = query.status as OrderStatus;
@@ -2049,6 +2267,105 @@ export class EcommerceService {
     };
   }
 
+  /**
+   * Sizes each exception queue so the orders screen can lead with what needs
+   * attention instead of what happened most recently.
+   */
+  async adminOrderQueues() {
+    const slaCutoff = new Date(Date.now() - ORDER_SLA_HOURS * 3_600_000);
+
+    const [overdue, atRisk, unfulfilled, oldestOverdue] = await Promise.all([
+      this.prisma.order.count({
+        where: { status: { in: OPEN_ORDER_STATUSES }, createdAt: { lt: slaCutoff } }
+      }),
+      this.prisma.order.count({
+        where: {
+          riskScore: { gte: RISK_REVIEW_THRESHOLD },
+          riskReviewedAt: null,
+          status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] }
+        }
+      }),
+      this.prisma.order.count({
+        where: { status: { in: [OrderStatus.CONFIRMED, OrderStatus.PACKED] } }
+      }),
+      this.prisma.order.findFirst({
+        where: { status: { in: OPEN_ORDER_STATUSES }, createdAt: { lt: slaCutoff } },
+        orderBy: { createdAt: "asc" },
+        select: { orderNumber: true, createdAt: true, status: true }
+      })
+    ]);
+
+    return {
+      slaHours: ORDER_SLA_HOURS,
+      riskThreshold: RISK_REVIEW_THRESHOLD,
+      overdue,
+      atRisk,
+      unfulfilled,
+      oldestOverdue: oldestOverdue
+        ? {
+            orderNumber: oldestOverdue.orderNumber,
+            status: oldestOverdue.status,
+            ageHours: Math.floor((Date.now() - oldestOverdue.createdAt.getTime()) / 3_600_000)
+          }
+        : null
+    };
+  }
+
+  /**
+   * Everything staff did to this order, from the audit log. TrackingEvent is the
+   * customer-facing story; this is the internal one, and until now it was only
+   * visible in the database.
+   */
+  async adminOrderActivity(idOrNumber: string) {
+    const order = await this.resolveOrder(idOrNumber, { id: true, orderNumber: true });
+
+    // Money moved against this order belongs in its story too. Audit rows point
+    // at the payment or refund, so resolve those ids rather than filtering on
+    // the metadata blob (MongoDB has no JSON path filter here).
+    const [payments, refunds] = await Promise.all([
+      this.prisma.payment.findMany({ where: { orderId: order.id }, select: { id: true } }),
+      this.prisma.refund.findMany({ where: { orderId: order.id }, select: { id: true } })
+    ]);
+    const relatedIds = [
+      order.id,
+      ...payments.map((item) => item.id),
+      ...refunds.map((item) => item.id)
+    ];
+
+    const entries = await this.prisma.auditLog.findMany({
+      where: { entityId: { in: relatedIds } },
+      orderBy: { createdAt: "desc" },
+      take: 100
+    });
+
+    const actorIds = [...new Set(entries.map((entry) => entry.actorId).filter(Boolean) as string[])];
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: actorIds } },
+          select: { id: true, name: true, email: true }
+        })
+      : [];
+    const byId = new Map(actors.map((actor) => [actor.id, actor]));
+
+    return entries.map((entry) => ({
+      id: entry.id,
+      action: entry.action,
+      entity: entry.entity,
+      metadata: entry.metadata,
+      createdAt: entry.createdAt,
+      actor: entry.actorId ? byId.get(entry.actorId) ?? null : null
+    }));
+  }
+
+  /** Resolves an order by id or order number, or throws. */
+  private async resolveOrder<T extends Prisma.OrderSelect>(idOrNumber: string, select: T) {
+    const identifiers: Prisma.OrderWhereInput[] = [{ orderNumber: idOrNumber }];
+    if (/^[a-f\d]{24}$/i.test(idOrNumber)) identifiers.push({ id: idOrNumber });
+    const order = await this.prisma.order.findFirst({ where: { OR: identifiers }, select });
+    if (!order) throw new NotFoundException("Order not found.");
+    return order as Prisma.OrderGetPayload<{ select: T }>;
+  }
+
   async adminOrder(idOrNumber: string) {
     const identifiers: Prisma.OrderWhereInput[] = [{ orderNumber: idOrNumber }];
     if (/^[a-f\d]{24}$/i.test(idOrNumber)) identifiers.push({ id: idOrNumber });
@@ -2057,6 +2374,7 @@ export class EcommerceService {
       include: {
         items: true,
         payments: true,
+        refunds: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         courierShipments: {
@@ -2067,7 +2385,23 @@ export class EcommerceService {
       }
     });
     if (!order) throw new NotFoundException("Order not found.");
-    return this.withEffectiveCourierStatuses(order);
+    await this.refreshOrderPaymentStatus(order.id);
+    const refreshed = await this.prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: {
+        items: true,
+        payments: true,
+        refunds: true,
+        promotion: { select: { code: true, name: true } },
+        trackingEvents: { orderBy: { createdAt: "asc" } },
+        courierShipments: {
+          include: { courierService: true, events: { orderBy: { happenedAt: "asc" } } },
+          orderBy: { createdAt: "desc" }
+        },
+        notifications: { orderBy: { createdAt: "desc" } }
+      }
+    });
+    return this.withEffectiveCourierStatuses(refreshed);
   }
 
   async adminUpdateOrder(idOrNumber: string, dto: AdminUpdateOrderDto, actorId: string) {
@@ -2083,28 +2417,20 @@ export class EcommerceService {
       courierName: current.courierName
     };
     const statusChanged = dto.status && dto.status !== current.status;
-    if (
-      (dto.status ?? current.status) === OrderStatus.CANCELLED &&
-      dto.paymentStatus === PaymentStatus.PAID
-    ) {
-      throw new BadRequestException("A cancelled order cannot be marked paid.");
-    }
     if (statusChanged) {
-      current = await this.updateOrderStatus(current.id, {
-        status: dto.status!,
-        location: dto.location,
-        note: dto.note
-      });
+      current = await this.updateOrderStatus(
+        current.id,
+        { status: dto.status!, location: dto.location, note: dto.note },
+        false,
+        actorId
+      );
     }
     const updated = await this.prisma.order.update({
       where: { id: current.id },
       data: {
         status: undefined,
-        paymentStatus:
-          current.status === OrderStatus.CANCELLED &&
-          dto.paymentStatus === PaymentStatus.PENDING
-            ? undefined
-            : dto.paymentStatus,
+        // paymentStatus is intentionally not written here: it is derived from the
+        // payment and refund rows and re-derived on the read below.
         paymentMethod: dto.paymentMethod === undefined ? undefined : dto.paymentMethod.trim() || null,
         trackingCode: dto.trackingCode === undefined ? undefined : dto.trackingCode.trim() || null,
         courierName: dto.courierName === undefined ? undefined : dto.courierName.trim() || null,
@@ -2113,6 +2439,7 @@ export class EcommerceService {
       include: {
         items: true,
         payments: true,
+        refunds: true,
         promotion: { select: { code: true, name: true } },
         trackingEvents: { orderBy: { createdAt: "asc" } },
         courierShipments: {
@@ -2141,15 +2468,158 @@ export class EcommerceService {
         }
       }
     });
-    return updated;
+    return this.adminOrder(updated.id);
   }
 
-  async adminCancelOrder(idOrNumber: string) {
-    return this.updateOrderStatus(idOrNumber, {
-      status: OrderStatus.CANCELLED,
-      location: "Admin dashboard",
-      note: "Order cancelled by store staff."
-    }, true);
+  /**
+   * Corrects the delivery details on an order that has not shipped yet.
+   *
+   * A mistyped address used to mean cancelling and re-creating the order, which
+   * threw away its history and its payment. Only allowed before the parcel is
+   * with the courier — after that the courier holds the address, not us.
+   */
+  async adminUpdateOrderContact(
+    idOrNumber: string,
+    dto: UpdateOrderContactDto,
+    actorId: string
+  ) {
+    const order = await this.resolveOrder(idOrNumber, {
+      id: true,
+      orderNumber: true,
+      status: true,
+      customerName: true,
+      email: true,
+      phone: true,
+      shippingAddress: true
+    });
+
+    if (!EDITABLE_ORDER_STATUSES.includes(order.status)) {
+      throw new BadRequestException(
+        "This order is already with the courier. Contact the courier to change delivery details."
+      );
+    }
+
+    const before = {
+      customerName: order.customerName,
+      email: order.email,
+      phone: order.phone,
+      shippingAddress: order.shippingAddress
+    };
+
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        customerName: dto.customerName?.trim() || undefined,
+        email: dto.email?.trim() || undefined,
+        phone: dto.phone?.trim() || undefined,
+        shippingAddress: dto.shippingAddress?.trim() || undefined
+      }
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId,
+        action: "order.contact_updated",
+        entity: "Order",
+        entityId: order.id,
+        metadata: { orderNumber: order.orderNumber, before, after: { ...dto } }
+      }
+    });
+
+    // The address is a risk input, so a change re-opens the question.
+    await this.orderRisk.assessAndStore(order.id);
+    return this.adminOrder(order.id);
+  }
+
+  /**
+   * Records how much of each line has actually gone out.
+   *
+   * One order to one status could not describe a split parcel or a backordered
+   * line, so staff had no way to say "three of the five shipped". Fulfilled
+   * counts live on the line; the order status still describes the whole.
+   */
+  async adminFulfillOrderItems(
+    idOrNumber: string,
+    dto: FulfillOrderItemsDto,
+    actorId: string
+  ) {
+    const order = await this.resolveOrder(idOrNumber, {
+      id: true,
+      orderNumber: true,
+      status: true,
+      items: { select: { id: true, productName: true, quantity: true, fulfilledQuantity: true } }
+    });
+
+    if (stockReleasingStatuses.includes(order.status)) {
+      throw new BadRequestException("This order is cancelled or returned; nothing can be fulfilled.");
+    }
+
+    const byId = new Map(order.items.map((item) => [item.id, item]));
+    for (const line of dto.items) {
+      const item = byId.get(line.orderItemId);
+      if (!item) throw new BadRequestException("That line does not belong to this order.");
+      if (line.fulfilledQuantity < 0 || line.fulfilledQuantity > item.quantity) {
+        throw new BadRequestException(
+          `${item.productName}: fulfilled quantity must be between 0 and ${item.quantity}.`
+        );
+      }
+    }
+
+    await this.prisma.$transaction(async (transaction) => {
+      for (const line of dto.items) {
+        await transaction.orderItem.update({
+          where: { id: line.orderItemId },
+          data: { fulfilledQuantity: line.fulfilledQuantity }
+        });
+      }
+      await transaction.auditLog.create({
+        data: {
+          actorId,
+          action: "order.items_fulfilled",
+          entity: "Order",
+          entityId: order.id,
+          metadata: {
+            orderNumber: order.orderNumber,
+            lines: dto.items.map((line) => ({
+              product: byId.get(line.orderItemId)?.productName,
+              from: byId.get(line.orderItemId)?.fulfilledQuantity,
+              to: line.fulfilledQuantity
+            }))
+          }
+        }
+      });
+    });
+
+    return this.adminOrder(order.id);
+  }
+
+  /** Clears an order out of the risk review queue. */
+  async adminReviewOrderRisk(idOrNumber: string, actorId: string) {
+    const order = await this.resolveOrder(idOrNumber, { id: true, orderNumber: true });
+    await this.orderRisk.markReviewed(order.id, actorId);
+    await this.prisma.auditLog.create({
+      data: {
+        actorId,
+        action: "order.risk_reviewed",
+        entity: "Order",
+        entityId: order.id,
+        metadata: { orderNumber: order.orderNumber }
+      }
+    });
+    return this.adminOrder(order.id);
+  }
+
+  async adminCancelOrder(idOrNumber: string, actorId: string) {
+    return this.updateOrderStatus(
+      idOrNumber,
+      {
+        status: OrderStatus.CANCELLED,
+        location: "Admin dashboard",
+        note: "Order cancelled by store staff."
+      },
+      true,
+      actorId
+    );
   }
 
   async permanentlyDeleteOrder(actorId: string, password: string, idOrNumber: string) {
@@ -2182,6 +2652,17 @@ export class EcommerceService {
       await transaction.courierShipment.deleteMany({ where: { orderId: order.id } });
 
       await transaction.notification.deleteMany({ where: { orderId: order.id } });
+
+      // A payment's event history has no other parent, so it has to go with it.
+      const orderPayments = await transaction.payment.findMany({
+        where: { orderId: order.id },
+        select: { id: true }
+      });
+      if (orderPayments.length) {
+        await transaction.paymentEvent.deleteMany({
+          where: { paymentId: { in: orderPayments.map((item) => item.id) } }
+        });
+      }
       await transaction.payment.deleteMany({ where: { orderId: order.id } });
       await transaction.review.deleteMany({ where: { orderId: order.id } });
       await transaction.attribution.deleteMany({ where: { orderId: order.id } });
@@ -2252,11 +2733,16 @@ export class EcommerceService {
         "This order is already being prepared for delivery and can no longer be cancelled here — start a return instead once it arrives."
       );
     }
-    return this.updateOrderStatus(idOrNumber, {
-      status: OrderStatus.CANCELLED,
-      location: "Customer",
-      note: "Order cancelled by the customer before shipment."
-    }, true);
+    return this.updateOrderStatus(
+      idOrNumber,
+      {
+        status: OrderStatus.CANCELLED,
+        location: "Customer",
+        note: "Order cancelled by the customer before shipment."
+      },
+      true,
+      authUser.id
+    );
   }
 
   async adminCatalog() {

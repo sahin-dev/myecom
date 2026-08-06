@@ -9,7 +9,6 @@ import {
   Filter,
   Heart,
   Search,
-  ShoppingBag,
   SlidersHorizontal,
   X
 } from "lucide-react";
@@ -29,7 +28,7 @@ import { useCart } from "./CartContext";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
 import { ProductVideo } from "./ProductVideo";
-import { QuickVariantAdd } from "./QuickVariantAdd";
+import { QuickVariantAdd, SimpleAddToCartButton } from "./QuickVariantAdd";
 import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
 import { RatingStars } from "./RatingStars";
 import { useSiteSettings } from "./SiteSettingsContext";
@@ -286,7 +285,6 @@ function ShopProduct({ product }: { product: Product }) {
   const locale = useLocale() as AppLocale;
   const t = useTranslations("Product");
   const common = useTranslations("Common");
-  const { addItem } = useCart();
   const { settings } = useSiteSettings();
   const { isSaved, toggle } = useWishlist();
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
@@ -331,7 +329,7 @@ function ShopProduct({ product }: { product: Product }) {
       {product.variants?.length ? (
         <QuickVariantAdd product={product} onSelect={setSelectedVariant} />
       ) : (
-        <button className="add-button full" type="button" disabled={!product.inventory} onClick={() => addItem(product)}><ShoppingBag size={17} />{product.inventory ? t("addToBag") : common("outOfStock")}</button>
+        <SimpleAddToCartButton product={product} label={t("addToBag")} outOfStockLabel={common("outOfStock")} />
       )}
     </article>
   );

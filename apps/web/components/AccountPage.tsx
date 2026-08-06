@@ -59,11 +59,10 @@ import { AppLocale, localeCode, localizedHref, localizeProduct } from "../lib/i1
 import { orderPaymentBreakdown } from "../lib/orderPayments";
 import { AdvancePaymentBadge } from "./AdvancePaymentBadge";
 import { useAuth } from "./AuthContext";
-import { useCart } from "./CartContext";
 import { OrderReceipt } from "./OrderReceipt";
 import { PageFooter, PageHeader } from "./PageChrome";
 import { ProductArt } from "./ProductArt";
-import { QuickVariantAdd } from "./QuickVariantAdd";
+import { QuickVariantAdd, SimpleAddToCartButton } from "./QuickVariantAdd";
 import { useSiteSettings } from "./SiteSettingsContext";
 import { useConfirm } from "./ui/ConfirmDialog";
 
@@ -951,13 +950,13 @@ export function AccountPage() {
                       </li>
                     ))}
                   </ul>
-                  {item.refund ? (
+                  {item.refunds?.length ? (
                     <div className="return-refund-summary">
                       <span>
                         <strong>Refund</strong>
-                        <small>{item.refund.status.toLowerCase()}</small>
+                        <small>{item.refunds[0].status.toLowerCase()}</small>
                       </span>
-                      <strong>{formatMoney(item.refund.amount)}</strong>
+                      <strong>{formatMoney(item.refunds[0].amount)}</strong>
                     </div>
                   ) : null}
                   {item.resolution ? (
@@ -1126,7 +1125,6 @@ function AccountPagination({
 }
 
 function AccountRecommendationCard({ product }: { product: Product }) {
-  const { addItem } = useCart();
   const { settings } = useSiteSettings();
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const price = selectedVariant?.price ?? product.price;
@@ -1150,9 +1148,7 @@ function AccountRecommendationCard({ product }: { product: Product }) {
           onSelect={setSelectedVariant}
         />
       ) : (
-        <button className="secondary-action full" onClick={() => addItem(product, 1)} type="button">
-          Add to cart
-        </button>
+        <SimpleAddToCartButton product={product} className="secondary-action full" label="Add to cart" outOfStockLabel="Out of stock" />
       )}
     </article>
   );
